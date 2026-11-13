@@ -140,11 +140,11 @@ header{border-bottom:1px solid var(--line)}
 .tab .c{font-family:var(--mono);font-size:12px;color:var(--muted);margin-left:5px}
 
 .finding{display:grid;grid-template-columns:96px minmax(0,1fr);gap:16px;padding:18px 0;border-bottom:1px solid var(--line)}
-.finding h3{margin:0 0 4px;font-size:17px;font-weight:700;letter-spacing:-.01em}
+.finding h2{margin:0 0 4px;font-size:17px;font-weight:700;letter-spacing:-.01em}
 .finding .id{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:8px}
 .finding p{margin:0 0 10px;color:var(--muted);max-width:60ch}
 .ev{background:var(--panel);border:1px solid var(--line);padding:10px 12px;font-family:var(--mono);font-size:12.5px;line-height:1.7;overflow-x:auto;white-space:pre}
-.finding.resolved h3{color:var(--muted);text-decoration:line-through}
+.finding.resolved h2{color:var(--muted);text-decoration:line-through}
 .allclear{padding:28px 0;color:var(--muted);display:flex;gap:12px;align-items:center}
 
 .tbox{overflow-x:auto}
@@ -193,7 +193,7 @@ td.g{color:var(--ok)}td.b{color:var(--crit);font-weight:500}
     <a class="back" href="./">&larr; Back to overview</a>
   </div>
 </header>
-<div class="notice"><div class="wrap">Sample data only. Every zone, nameserver and finding here is invented, and nothing is queried live.</div></div>
+<div class="notice" role="region" aria-label="About this demo"><div class="wrap">Sample data only. Every zone, nameserver and finding here is invented, and nothing is queried live.</div></div>
 
 <main class="wrap">
   <div class="summary" id="summary"></div>
@@ -386,7 +386,7 @@ function viewFindings(z){
     box.appendChild(el("article",{class:"finding"+(f.resolved?" resolved":"")},[
       el("div",null,[f.resolved?pill("res","Resolved"):pill(f.sev),el("div",{class:"id",text:f.id})]),
       el("div",null,[
-        el("h3",{text:f.title}),
+        el("h2",{text:f.title}),
         el("div",{class:"mono",style:"color:var(--muted);margin-bottom:8px",text:f.name+" · "+(f.resolved?"closed in run "+f.resolved:"open since "+f.since)}),
         el("p",{text:f.text}),
         el("div",{class:"ev",text:f.ev})
