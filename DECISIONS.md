@@ -132,3 +132,7 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - A lookup that failed (as opposed to "no such record") never produces a policy finding.
 - The database layout moved to version 3 (a `policy_json` column on runs).
 - The JSON report gained a `policy` field; `schema_version` stays 1.
+
+## Release pipeline
+
+- Every GitHub Action in the workflows is pinned to a full commit SHA, with the version in a comment, because the release job can publish releases and container images; Dependabot proposes updates monthly.

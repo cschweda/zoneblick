@@ -1,0 +1,9 @@
+# Keeps the pinned GitHub Actions up to date. Actions are pinned to exact
+# commits in the workflows; Dependabot opens a pull request when a newer
+# release exists.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
