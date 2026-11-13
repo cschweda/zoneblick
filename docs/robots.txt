@@ -1,0 +1,4 @@
+# zoneblick.com is a public, static project site. Everything may be crawled,
+# including by AI crawlers.
+User-agent: *
+Allow: /
