@@ -71,3 +71,23 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - Retention (thinning old runs) is not implemented; every run is kept.
 - The database layout version is kept in SQLite's `user_version`; a database from a newer zoneblick is refused.
 - `DESIGN.md` now records the license decision: MIT or Apache-2.0.
+
+## Phase 2
+
+- `hickory-proto` stays without its DNSSEC feature (which would pull in a crypto library); DS, DNSKEY and RRSIG records are parsed from raw record data in `src/dnssec.rs`.
+- The SEC checks read keys, DS records and signature dates; they do not verify signatures cryptographically yet. They are labelled beta in the README and on the site, as the design asks.
+- A DS matches a DNSKEY when key tag and algorithm agree and the SHA-256 or SHA-384 digest is right; a SHA-1 or GOST DS is matched on key tag and algorithm only (and reported as weak by SEC-04).
+- The DS set is read from the one parent server that gave the referral, with the DO bit set.
+- Each responding nameserver address gets two more queries with the DO bit: DNSKEY and SOA. Both `check` and `run` collect DNSSEC data.
+- SEC-01 is judged per server: a server whose DNSKEY set contains no key any DS points at is reported.
+- SEC-02 measures time from the start of the run and looks at the signatures over the DNSKEY and SOA record sets.
+- SEC-02 warns within seven days of expiry, or within a quarter of the signature's lifetime when that is shorter; found necessary because zones signed on the fly (for example by Cloudflare) carry signatures valid for only a day or two.
+- SEC-02's identity as a finding is the covered record type, not the dates, so one expiring signature is one finding across runs.
+- SEC-03 fires only when the parent positively answered "no DS"; a parent that did not answer proves nothing.
+- SEC-04 follows RFC 8624: RSA/MD5, DSA, RSA/SHA-1 (with or without NSEC3) and GOST are weak, as are SHA-1 and GOST DS digests.
+- SEC-05 compares, across servers, the DNSKEY key tags and which keys sign the SOA.
+- An unsigned zone (no DS, no DNSKEY) produces no SEC findings.
+- Queries carry a `dnssec` flag for the DO bit; it is left out of fixture files when false, so older fixtures still load.
+- The database layout moved to version 2 (a `dnssec_json` column on runs); older databases are upgraded in place on open.
+- The JSON report gained a `dnssec` field; `schema_version` stays 1 because fields were only added.
+- The terminal output's clean message is now "All checks passed."

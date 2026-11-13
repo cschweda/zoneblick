@@ -76,10 +76,7 @@ async fn broken_zone_json_matches_the_golden_file() {
 async fn good_zone_exits_zero() {
     let out = check(&args("good.example", "good.example.json", false), false).await;
     assert_eq!(out.exit_code, 0);
-    assert!(
-        out.stdout
-            .contains("None. All delegation and consistency checks passed.")
-    );
+    assert!(out.stdout.contains("None. All checks passed."));
 }
 
 /// A real run against example.com, recorded with `--record` and replayed.

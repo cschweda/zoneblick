@@ -199,7 +199,7 @@ fn server_line(probes: &[&ServerProbe]) -> String {
 fn findings(w: &mut String, st: &Style, report: &Report) {
     let _ = writeln!(w, "{}", st.bold("Findings"));
     if report.findings.is_empty() {
-        let _ = writeln!(w, "  None. All delegation and consistency checks passed.");
+        let _ = writeln!(w, "  None. All checks passed.");
         let _ = writeln!(w);
         return;
     }
@@ -412,8 +412,9 @@ fn dnssec(w: &mut String, st: &Style, report: &Report) {
     } else if keys.is_empty() {
         let _ = writeln!(w, "  DNSKEY: none; the zone is not signed");
     } else {
-        let keys: Vec<String> = keys.into_iter().collect();
-        let _ = writeln!(w, "  DNSKEY: {}", keys.join("; "));
+        for key in keys {
+            let _ = writeln!(w, "  DNSKEY: {key}");
+        }
         let soonest = d
             .servers
             .iter()
