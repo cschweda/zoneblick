@@ -11,6 +11,7 @@ use tokio::task::JoinSet;
 use super::ResolveError;
 use super::hints::ROOT_HINTS;
 use super::iterate::{Resolver, norm, parse_response, printable, rcode_name};
+use super::signed::collect_dnssec;
 use super::transport::{Client, QuerySpec, RawOutcome, record_type};
 use crate::observe::{
     NsHost, Outcome, QType, RecordAnswer, RecordObservation, RecordOutcome, ResponseObs,
@@ -130,6 +131,9 @@ pub async fn observe_zone(
     }
     probes.sort();
 
+    let parent = delegation.path.last().filter(|_| delegated);
+    let dnssec = collect_dnssec(&client, &zone, parent, &responding_servers(&probes)).await;
+
     Ok(ZoneObservation {
         zone,
         started_at_unix,
@@ -138,7 +142,19 @@ pub async fn observe_zone(
         ns_hosts: hosts.into_values().collect(),
         probes,
         records: Vec::new(),
+        dnssec: Some(dnssec),
     })
+}
+
+/// The nameserver addresses that answered at least one probe, in order.
+fn responding_servers(probes: &[ServerProbe]) -> Vec<(String, IpAddr)> {
+    let mut servers: Vec<(String, IpAddr)> = Vec::new();
+    for probe in probes {
+        if probe.outcome.response().is_some() && !servers.iter().any(|(_, a)| *a == probe.address) {
+            servers.push((probe.ns_name.clone(), probe.address));
+        }
+    }
+    servers
 }
 
 /// Turn a name given on the command line into a full name inside `zone`.
@@ -189,12 +205,7 @@ pub async fn observe_zone_records(
 
     // Only servers that answered something are asked; a dead server is
     // already reported and would only slow the run down.
-    let mut servers: Vec<(String, IpAddr)> = Vec::new();
-    for probe in &obs.probes {
-        if probe.outcome.response().is_some() && !servers.iter().any(|(_, a)| *a == probe.address) {
-            servers.push((probe.ns_name.clone(), probe.address));
-        }
-    }
+    let servers = responding_servers(&obs.probes);
 
     let mut all_names: Vec<String> = vec![zone.clone()];
     for name in names {
@@ -284,6 +295,7 @@ async fn ask_record(
         qname: name.clone(),
         qtype,
         edns: true,
+        dnssec: false,
     };
     let mut outcome = record_outcome(&spec, client.exchange(&spec).await);
     if let Some(true) = outcome.as_ref().err().copied() {
@@ -395,6 +407,7 @@ async fn detect_vantage(client: &Client) -> Vantage {
                 qname: ".".to_string(),
                 qtype: QType::Ns,
                 edns: true,
+                dnssec: false,
             };
             if matches!(client.exchange(&spec).await, RawOutcome::Response { .. }) {
                 *slot = true;
@@ -423,6 +436,7 @@ async fn probe_one(
         qname: zone.to_string(),
         qtype,
         edns,
+        dnssec: false,
     };
     let outcome = match client.exchange(&spec).await {
         RawOutcome::Response { wire } => observe_response(&spec, &wire),

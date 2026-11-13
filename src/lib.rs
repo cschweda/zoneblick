@@ -12,6 +12,7 @@
 pub mod checks;
 pub mod cli;
 pub mod diff;
+pub mod dnssec;
 pub mod observe;
 pub mod output;
 pub mod resolver;

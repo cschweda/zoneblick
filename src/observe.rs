@@ -12,6 +12,8 @@ use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::dnssec::{Dnskey, Ds, Rrsig};
+
 /// How a query was sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -32,6 +34,8 @@ pub enum QType {
     Mx,
     Txt,
     Caa,
+    Ds,
+    Dnskey,
 }
 
 impl QType {
@@ -56,6 +60,8 @@ impl QType {
             QType::Mx => "MX",
             QType::Txt => "TXT",
             QType::Caa => "CAA",
+            QType::Ds => "DS",
+            QType::Dnskey => "DNSKEY",
         }
     }
 
@@ -69,6 +75,8 @@ impl QType {
             QType::Mx,
             QType::Txt,
             QType::Caa,
+            QType::Ds,
+            QType::Dnskey,
         ]
         .into_iter()
         .find(|t| t.as_str() == s)
@@ -271,6 +279,41 @@ pub struct RecordObservation {
     pub outcome: RecordOutcome,
 }
 
+/// The DS set for the zone, as one server of the parent zone served it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParentDs {
+    pub parent_zone: String,
+    pub server_name: Option<String>,
+    pub server_address: IpAddr,
+    /// `None` when the parent gave no usable answer; then `error` says why.
+    /// An empty list means the parent has no DS for the zone.
+    pub records: Option<Vec<Ds>>,
+    pub error: Option<String>,
+}
+
+/// The DNSSEC data one nameserver address served for the zone apex.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ServerDnssec {
+    pub ns_name: String,
+    pub address: IpAddr,
+    /// `None` when the server gave no authoritative answer. An empty list
+    /// means it has no DNSKEY for the zone.
+    pub dnskeys: Option<Vec<Dnskey>>,
+    /// Signatures over the DNSKEY set.
+    pub dnskey_sigs: Vec<Rrsig>,
+    /// Signatures over the SOA record; `None` when the server gave no
+    /// authoritative SOA answer to the signed query.
+    pub soa_sigs: Option<Vec<Rrsig>>,
+}
+
+/// What was observed about the zone's DNSSEC setup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DnssecObservation {
+    /// The parent's DS set; `None` when no parent referral was seen.
+    pub parent_ds: Option<ParentDs>,
+    pub servers: Vec<ServerDnssec>,
+}
+
 /// Everything recorded about one zone in one run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZoneObservation {
@@ -288,6 +331,10 @@ pub struct ZoneObservation {
     /// stores a snapshot; empty for a plain `check`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub records: Vec<RecordObservation>,
+    /// DNSSEC data: the parent's DS set and each server's keys and
+    /// signatures. `None` in observations built before it was collected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dnssec: Option<DnssecObservation>,
 }
 
 impl ZoneObservation {

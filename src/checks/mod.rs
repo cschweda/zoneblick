@@ -6,6 +6,7 @@
 
 pub mod consistency;
 pub mod delegation;
+pub mod security;
 
 use std::net::IpAddr;
 
@@ -148,6 +149,29 @@ pub enum Evidence {
         address: IpAddr,
         problems: Vec<String>,
     },
+    DsWithoutKey {
+        /// The DS records at the parent.
+        ds: Vec<String>,
+        /// The keys each affected server serves instead.
+        servers: Vec<Variant<Vec<String>>>,
+    },
+    SignatureExpiry {
+        type_covered: String,
+        key_tag: u16,
+        expiration_unix: u32,
+        /// Negative when the signature has already expired.
+        seconds_left: i64,
+        servers: Vec<ServerRef>,
+    },
+    SignedNotChained {
+        dnskeys: Vec<String>,
+    },
+    WeakAlgorithm {
+        items: Vec<String>,
+    },
+    SignaturesDiffer {
+        variants: Vec<Variant<Vec<String>>>,
+    },
 }
 
 /// One result of one check.
@@ -189,6 +213,11 @@ impl Finding {
             | Evidence::Ipv6Unreachable { address, .. }
             | Evidence::EdnsProblem { address, .. } => address.to_string(),
             Evidence::Ipv6NotTested { .. } => "not-tested".to_string(),
+            Evidence::DsWithoutKey { .. } => String::new(),
+            Evidence::SignatureExpiry { type_covered, .. } => type_covered.clone(),
+            Evidence::SignedNotChained { .. } => String::new(),
+            Evidence::WeakAlgorithm { .. } => String::new(),
+            Evidence::SignaturesDiffer { .. } => String::new(),
         };
         format!("{}|{}|{}", self.check_id, self.name, detail)
     }
@@ -218,7 +247,7 @@ pub struct CheckInfo {
     pub implemented: bool,
 }
 
-/// The Phase 0 part of the check catalog in `DESIGN.md`.
+/// The implemented part of the check catalog in `DESIGN.md`.
 pub const CATALOG: &[CheckInfo] = &[
     check(
         "DEL-01",
@@ -281,6 +310,36 @@ pub const CATALOG: &[CheckInfo] = &[
         Severity::Notice,
         true,
     ),
+    check(
+        "SEC-01",
+        "DS at parent, no matching DNSKEY at child (zone is bogus)",
+        Severity::Critical,
+        true,
+    ),
+    check(
+        "SEC-02",
+        "RRSIG expired, or expires within 7 days",
+        Severity::Critical,
+        true,
+    ),
+    check(
+        "SEC-03",
+        "DNSKEY present, no DS at parent (signed but not chained)",
+        Severity::Notice,
+        true,
+    ),
+    check(
+        "SEC-04",
+        "Weak or deprecated algorithm or digest",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "SEC-05",
+        "Signatures differ or are missing on some servers",
+        Severity::Warning,
+        true,
+    ),
 ];
 
 const fn check(
@@ -311,6 +370,11 @@ const CHECKS: &[Check] = &[
     consistency::con_03_tcp,
     consistency::con_04_ipv6,
     consistency::con_05_edns,
+    security::sec_01_ds_without_key,
+    security::sec_02_signature_expiry,
+    security::sec_03_signed_not_chained,
+    security::sec_04_weak_algorithm,
+    security::sec_05_signatures_differ,
 ];
 
 /// Run every Phase 0 check. Findings come back in a stable order: by

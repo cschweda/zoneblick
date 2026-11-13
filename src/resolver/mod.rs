@@ -4,6 +4,7 @@
 //! - [`limiter`]: bounded concurrency and the per-server rate cap
 //! - [`hints`]: built-in root hints
 //! - [`iterate`]: walks from the root to a name, recording each referral
+//! - [`signed`]: collects DS, DNSKEY and signature records for the SEC checks
 //! - [`probe`]: queries every nameserver address of a zone and builds the
 //!   [`ZoneObservation`](crate::observe::ZoneObservation)
 
@@ -11,6 +12,7 @@ pub mod hints;
 pub mod iterate;
 pub mod limiter;
 pub mod probe;
+pub mod signed;
 pub mod transport;
 
 pub use probe::{name_in_zone, normalise_zone, observe_zone, observe_zone_records};

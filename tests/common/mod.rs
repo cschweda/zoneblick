@@ -91,6 +91,8 @@ fn record_type(qtype: QType) -> RecordType {
         QType::Mx => RecordType::MX,
         QType::Txt => RecordType::TXT,
         QType::Caa => RecordType::CAA,
+        QType::Ds => RecordType::DS,
+        QType::Dnskey => RecordType::DNSKEY,
     }
 }
 
@@ -130,6 +132,7 @@ impl World {
             qname: qname.to_string(),
             qtype,
             edns,
+            dnssec: false,
         };
         self.exchanges.retain(|e| e.query != query);
         self.exchanges.push(Exchange { query, outcome });
@@ -165,10 +168,46 @@ impl World {
         );
     }
 
+    /// Answer a query sent with the DO bit, over one transport.
+    pub fn reply_signed(
+        &mut self,
+        server: &str,
+        transport: Transport,
+        qname: &str,
+        qtype: QType,
+        build: impl Fn(&mut Message),
+    ) {
+        let mut msg = Message::response(0, OpCode::Query);
+        msg.add_query(Query::query(name(qname), record_type(qtype)));
+        let mut opt = Edns::new();
+        opt.set_max_payload(1232).set_dnssec_ok(true);
+        msg.set_edns(opt);
+        build(&mut msg);
+        let query = QuerySpec {
+            server: server.parse().unwrap(),
+            transport,
+            qname: qname.to_string(),
+            qtype,
+            edns: true,
+            dnssec: true,
+        };
+        self.exchanges.retain(|e| e.query != query);
+        self.exchanges.push(Exchange {
+            query,
+            outcome: RawOutcome::Response {
+                wire: msg.to_vec().unwrap(),
+            },
+        });
+    }
+
     /// Answer a query the same way however it is sent.
     pub fn reply(&mut self, server: &str, qname: &str, qtype: QType, build: impl Fn(&mut Message)) {
         for (transport, edns) in VARIANTS {
             self.reply_on(server, transport, edns, qname, qtype, &build);
+        }
+        // The same answer for queries that ask for DNSSEC records (DO bit).
+        for transport in [Transport::Udp, Transport::Tcp] {
+            self.reply_signed(server, transport, qname, qtype, &build);
         }
     }
 
@@ -219,6 +258,11 @@ impl World {
         }
     }
 
+    /// The parent has no DS record for `zone`: the zone is not chained.
+    pub fn no_ds(&mut self, zone: &str) {
+        self.nodata(TLD_SERVER, zone, QType::Ds, "example.");
+    }
+
     /// The root delegates `example.` to one server, with glue.
     pub fn delegate_tld(&mut self, qname: &str, qtype: QType) {
         self.referral(
@@ -235,6 +279,8 @@ impl World {
         self.answer(server, zone, QType::Soa, &[soa(zone, serial)]);
         let records: Vec<Record> = ns_names.iter().map(|n| ns(zone, n)).collect();
         self.answer(server, zone, QType::Ns, &records);
+        // Unsigned unless a test adds keys.
+        self.nodata(server, zone, QType::Dnskey, zone);
     }
 
     /// Address records for a host, as served by `server` from `zone`.
@@ -312,6 +358,7 @@ pub fn good_world() -> World {
         &[ns(zone, names[0]), ns(zone, names[1])],
         &[addr(names[0], servers[0]), addr(names[1], servers[1])],
     );
+    w.no_ds(zone);
     for server in servers {
         w.serve_apex(server, zone, 2024111301, &names);
         w.serve_host(server, zone, names[0], &[servers[0]]);
@@ -337,6 +384,7 @@ pub fn broken_world() -> World {
     let ns_records: Vec<Record> = names.iter().map(|n| ns(zone, n)).collect();
     let glue: Vec<Record> = names.iter().zip(servers).map(|(n, s)| addr(n, s)).collect();
     w.referral(TLD_SERVER, zone, QType::Ns, &ns_records, &glue);
+    w.no_ds(zone);
     for (server, serial) in [(NS1, 2024111301), (NS2, 2024111302)] {
         w.serve_apex(server, zone, serial, &names);
         for (host, ip) in names.iter().zip(servers) {
@@ -374,6 +422,7 @@ pub fn drift_world(after: bool) -> World {
         &[ns(zone, names[0]), ns(zone, names[1])],
         &[addr(names[0], servers[0]), addr(names[1], servers[1])],
     );
+    w.no_ds(zone);
     let serial = if after { 2026111302 } else { 2026111301 };
     for server in servers {
         w.serve_apex(server, zone, serial, &names);

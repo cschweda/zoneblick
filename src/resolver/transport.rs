@@ -64,6 +64,9 @@ pub struct QuerySpec {
     pub qname: String,
     pub qtype: QType,
     pub edns: bool,
+    /// Set the DO bit, asking for DNSSEC records. Needs `edns`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dnssec: bool,
 }
 
 /// What came back, before parsing.
@@ -226,6 +229,7 @@ fn build_query(spec: &QuerySpec, edns_payload: u16) -> Result<(u16, Vec<u8>), St
     if spec.edns {
         let mut edns = Edns::new();
         edns.set_version(0).set_max_payload(edns_payload);
+        edns.set_dnssec_ok(spec.dnssec);
         msg.set_edns(edns);
     }
     let wire = msg.to_vec().map_err(|e| e.to_string())?;
@@ -242,6 +246,8 @@ pub(crate) fn record_type(qtype: QType) -> RecordType {
         QType::Mx => RecordType::MX,
         QType::Txt => RecordType::TXT,
         QType::Caa => RecordType::CAA,
+        QType::Ds => RecordType::DS,
+        QType::Dnskey => RecordType::DNSKEY,
     }
 }
 
@@ -316,6 +322,7 @@ mod tests {
             qname: "example.com.".to_string(),
             qtype: QType::Soa,
             edns: true,
+            dnssec: false,
         }
     }
 
@@ -332,6 +339,21 @@ mod tests {
         plain.edns = false;
         let (_, wire) = build_query(&plain, 1232).unwrap();
         assert!(Message::from_vec(&wire).unwrap().edns.is_none());
+
+        let signed = QuerySpec {
+            dnssec: true,
+            ..spec()
+        };
+        let (_, wire) = build_query(&signed, 1232).unwrap();
+        let msg = Message::from_vec(&wire).unwrap();
+        assert!(msg.edns.as_ref().unwrap().flags().dnssec_ok);
+        // The flag is left out of fixtures unless set, so old fixtures still load.
+        assert!(!serde_json::to_string(&spec()).unwrap().contains("dnssec"));
+        assert!(
+            serde_json::to_string(&signed)
+                .unwrap()
+                .contains(r#""dnssec":true"#)
+        );
     }
 
     #[test]

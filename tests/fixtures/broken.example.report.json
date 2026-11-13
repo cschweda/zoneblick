@@ -410,6 +410,38 @@
       }
     }
   ],
+  "dnssec": {
+    "parent_ds": {
+      "parent_zone": "example.",
+      "server_name": "ns.nic.example.",
+      "server_address": "192.0.2.1",
+      "records": [],
+      "error": null
+    },
+    "servers": [
+      {
+        "ns_name": "ns1.broken.example.",
+        "address": "198.51.100.1",
+        "dnskeys": [],
+        "dnskey_sigs": [],
+        "soa_sigs": []
+      },
+      {
+        "ns_name": "ns2.broken.example.",
+        "address": "198.51.100.2",
+        "dnskeys": [],
+        "dnskey_sigs": [],
+        "soa_sigs": []
+      },
+      {
+        "ns_name": "ns3.broken.example.",
+        "address": "203.0.113.3",
+        "dnskeys": null,
+        "dnskey_sigs": [],
+        "soa_sigs": null
+      }
+    ]
+  },
   "findings": [
     {
       "check_id": "DEL-02",

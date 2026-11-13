@@ -62,6 +62,7 @@ pub fn render_as(command: &str, report: &Report, color: bool) -> String {
     let _ = writeln!(w);
     delegation(w, &st, report);
     nameservers(w, &st, report);
+    dnssec(w, &st, report);
     records(w, &st, report);
     findings(w, &st, report);
 
@@ -317,7 +318,120 @@ fn evidence_lines(evidence: &Evidence) -> Vec<String> {
             vec![format!("not tested: {}", list::<IpAddr>(addresses))]
         }
         Evidence::EdnsProblem { problems, .. } => problems.clone(),
+        Evidence::DsWithoutKey { ds, servers } => {
+            let mut lines: Vec<String> = ds.iter().map(|d| format!("DS at parent: {d}")).collect();
+            for v in servers {
+                lines.push(format!("{} serves:", server_list(&v.servers)));
+                lines.push(format!("  {}", list(&v.value)));
+            }
+            lines
+        }
+        Evidence::SignatureExpiry {
+            key_tag,
+            expiration_unix,
+            servers,
+            ..
+        } => vec![
+            format!(
+                "signed by key tag {key_tag}, expires {}",
+                utc(u64::from(*expiration_unix))
+            ),
+            if servers.len() > 4 {
+                format!("seen on {} nameserver addresses", servers.len())
+            } else {
+                format!("seen on: {}", server_list(servers))
+            },
+        ],
+        Evidence::SignedNotChained { dnskeys } => vec![format!("keys: {}", list(dnskeys))],
+        Evidence::WeakAlgorithm { items } => items.clone(),
+        Evidence::SignaturesDiffer { variants } => variants
+            .iter()
+            .flat_map(|v| {
+                [
+                    format!("{}:", server_list(&v.servers)),
+                    format!("  {}", v.value.join("; ")),
+                ]
+            })
+            .collect(),
     }
+}
+
+/// A short DNSSEC summary: the DS set, the keys, and when signatures run out.
+fn dnssec(w: &mut String, st: &Style, report: &Report) {
+    let Some(d) = &report.dnssec else {
+        return;
+    };
+    let _ = writeln!(w, "{}", st.bold("DNSSEC"));
+    match &d.parent_ds {
+        None => {
+            let _ = writeln!(
+                w,
+                "  DS at parent: not applicable (no referral to this zone)"
+            );
+        }
+        Some(p) => match &p.records {
+            None => {
+                let why = p.error.as_deref().unwrap_or("no answer");
+                let _ = writeln!(w, "  DS at {}: could not be read ({why})", p.parent_zone);
+            }
+            Some(ds) if ds.is_empty() => {
+                let _ = writeln!(w, "  DS at {}: none", p.parent_zone);
+            }
+            Some(ds) => {
+                let items: Vec<String> = ds
+                    .iter()
+                    .map(|r| {
+                        format!(
+                            "key tag {} ({}, {})",
+                            r.key_tag,
+                            crate::dnssec::algorithm_name(r.algorithm),
+                            crate::dnssec::digest_name(r.digest_type)
+                        )
+                    })
+                    .collect();
+                let _ = writeln!(w, "  DS at {}: {}", p.parent_zone, items.join("; "));
+            }
+        },
+    }
+    let answered = d.servers.iter().filter(|s| s.dnskeys.is_some()).count();
+    let keys: BTreeSet<String> = d
+        .servers
+        .iter()
+        .flat_map(|s| s.dnskeys.iter().flatten())
+        .map(|k| {
+            format!(
+                "key tag {} ({}, {})",
+                k.key_tag,
+                if k.is_ksk() { "KSK" } else { "ZSK" },
+                crate::dnssec::algorithm_name(k.algorithm)
+            )
+        })
+        .collect();
+    if answered == 0 {
+        let _ = writeln!(w, "  DNSKEY: no server answered");
+    } else if keys.is_empty() {
+        let _ = writeln!(w, "  DNSKEY: none; the zone is not signed");
+    } else {
+        let keys: Vec<String> = keys.into_iter().collect();
+        let _ = writeln!(w, "  DNSKEY: {}", keys.join("; "));
+        let soonest = d
+            .servers
+            .iter()
+            .flat_map(|s| s.dnskey_sigs.iter().chain(s.soa_sigs.iter().flatten()))
+            .map(|sig| sig.expiration)
+            .min();
+        if let Some(expiry) = soonest {
+            let _ = writeln!(
+                w,
+                "  {}",
+                st.dim(&format!(
+                    "earliest signature expiry: {}",
+                    utc(u64::from(expiry))
+                ))
+            );
+        }
+    }
+    let _ = writeln!(w);
 }
 
 /// What all servers together served for one name and type.

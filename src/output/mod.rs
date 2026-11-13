@@ -8,7 +8,8 @@ use serde::Serialize;
 use crate::checks::{Finding, Severity};
 use crate::diff::DiffReport;
 use crate::observe::{
-    NsHost, RecordObservation, ReferralStep, ServerProbe, Vantage, ZoneObservation,
+    DnssecObservation, NsHost, RecordObservation, ReferralStep, ServerProbe, Vantage,
+    ZoneObservation,
 };
 use crate::store::ZoneSummary;
 
@@ -70,6 +71,9 @@ pub struct Report {
     pub delegation_path: Vec<ReferralStep>,
     pub nameservers: Vec<NsHost>,
     pub probes: Vec<ServerProbe>,
+    /// DNSSEC data: the parent's DS set, and each server's keys and signatures.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dnssec: Option<DnssecObservation>,
     /// Record sets per name, type and server. Present only for `run`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub records: Vec<RecordObservation>,
@@ -140,6 +144,7 @@ impl Report {
             delegation_path: obs.delegation_path,
             nameservers: obs.ns_hosts,
             probes: obs.probes,
+            dnssec: obs.dnssec,
             records: obs.records,
             findings,
             summary,

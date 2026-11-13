@@ -411,6 +411,7 @@ impl Resolver {
             qname: qname.to_string(),
             qtype,
             edns: true,
+            dnssec: false,
         };
         let mut msg = self.send(&spec).await?;
         if msg.metadata.response_code == ResponseCode::FormErr {
