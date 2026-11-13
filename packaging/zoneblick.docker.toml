@@ -1,0 +1,27 @@
+# zoneblick configuration for the Docker image.
+
+[server]
+# Inside the container the server must listen on all interfaces; compose.yaml
+# publishes the port on 127.0.0.1 of the host only.
+bind = "0.0.0.0:8053"
+data_dir = "/data"
+# Required, because the bind address above is not localhost. Pick a long
+# random token, then put its hash here:
+#   docker run --rm ghcr.io/cschweda/zoneblick:latest token "$(openssl rand -hex 32)"
+# Keep the token itself; the web UI asks for it.
+token_sha256 = "REPLACE_WITH_THE_OUTPUT_OF_THE_TOKEN_COMMAND"
+
+[schedule]
+every = "1h"
+max_qps_per_server = 5
+
+# One [[zone]] block per zone you control.
+[[zone]]
+name = "example.org"
+seeds = ["www", "mail"]
+
+# [alerts.webhook]
+# url = "https://example.org/hooks/zoneblick"
+
+# [alerts.ntfy]
+# url = "https://ntfy.sh/your-topic"

@@ -1,0 +1,18 @@
+# The image published with each release. It is assembled from the static
+# Linux binaries the release workflow has already built, so nothing is
+# compiled here and both architectures build in seconds.
+#
+# Build context layout (prepared by .github/workflows/release.yml):
+#   dist/amd64/zoneblick, dist/arm64/zoneblick, packaging/data/
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG TARGETARCH
+COPY --chmod=755 dist/${TARGETARCH}/zoneblick /usr/local/bin/zoneblick
+# The data directory, owned by the unprivileged user the image runs as.
+COPY --chown=65532:65532 packaging/data/ /data/
+
+VOLUME /data
+EXPOSE 8053
+ENTRYPOINT ["/usr/local/bin/zoneblick"]
+CMD ["serve", "--config", "/etc/zoneblick.toml"]

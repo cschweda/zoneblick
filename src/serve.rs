@@ -296,17 +296,42 @@ pub fn token_hash(token: &str) -> String {
         .collect()
 }
 
-/// Require the bearer token on API routes when one is configured.
+/// The host part of a `Host` or `Origin` value, without scheme or port.
+fn host_only(value: &str) -> &str {
+    let value = value
+        .strip_prefix("http://")
+        .or_else(|| value.strip_prefix("https://"))
+        .unwrap_or(value);
+    if let Some(end) = value.find(']') {
+        // An IPv6 literal: keep the brackets, drop any port.
+        return &value[..=end];
+    }
+    value.split(':').next().unwrap_or(value)
+}
+
+fn forbidden(kind: &'static str, message: &str) -> Response {
+    ApiError(StatusCode::FORBIDDEN, kind, message.to_string()).into_response()
+}
+
+/// Guard the API routes.
+///
+/// - With a token configured, every request must carry it.
+/// - Without one, the server only ever listens on loopback, and the request
+///   must have been addressed to a loopback name. That stops a web page
+///   from reaching the API through a hostname it has pointed at 127.0.0.1
+///   (DNS rebinding).
+/// - A request that changes something must not come from another site.
 async fn require_token(
     State(state): State<Arc<AppState>>,
     request: Request,
     next: Next,
 ) -> Response {
+    let headers = request.headers();
+    let header_str = |name: header::HeaderName| headers.get(name).and_then(|v| v.to_str().ok());
+    let host = header_str(header::HOST).unwrap_or("");
+
     if let Some(expected) = &state.config.server.token_sha256 {
-        let given = request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
+        let given = header_str(header::AUTHORIZATION)
             .and_then(|v| v.strip_prefix("Bearer "))
             .map(token_hash);
         let ok = given.is_some_and(|hash| constant_time_eq(&hash, &expected.to_ascii_lowercase()));
@@ -318,6 +343,30 @@ async fn require_token(
                     .to_string(),
             )
             .into_response();
+        }
+    } else if !matches!(host_only(host), "localhost" | "127.0.0.1" | "[::1]") {
+        return forbidden(
+            "forbidden_host",
+            "without an API token, zoneblick only answers requests addressed to localhost",
+        );
+    }
+
+    if !matches!(
+        *request.method(),
+        axum::http::Method::GET | axum::http::Method::HEAD
+    ) {
+        let fetch_site = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok());
+        if fetch_site.is_some_and(|site| !matches!(site, "same-origin" | "none")) {
+            return forbidden("cross_site", "requests from other sites are not accepted");
+        }
+        if let Some(origin) = header_str(header::ORIGIN) {
+            let origin = origin
+                .strip_prefix("http://")
+                .or_else(|| origin.strip_prefix("https://"))
+                .unwrap_or(origin);
+            if origin != host {
+                return forbidden("cross_site", "requests from other sites are not accepted");
+            }
         }
     }
     next.run(request).await
@@ -361,13 +410,11 @@ async fn ui_page() -> impl IntoResponse {
     )
 }
 
-async fn api_health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+/// Liveness only. It needs no token, so it says nothing about the zones.
+async fn api_health() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
-        "zones": state.config.zones.len(),
-        "running": *state.running.lock().expect("lock"),
-        "next_run_unix": *state.next_run_unix.lock().expect("lock"),
     }))
 }
 
@@ -478,12 +525,13 @@ struct TriggerBody {
 }
 
 /// Start a run of one configured zone, or of all of them. Returns at once;
-/// the run carries on in the background.
+/// the run carries on in the background. The body must be JSON (`{}` for
+/// all zones), which a form on another site cannot send.
 async fn api_trigger(
     State(state): State<Arc<AppState>>,
-    body: Option<Json<TriggerBody>>,
+    Json(body): Json<TriggerBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
-    let wanted = body.and_then(|b| b.0.zone);
+    let wanted = body.zone;
     let zones: Vec<ZoneConfig> = match wanted {
         Some(input) => {
             let zone = normalise_zone(&input).map_err(|_| bad_zone(&input))?;
@@ -882,6 +930,14 @@ mod tests {
         assert!(constant_time_eq("abc", "abc"));
         assert!(!constant_time_eq("abc", "abd"));
         assert!(!constant_time_eq("abc", "abcd"));
+    }
+
+    #[test]
+    fn hosts_are_read_without_port_or_scheme() {
+        assert_eq!(host_only("127.0.0.1:8053"), "127.0.0.1");
+        assert_eq!(host_only("localhost"), "localhost");
+        assert_eq!(host_only("[::1]:8053"), "[::1]");
+        assert_eq!(host_only("http://evil.example:8053"), "evil.example");
     }
 
     #[test]

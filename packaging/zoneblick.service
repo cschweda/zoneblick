@@ -1,0 +1,24 @@
+# The systemd unit the install script writes, kept here for manual installs.
+#   sudo cp packaging/zoneblick.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now zoneblick
+
+[Unit]
+Description=zoneblick DNS zone watchdog
+Documentation=https://zoneblick.com
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=zoneblick
+Group=zoneblick
+ExecStart=/usr/local/bin/zoneblick serve --config /etc/zoneblick/zoneblick.toml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/zoneblick
+
+[Install]
+WantedBy=multi-user.target

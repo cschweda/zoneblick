@@ -1,0 +1,21 @@
+# zoneblick with Docker Compose.
+#
+# 1. Copy packaging/zoneblick.docker.toml to ./zoneblick.toml and edit it:
+#    add your zones, and set token_sha256 (the file explains how).
+# 2. docker compose up -d
+# 3. Open http://127.0.0.1:8053 and enter your token.
+
+services:
+  zoneblick:
+    image: ghcr.io/cschweda/zoneblick:latest
+    restart: unless-stopped
+    ports:
+      # Published on this machine only. Put a reverse proxy with TLS in
+      # front for remote access.
+      - "127.0.0.1:8053:8053"
+    volumes:
+      - zoneblick-data:/data
+      - ./zoneblick.toml:/etc/zoneblick.toml:ro
+
+volumes:
+  zoneblick-data:

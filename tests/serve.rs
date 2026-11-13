@@ -68,7 +68,8 @@ async fn runs_are_stored_and_served_by_the_api() {
     let (status, health) = get(&format!("{base}/api/v1/health")).await;
     assert_eq!(status, 200);
     assert_eq!(health["status"], "ok");
-    assert_eq!(health["zones"], 1);
+    // Health is open to anyone who can reach the port, so it names no zones.
+    assert_eq!(health.as_object().unwrap().len(), 2);
 
     let (_, zones) = get(&format!("{base}/api/v1/zones")).await;
     assert_eq!(zones["zones"][0]["zone"], "drift.example.");
@@ -225,6 +226,7 @@ async fn a_triggered_run_happens_in_the_background() {
 
     let r = http
         .post(format!("{base}/api/v1/runs"))
+        .json(&serde_json::json!({}))
         .send()
         .await
         .unwrap();
@@ -360,4 +362,74 @@ async fn a_failed_run_is_reported_not_stored() {
             .contains("no root server answered")
     );
     assert!(ui["zones"][0]["last_run_id"].is_null());
+}
+
+#[tokio::test]
+async fn an_open_local_api_refuses_other_hosts_and_other_sites() {
+    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
+    let base = serve(router(state)).await;
+    let http = reqwest::Client::new();
+    let runs = format!("{base}/api/v1/runs");
+    let zones_url = format!("{base}/api/v1/zones");
+
+    // DNS rebinding: the request reaches 127.0.0.1 but was addressed elsewhere.
+    let r = http
+        .get(&zones_url)
+        .header("Host", "evil.example:8053")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    let body: Value = r.json().await.unwrap();
+    assert_eq!(body["error"]["kind"], "forbidden_host");
+    let r = http
+        .get(&zones_url)
+        .header("Host", "localhost:8053")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+
+    // A form on another site cannot start a run: no JSON body, wrong origin.
+    let r = http
+        .post(&runs)
+        .body("zone=x")
+        .header("Content-Type", "text/plain")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 415);
+    let empty = serde_json::json!({});
+    let r = http
+        .post(&runs)
+        .json(&empty)
+        .header("Origin", "https://evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    let r = http
+        .post(&runs)
+        .json(&empty)
+        .header("Sec-Fetch-Site", "cross-site")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    let (_, zones) = get(&zones_url).await;
+    assert!(
+        zones["zones"].as_array().unwrap().is_empty(),
+        "no run was started"
+    );
+
+    // The page's own request is accepted.
+    let r = http
+        .post(&runs)
+        .json(&empty)
+        .header("Origin", base.clone())
+        .header("Sec-Fetch-Site", "same-origin")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
 }
