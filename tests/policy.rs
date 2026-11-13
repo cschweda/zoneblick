@@ -138,3 +138,102 @@ async fn a_wildcard_alias_and_an_unregistered_nameserver_domain() {
             .any(|f| matches!(f.check_id.as_str(), "DEL-06" | "TKO-05"))
     );
 }
+
+#[tokio::test]
+async fn a_run_can_discover_names_from_certificate_logs() {
+    use zoneblick::cli::{RunArgs, SourceArgs, run};
+
+    let mut world = policy_world();
+    world.http(
+        &zoneblick::discover::ct_url(POLICY_ZONE),
+        200,
+        r#"[{"common_name":"app.policy.example","name_value":"app.policy.example\n*.policy.example\nmx.policy.example\nelsewhere.example"}]"#,
+    );
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let fixture = dir.join("discover.fixture.json");
+    std::fs::write(
+        &fixture,
+        serde_json::to_string(&world.fixture(POLICY_ZONE)).unwrap(),
+    )
+    .unwrap();
+    let db = dir.join("discover.sqlite");
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", db.display()));
+    }
+    let args = |discover: &[&str]| RunArgs {
+        zone: POLICY_ZONE.to_string(),
+        names: vec![],
+        forget_names: vec![],
+        discover: discover.iter().map(|s| s.to_string()).collect(),
+        db: db.clone(),
+        json: true,
+        source: SourceArgs {
+            record: None,
+            replay: Some(fixture.clone()),
+        },
+    };
+
+    let out = run(&args(&["ct"]), false).await;
+    assert!(
+        out.stderr
+            .contains("name 2 hosts in policy.example., 2 of them new"),
+        "{}",
+        out.stderr
+    );
+    let doc: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(
+        doc["run"]["names"],
+        serde_json::json!(["app.policy.example.", "mx.policy.example."])
+    );
+    // The alias that discovery found is followed: its target is unregistered.
+    assert!(out.stdout.contains("TKO-03"));
+
+    // Found names are remembered without asking again.
+    let again = run(&args(&[]), false).await;
+    assert!(again.stderr.is_empty(), "{}", again.stderr);
+    let doc: serde_json::Value = serde_json::from_str(&again.stdout).unwrap();
+    assert_eq!(doc["run"]["names"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn an_alias_of_an_unclaimed_hosted_site_is_critical() {
+    let world = exposed_world();
+    let obs = world
+        .observe_records(POLICY_ZONE, &["docs.policy.example."])
+        .await
+        .unwrap();
+    let probes = &obs.policy.as_ref().unwrap().services;
+    assert_eq!(probes.len(), 1);
+    assert_eq!(
+        (
+            probes[0].service.as_str(),
+            probes[0].status,
+            probes[0].unclaimed
+        ),
+        ("GitHub Pages", Some(404), true)
+    );
+    let findings = run_all(&obs);
+    let found: Vec<_> = findings.iter().filter(|f| f.check_id == "TKO-02").collect();
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        (found[0].severity, found[0].name.as_str()),
+        (Severity::Critical, "docs.policy.example.")
+    );
+    assert!(
+        found[0]
+            .summary
+            .contains("policy-docs.github.io. (GitHub Pages)")
+    );
+
+    // A site that is there gives no finding.
+    let mut claimed = exposed_world();
+    claimed.http("http://docs.policy.example/", 200, "<h1>Our docs</h1>");
+    let obs = claimed
+        .observe_records(POLICY_ZONE, &["docs.policy.example."])
+        .await
+        .unwrap();
+    assert!(!run_all(&obs).iter().any(|f| f.check_id == "TKO-02"));
+    // And a plain check, which collects no aliases, fetches nothing.
+    let obs = exposed_world().observe(POLICY_ZONE).await.unwrap();
+    assert!(obs.policy.unwrap().services.is_empty());
+}

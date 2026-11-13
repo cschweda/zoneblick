@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 use crate::alerts;
 use crate::checks::{CATALOG, Severity};
 use crate::config::{Config, ZoneConfig};
-use crate::diff::{self, ChangeKind, DiffReport, RunRef};
+use crate::diff::{ChangeKind, DiffReport, RunRef};
 use crate::observe::{Outcome, QType, ServerProbe, Transport};
 use crate::output::{human, utc};
 use crate::resolver::{Client, NetConfig, normalise_zone, observe_zone_records};
@@ -64,7 +64,12 @@ pub struct AppState {
     /// The last failure of each zone's run, cleared by a good run.
     errors: Mutex<BTreeMap<String, String>>,
     next_run_unix: Mutex<Option<u64>>,
+    /// When each zone's names were last looked up in certificate logs.
+    discovered_at: Mutex<BTreeMap<String, u64>>,
 }
+
+/// Certificate logs are asked at most this often per zone.
+const DISCOVER_EVERY_SECS: u64 = 86_400;
 
 fn now_unix() -> u64 {
     SystemTime::now()
@@ -103,6 +108,7 @@ impl AppState {
             running: Mutex::new(BTreeSet::new()),
             errors: Mutex::new(BTreeMap::new()),
             next_run_unix: Mutex::new(None),
+            discovered_at: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -172,16 +178,46 @@ async fn run_zone_inner(
             names.push(name);
         }
     }
-    names.sort();
-
     let client = (state.client_factory)(&zone.name);
     let started = now_unix();
+
+    // More names from certificate logs, when the zone asks for that.
+    let mut discovered = Vec::new();
+    let due = state
+        .discovered_at
+        .lock()
+        .expect("lock")
+        .get(&zone.name)
+        .is_none_or(|at| started >= at + DISCOVER_EVERY_SECS);
+    if due && zone.discover.iter().any(|d| d == "ct") {
+        state
+            .discovered_at
+            .lock()
+            .expect("lock")
+            .insert(zone.name.clone(), started);
+        match crate::discover::ct_names(&client, &zone.name).await {
+            Ok(found) => {
+                discovered = found.into_iter().filter(|n| !names.contains(n)).collect();
+                if !discovered.is_empty() {
+                    log(&format!(
+                        "{} found {} new names in certificate logs",
+                        zone.name,
+                        discovered.len()
+                    ));
+                }
+                names.extend(discovered.iter().cloned());
+            }
+            Err(e) => log(&format!("{} discovery failed: {e}", zone.name)),
+        }
+    }
+    names.sort();
+
     let obs = observe_zone_records(client.clone(), &zone.name, started, &names)
         .await
         .map_err(|e| e.to_string())?;
     let outcome = {
         let mut store = state.store();
-        store_observation(
+        let outcome = store_observation(
             &mut store,
             obs,
             names,
@@ -190,7 +226,11 @@ async fn run_zone_inner(
             trigger,
             &zone.ignore,
         )
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+        store
+            .set_name_source(&zone.name, &discovered, "ct")
+            .map_err(|e| e.to_string())?;
+        outcome
     };
 
     if let Some(alert) = alerts::compose(&outcome) {
@@ -211,10 +251,23 @@ pub async fn run_all_zones(state: &Arc<AppState>, trigger: &str) {
     }
 }
 
+/// Delete runs older than the configured retention allows.
+fn prune(state: &Arc<AppState>) {
+    let Ok((keep_all, keep_daily)) = state.config.retention.limits() else {
+        return;
+    };
+    match state.store().prune(now_unix(), keep_all, keep_daily) {
+        Ok(p) if p.runs > 0 => log(&format!("pruned {} old runs", p.runs)),
+        Ok(_) => {}
+        Err(e) => log(&format!("pruning failed: {e}")),
+    }
+}
+
 /// The scheduler: check every zone at startup, then once per interval.
 async fn scheduler(state: Arc<AppState>, every: Duration) {
     loop {
         run_all_zones(&state, "schedule").await;
+        prune(&state);
         *state.next_run_unix.lock().expect("lock") = Some(now_unix() + every.as_secs());
         tokio::time::sleep(every).await;
     }
@@ -512,11 +565,7 @@ async fn api_diff(
     } else {
         (from, to)
     };
-    Ok(Json(diff::diff(
-        &store.load_run(&zone, from)?,
-        &store.load_run(&zone, to)?,
-        &ignore,
-    )))
+    Ok(Json(store.diff(&zone, from, to, &ignore)?))
 }
 
 #[derive(Deserialize, Default)]
@@ -714,7 +763,7 @@ fn short_name(zone: &str, name: &str) -> String {
 fn ui_changes(zone: &str, d: &DiffReport) -> Vec<(String, String)> {
     let mut lines = Vec::new();
     let line = |sign: &str, text: String| (sign.to_string(), text);
-    for c in &d.changes {
+    for c in d.changes.iter().filter(|c| !c.rotation) {
         let label = format!("{:<12} {:<6}", short_name(zone, &c.name), c.rtype.as_str());
         if c.kind == ChangeKind::Ttl {
             let join = |v: &[u32]| v.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
@@ -832,14 +881,7 @@ fn ui_zone(state: &AppState, store: &Store, zone: &str) -> Result<UiZone, StoreE
     for run in recent {
         let prev = runs.iter().rev().find(|r| r.id < run.id).copied();
         let changes = match prev {
-            Some(prev) => ui_changes(
-                zone,
-                &diff::diff(
-                    &store.load_run(zone, prev)?,
-                    &store.load_run(zone, *run)?,
-                    &ignore,
-                ),
-            ),
+            Some(prev) => ui_changes(zone, &store.diff(zone, prev, *run, &ignore)?),
             None => Vec::new(),
         };
         history.push(UiRun {

@@ -42,6 +42,8 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
         Command::Zones {
             action: ZonesAction::List(args),
         } => cli::zones_list(&args, color),
+        Command::Baseline { action } => cli::baseline(&action),
+        Command::Prune(args) => cli::prune(&args),
         Command::Serve(args) => runtime.block_on(cli::serve(&args)),
         Command::Token(args) => cli::token(&args),
     };

@@ -2,7 +2,7 @@
 //! findings, store the snapshot, and compare with the previous run.
 
 use crate::checks::run_all;
-use crate::diff::{self, DiffReport};
+use crate::diff::DiffReport;
 use crate::observe::ZoneObservation;
 use crate::output::Report;
 use crate::store::{RunMeta, Store, StoreError};
@@ -39,11 +39,7 @@ pub fn store_observation(
     };
     let run_id = store.save_run(&obs, &findings, &meta)?;
     let diff = match store.pick_runs(&zone, None, Some(run_id)) {
-        Ok((from, to)) => Some(diff::diff(
-            &store.load_run(&zone, from)?,
-            &store.load_run(&zone, to)?,
-            ignore,
-        )),
+        Ok((from, to)) => Some(store.diff(&zone, from, to, ignore)?),
         Err(StoreError::NotEnoughRuns { .. }) => None,
         Err(e) => return Err(e),
     };

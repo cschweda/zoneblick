@@ -11,7 +11,7 @@ use tokio::task::JoinSet;
 use super::ResolveError;
 use super::hints::ROOT_HINTS;
 use super::iterate::{Resolver, norm, parse_response, printable, rcode_name};
-use super::policy::{cname_targets, collect_policy};
+use super::policy::{cname_targets, collect_policy, service_probes};
 use super::signed::collect_dnssec;
 use super::transport::{Client, QuerySpec, RawOutcome, record_type};
 use crate::observe::{
@@ -286,6 +286,7 @@ pub async fn observe_zone_records(
         policy
             .targets
             .extend(cname_targets(&resolver, &obs.records).await);
+        policy.services = service_probes(&client, &policy.targets).await;
     }
     Ok(obs)
 }

@@ -32,6 +32,51 @@ pub struct Config {
     pub zones: Vec<ZoneConfig>,
     #[serde(default)]
     pub alerts: AlertsConfig,
+    #[serde(default)]
+    pub retention: RetentionConfig,
+}
+
+/// How long stored runs are kept.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetentionConfig {
+    /// Every run younger than this is kept.
+    #[serde(default = "default_keep_all")]
+    pub keep_all: String,
+    /// Older runs are thinned to one per day, and deleted after this long.
+    #[serde(default = "default_keep_daily")]
+    pub keep_daily: String,
+}
+
+pub fn default_keep_all() -> String {
+    "30d".to_string()
+}
+
+pub fn default_keep_daily() -> String {
+    "365d".to_string()
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            keep_all: default_keep_all(),
+            keep_daily: default_keep_daily(),
+        }
+    }
+}
+
+impl RetentionConfig {
+    /// The two limits, in seconds.
+    pub fn limits(&self) -> Result<(u64, u64), ConfigError> {
+        let all = parse_duration(&self.keep_all)?.as_secs();
+        let daily = parse_duration(&self.keep_daily)?.as_secs();
+        if daily < all {
+            return Err(ConfigError::Invalid(
+                "[retention] keep_daily must not be shorter than keep_all".to_string(),
+            ));
+        }
+        Ok((all, daily))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -107,7 +152,8 @@ pub struct ZoneConfig {
     /// Name patterns left out of change reports and alerts.
     #[serde(default)]
     pub ignore: Vec<String>,
-    /// Discovery sources from the design ("ct", "axfr"); not used yet.
+    /// Where to look for more names. `"ct"` reads Certificate Transparency
+    /// logs through crt.sh, once a day.
     #[serde(default)]
     pub discover: Vec<String>,
 }
@@ -212,6 +258,7 @@ impl Config {
             message: e.to_string(),
         })?;
         config.interval()?;
+        config.retention.limits()?;
         let bind = config.bind_addr()?;
         if !bind.ip().is_loopback() && config.server.token_sha256.is_none() {
             return Err(ConfigError::Invalid(format!(
@@ -247,6 +294,11 @@ impl Config {
                 }
             }
             zone.seeds = seeds;
+            if let Some(other) = zone.discover.iter().find(|d| d.as_str() != "ct") {
+                return Err(ConfigError::Invalid(format!(
+                    "zone {name}, discover: \"{other}\" is not a discovery source; the only one is \"ct\""
+                )));
+            }
             seen.push(name.clone());
             zone.name = name;
         }
@@ -297,7 +349,7 @@ max_qps_per_server = 5
 [[zone]]
 name = "Example.org"
 seeds = ["www", "api", "mail", "www"]
-discover = ["ct", "axfr"]
+discover = ["ct"]
 ignore = ["_acme-challenge.*"]
 
 [alerts.email]

@@ -12,14 +12,14 @@ use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 
 use crate::checks::{Evidence, Finding, Severity};
-use crate::diff::{RunData, RunRef, StoredFinding};
+use crate::diff::{DiffReport, RunData, RunRef, StoredFinding, Volatility, diff_with};
 use crate::observe::{
     DnssecObservation, NsHost, QType, RecordAnswer, RecordObservation, RecordOutcome, ReferralStep,
     ServerProbe, Transport, Vantage, ZoneObservation,
 };
 
 /// Version of the database layout, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// Changes to the layout since version 1, in order. Entry `i` takes a
 /// database from version `i + 1` to `i + 2`. A new database is created at
@@ -29,7 +29,23 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE runs ADD COLUMN dnssec_json TEXT;",
     // 3: and the mail and policy data.
     "ALTER TABLE runs ADD COLUMN policy_json TEXT;",
+    // 4: a zone can pin one run as its baseline.
+    "CREATE TABLE baselines (
+         zone_id    INTEGER PRIMARY KEY REFERENCES zones(id),
+         run_id     INTEGER NOT NULL REFERENCES runs(id),
+         pinned_at  INTEGER NOT NULL
+     );",
 ];
+
+/// How many earlier runs are read to learn which names rotate.
+const HISTORY_RUNS: usize = 10;
+
+/// What [`Store::prune`] removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+pub struct Pruned {
+    pub runs: usize,
+    pub record_sets: usize,
+}
 
 const SCHEMA: &str = "
 CREATE TABLE zones (
@@ -271,16 +287,34 @@ impl Store {
     pub fn names(&self, zone: &str) -> Result<Vec<String>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT n.fqdn FROM names n JOIN zones z ON z.id = n.zone_id
-             WHERE z.name = ?1 AND n.source = 'seed' ORDER BY n.fqdn",
+             WHERE z.name = ?1 AND n.source != 'apex' ORDER BY n.fqdn",
         )?;
         let rows = stmt.query_map([zone], |r| r.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// Record where names came from, for example `ct` for names found in
+    /// certificate logs. Names not yet stored for the zone are left alone.
+    pub fn set_name_source(
+        &self,
+        zone: &str,
+        names: &[String],
+        source: &str,
+    ) -> Result<(), StoreError> {
+        for name in names {
+            self.conn.execute(
+                "UPDATE names SET source = ?3 WHERE fqdn = ?2 AND source != 'apex'
+                 AND zone_id = (SELECT id FROM zones WHERE name = ?1)",
+                params![zone, name, source],
+            )?;
+        }
+        Ok(())
+    }
+
     /// Stop checking a name in later runs. Its history stays.
     pub fn forget_name(&self, zone: &str, name: &str) -> Result<bool, StoreError> {
         let n = self.conn.execute(
-            "DELETE FROM names WHERE fqdn = ?2 AND source = 'seed'
+            "DELETE FROM names WHERE fqdn = ?2 AND source != 'apex'
              AND zone_id = (SELECT id FROM zones WHERE name = ?1)",
             params![zone, name],
         )?;
@@ -492,6 +526,157 @@ impl Store {
         Ok((from_run, to_run))
     }
 
+    /// Compare two stored runs, `from` the older one. Address rotation of
+    /// names that the runs before `from` show to be volatile is marked.
+    pub fn diff(
+        &self,
+        zone: &str,
+        from: RunRef,
+        to: RunRef,
+        ignore: &[String],
+    ) -> Result<DiffReport, StoreError> {
+        let mut history = Vec::new();
+        let earlier: Vec<RunRef> = self
+            .runs(zone)?
+            .into_iter()
+            .filter(|r| r.id <= from.id)
+            .collect();
+        let skip = earlier.len().saturating_sub(HISTORY_RUNS);
+        for run in &earlier[skip..] {
+            history.push(self.load_run(zone, *run)?);
+        }
+        let volatility = Volatility::learn(&history);
+        let from_data = match history.pop() {
+            Some(data) if data.run == from => data,
+            _ => self.load_run(zone, from)?,
+        };
+        Ok(diff_with(
+            &from_data,
+            &self.load_run(zone, to)?,
+            ignore,
+            &volatility,
+        ))
+    }
+
+    /// Pin a run as the zone's baseline: the state that counts as correct.
+    /// Without a run ID, the latest run is pinned.
+    pub fn pin_baseline(
+        &self,
+        zone: &str,
+        run: Option<i64>,
+        now_unix: u64,
+    ) -> Result<RunRef, StoreError> {
+        let zone_id = self.zone_id(zone)?;
+        let runs = self.runs(zone)?;
+        let picked = match run {
+            None => runs.last().copied(),
+            Some(id) => runs.iter().copied().find(|r| r.id == id),
+        }
+        .ok_or_else(|| StoreError::UnknownRun {
+            zone: zone.to_string(),
+            run: run.unwrap_or(0),
+            available: runs
+                .iter()
+                .map(|r| format!("#{}", r.id))
+                .collect::<Vec<_>>()
+                .join(", "),
+        })?;
+        self.conn.execute(
+            "INSERT INTO baselines (zone_id, run_id, pinned_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT (zone_id) DO UPDATE SET run_id = ?2, pinned_at = ?3",
+            params![zone_id, picked.id, now_unix as i64],
+        )?;
+        Ok(picked)
+    }
+
+    /// Remove the zone's baseline. True when there was one.
+    pub fn clear_baseline(&self, zone: &str) -> Result<bool, StoreError> {
+        let zone_id = self.zone_id(zone)?;
+        let n = self
+            .conn
+            .execute("DELETE FROM baselines WHERE zone_id = ?1", [zone_id])?;
+        Ok(n > 0)
+    }
+
+    /// The zone's pinned baseline run, when it has one.
+    pub fn baseline(&self, zone: &str) -> Result<Option<RunRef>, StoreError> {
+        let zone_id = self.zone_id(zone)?;
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT r.id, r.started_at FROM baselines b JOIN runs r ON r.id = b.run_id
+                 WHERE b.zone_id = ?1",
+                [zone_id],
+                |r| {
+                    Ok(RunRef {
+                        id: r.get(0)?,
+                        started_at_unix: r.get::<_, i64>(1)? as u64,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Delete old runs. Runs younger than `keep_all_secs` stay. Older ones
+    /// are thinned to the last run of each UTC day, and deleted once older
+    /// than `keep_daily_secs`. A zone's latest run and its baseline always
+    /// stay, and so does the history of findings.
+    pub fn prune(
+        &mut self,
+        now_unix: u64,
+        keep_all_secs: u64,
+        keep_daily_secs: u64,
+    ) -> Result<Pruned, StoreError> {
+        let tx = self.conn.transaction()?;
+        let mut doomed: Vec<i64> = Vec::new();
+        {
+            let mut stmt = tx.prepare(
+                "SELECT r.id, r.zone_id, r.started_at,
+                        r.id = (SELECT MAX(id) FROM runs WHERE zone_id = r.zone_id),
+                        EXISTS (SELECT 1 FROM baselines b WHERE b.run_id = r.id)
+                 FROM runs r ORDER BY r.zone_id, r.id DESC",
+            )?;
+            let mut rows = stmt.query([])?;
+            // Newest first, so the first run seen for a day is its last.
+            let mut days_kept: BTreeSet<(i64, i64)> = BTreeSet::new();
+            while let Some(r) = rows.next()? {
+                let (id, zone_id, started): (i64, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?);
+                let (latest, pinned): (bool, bool) = (r.get(3)?, r.get(4)?);
+                let age = (now_unix as i64).saturating_sub(started);
+                let day = (zone_id, started.div_euclid(86_400));
+                let keep = if age <= keep_all_secs as i64 {
+                    true
+                } else if age <= keep_daily_secs as i64 {
+                    days_kept.insert(day)
+                } else {
+                    false
+                };
+                if !(keep || latest || pinned) {
+                    doomed.push(id);
+                }
+            }
+        }
+        for id in &doomed {
+            tx.execute("DELETE FROM run_findings WHERE run_id = ?1", [id])?;
+            tx.execute("DELETE FROM observations WHERE run_id = ?1", [id])?;
+            tx.execute("DELETE FROM runs WHERE id = ?1", [id])?;
+        }
+        let record_sets = if doomed.is_empty() {
+            0
+        } else {
+            tx.execute(
+                "DELETE FROM rrsets WHERE hash NOT IN
+                     (SELECT rrset_hash FROM observations WHERE rrset_hash IS NOT NULL)",
+                [],
+            )?
+        };
+        tx.commit()?;
+        Ok(Pruned {
+            runs: doomed.len(),
+            record_sets,
+        })
+    }
+
     /// Load what a diff needs from one stored run.
     pub fn load_run(&self, zone: &str, run: RunRef) -> Result<RunData, StoreError> {
         let delegation_json: String = self.conn.query_row(
@@ -581,7 +766,7 @@ impl Store {
     pub fn zones(&self) -> Result<Vec<ZoneSummary>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT z.name,
-                    (SELECT COUNT(*) FROM names n WHERE n.zone_id = z.id AND n.source = 'seed'),
+                    (SELECT COUNT(*) FROM names n WHERE n.zone_id = z.id AND n.source != 'apex'),
                     (SELECT COUNT(*) FROM runs r WHERE r.zone_id = z.id),
                     (SELECT MAX(r.id) FROM runs r WHERE r.zone_id = z.id),
                     (SELECT r.started_at FROM runs r WHERE r.zone_id = z.id ORDER BY r.id DESC LIMIT 1),
@@ -941,5 +1126,125 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+
+    #[test]
+    fn a_baseline_is_pinned_shown_and_cleared() {
+        let mut store = Store::open_in_memory().unwrap();
+        let first = save(&mut store, &obs_with("192.0.2.10", 100));
+        let second = save(&mut store, &obs_with("192.0.2.20", 200));
+        assert_eq!(store.baseline(ZONE).unwrap(), None);
+        // The latest run by default, a named run when asked.
+        assert_eq!(store.pin_baseline(ZONE, None, 300).unwrap().id, second);
+        assert_eq!(
+            store.pin_baseline(ZONE, Some(first), 300).unwrap().id,
+            first
+        );
+        assert_eq!(store.baseline(ZONE).unwrap().unwrap().id, first);
+        assert!(matches!(
+            store.pin_baseline(ZONE, Some(99), 300),
+            Err(StoreError::UnknownRun { run: 99, .. })
+        ));
+        assert!(store.clear_baseline(ZONE).unwrap());
+        assert!(!store.clear_baseline(ZONE).unwrap());
+    }
+
+    #[test]
+    fn pruning_thins_old_runs_and_keeps_what_matters() {
+        const DAY: u64 = 86_400;
+        let now = 1000 * DAY;
+        let mut store = Store::open_in_memory().unwrap();
+        let mut at = |days_ago: u64, offset: u64, www: &str| {
+            save(&mut store, &obs_with(www, now - days_ago * DAY + offset))
+        };
+        let ancient = at(500, 0, "192.0.2.1");
+        let pinned = at(400, 0, "192.0.2.2");
+        let old_morning = at(60, 100, "192.0.2.3");
+        let old_evening = at(60, 5000, "192.0.2.4");
+        let recent_a = at(2, 100, "192.0.2.5");
+        let recent_b = at(2, 200, "192.0.2.5");
+        store.pin_baseline(ZONE, Some(pinned), now).unwrap();
+        let sets_before = store.count("rrsets");
+
+        let pruned = store.prune(now, 30 * DAY, 365 * DAY).unwrap();
+        assert_eq!(pruned.runs, 2);
+        let left: Vec<i64> = store.runs(ZONE).unwrap().iter().map(|r| r.id).collect();
+        // Gone: the run past a year, and the earlier of two on one old day.
+        assert_eq!(left, [pinned, old_evening, recent_a, recent_b]);
+        assert!(!left.contains(&ancient) && !left.contains(&old_morning));
+        assert_eq!(
+            store.count("rrsets"),
+            sets_before - pruned.record_sets as i64
+        );
+        assert_eq!(pruned.record_sets, 2);
+        // What is left still loads and compares.
+        let runs = store.runs(ZONE).unwrap();
+        assert!(store.diff(ZONE, runs[0], runs[3], &[]).unwrap().changed);
+        // A second pass finds nothing more.
+        assert_eq!(
+            store.prune(now, 30 * DAY, 365 * DAY).unwrap(),
+            Pruned::default()
+        );
+        // Even with nothing allowed to stay, the latest run and the baseline do.
+        store.prune(now, 1, 1).unwrap();
+        let left: Vec<i64> = store.runs(ZONE).unwrap().iter().map(|r| r.id).collect();
+        assert_eq!(left, [pinned, recent_b]);
+    }
+
+    #[test]
+    fn rotation_of_a_volatile_name_is_not_a_change() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut ids = Vec::new();
+        for (i, www) in [
+            "192.0.2.10",
+            "192.0.2.11",
+            "192.0.2.12",
+            "192.0.2.10",
+            "192.0.2.13",
+        ]
+        .iter()
+        .enumerate()
+        {
+            ids.push(save(&mut store, &obs_with(www, 100 * (i as u64 + 1))));
+        }
+        let runs = store.runs(ZONE).unwrap();
+        // The first three flaps are ordinary changes.
+        for step in 0..3 {
+            let d = store.diff(ZONE, runs[step], runs[step + 1], &[]).unwrap();
+            assert!(d.changed && !d.changes[0].rotation, "step {step}");
+        }
+        // The fourth, to a neighbouring address, is rotation.
+        let d = store.diff(ZONE, runs[3], runs[4], &[]).unwrap();
+        assert!(!d.changed);
+        assert!(d.changes[0].rotation);
+        assert_eq!((d.summary.modified, d.summary.rotations), (0, 1));
+
+        // An address in a network never seen before still counts.
+        save(&mut store, &obs_with("203.0.113.9", 600));
+        let runs = store.runs(ZONE).unwrap();
+        let d = store.diff(ZONE, runs[4], runs[5], &[]).unwrap();
+        assert!(d.changed && !d.changes[0].rotation);
+        assert_eq!(d.summary.modified, 1);
+    }
+
+    #[test]
+    fn discovered_names_keep_their_source() {
+        let mut store = Store::open_in_memory().unwrap();
+        save(&mut store, &obs_with("192.0.2.10", 100));
+        store
+            .set_name_source(ZONE, &["www.example.test.".to_string()], "ct")
+            .unwrap();
+        let source: String = store
+            .conn
+            .query_row(
+                "SELECT source FROM names WHERE fqdn = 'www.example.test.'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(source, "ct");
+        // Discovered names are checked like any other, and can be forgotten.
+        assert_eq!(store.names(ZONE).unwrap().len(), 2);
+        assert!(store.forget_name(ZONE, "www.example.test.").unwrap());
     }
 }

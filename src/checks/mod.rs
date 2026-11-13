@@ -205,6 +205,14 @@ pub enum Evidence {
         /// Set when the target's whole domain is not registered.
         unregistered_domain: Option<String>,
     },
+    UnclaimedService {
+        owner: String,
+        target: String,
+        service: String,
+        /// The address that was fetched, and the HTTP status it gave.
+        url: String,
+        status: Option<u16>,
+    },
     WildcardAlias {
         /// The wildcard record's name, `*.<zone>`.
         wildcard: String,
@@ -264,6 +272,7 @@ impl Finding {
             Evidence::MailTargetProblem { target, .. } => target.clone(),
             Evidence::DanglingTarget { rtype, target, .. } => format!("{rtype}/{target}"),
             Evidence::WildcardAlias { target, .. } => target.clone(),
+            Evidence::UnclaimedService { service, .. } => service.clone(),
         };
         format!("{}|{}|{}", self.check_id, self.name, detail)
     }
@@ -418,6 +427,12 @@ pub const CATALOG: &[CheckInfo] = &[
         true,
     ),
     check(
+        "TKO-02",
+        "CNAME points to a hosting service that says the site is unclaimed",
+        Severity::Critical,
+        true,
+    ),
+    check(
         "TKO-03",
         "CNAME or MX target's domain is not registered",
         Severity::Critical,
@@ -476,6 +491,7 @@ const CHECKS: &[Check] = &[
     policy::pol_04_mta_sts,
     policy::pol_05_mx_target,
     policy::tko_01_dangling_cname,
+    policy::tko_02_unclaimed_service,
     policy::tko_03_unregistered_target,
     policy::tko_04_spf_unregistered,
     policy::tko_05_wildcard,

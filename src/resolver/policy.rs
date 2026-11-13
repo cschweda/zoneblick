@@ -11,9 +11,10 @@ use super::iterate::{Resolver, printable};
 use super::probe::normalise_zone;
 use super::transport::{Client, HttpOutcome};
 use crate::observe::{
-    Lookup, MtaSts, PolicyObservation, QType, RecordObservation, SpfLookup, SpfObservation,
-    TargetResolution,
+    Lookup, MtaSts, PolicyObservation, QType, RecordObservation, ServiceProbe, SpfLookup,
+    SpfObservation, TargetResolution,
 };
+use crate::signatures::Signature;
 
 /// SPF allows ten lookups; following a little past that shows by how much a
 /// record overshoots without querying without end.
@@ -240,6 +241,7 @@ pub(crate) async fn collect_policy(
     };
 
     PolicyObservation {
+        services: Vec::new(),
         wildcard,
         apex_txt,
         dmarc,
@@ -267,6 +269,55 @@ pub(crate) async fn cname_targets(
     let mut out = Vec::new();
     for (owner, target) in pairs.into_iter().take(MAX_TARGETS) {
         out.push(resolve_target(resolver, &owner, "CNAME", &target).await);
+    }
+    out
+}
+
+/// At most this many hostnames are fetched per run.
+const MAX_SERVICE_PROBES: usize = 20;
+
+/// For every alias that points at a known hosting service and resolves,
+/// fetch the hostname's front page once and see whether the service says
+/// that nobody has claimed the site. Nothing else is sent.
+pub(crate) async fn service_probes(
+    client: &Client,
+    targets: &[TargetResolution],
+) -> Vec<ServiceProbe> {
+    let mut out = Vec::new();
+    for t in targets
+        .iter()
+        .filter(|t| t.rtype == "CNAME" && (t.lookup.exists() || t.has_ipv6_only))
+    {
+        // The service is named by the alias target, or by what that is
+        // itself an alias of.
+        let Some((target, signature)) = [Some(&t.target), t.lookup.cname.as_ref()]
+            .into_iter()
+            .flatten()
+            .find_map(|name| Signature::for_target(name).map(|s| (name, s)))
+        else {
+            continue;
+        };
+        if out.len() >= MAX_SERVICE_PROBES {
+            break;
+        }
+        let url = format!("http://{}/", t.owner.trim_end_matches('.'));
+        let mut probe = ServiceProbe {
+            owner: t.owner.clone(),
+            target: target.clone(),
+            service: signature.service.to_string(),
+            url: url.clone(),
+            status: None,
+            error: None,
+            unclaimed: false,
+        };
+        match client.http_get(&url).await {
+            HttpOutcome::Error { message } => probe.error = Some(printable(&message)),
+            HttpOutcome::Response { status, body } => {
+                probe.status = Some(status);
+                probe.unclaimed = signature.matches(status, &body);
+            }
+        }
+        out.push(probe);
     }
     out
 }

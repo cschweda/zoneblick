@@ -1,5 +1,6 @@
 //! Mail and policy checks (`POL-01` to `POL-05`) and the takeover checks
-//! that need only DNS (`TKO-01`, `TKO-03`, `TKO-04`, `TKO-05`).
+//! that need only DNS (`TKO-01`, `TKO-03`, `TKO-04`, `TKO-05`), and `TKO-02`, which reads the
+//! answers of hosting services collected with a run.
 //!
 //! "Unregistered" here is decided from DNS alone: a name does not exist and
 //! the server that said so belongs to a top-level domain, so the domain
@@ -295,6 +296,35 @@ pub fn tko_01_dangling_cname(obs: &ZoneObservation) -> Vec<Finding> {
         .collect()
 }
 
+/// TKO-02: a hostname is an alias of a hosting service, and the service
+/// answers that nobody has claimed the site. Anyone with an account there
+/// can claim it and serve this hostname.
+pub fn tko_02_unclaimed_service(obs: &ZoneObservation) -> Vec<Finding> {
+    policy(obs)
+        .iter()
+        .flat_map(|p| &p.services)
+        .filter(|s| s.unclaimed)
+        .map(|s| {
+            Finding::new(
+                "TKO-02",
+                Severity::Critical,
+                &s.owner,
+                format!(
+                    "{} points at {} ({}), which says no such site exists there",
+                    s.owner, s.target, s.service
+                ),
+                Evidence::UnclaimedService {
+                    owner: s.owner.clone(),
+                    target: s.target.clone(),
+                    service: s.service.clone(),
+                    url: s.url.clone(),
+                    status: s.status,
+                },
+            )
+        })
+        .collect()
+}
+
 /// TKO-03: a CNAME or MX points into a domain that is not registered.
 /// Whoever registers it takes over the hostname, or the zone's mail.
 pub fn tko_03_unregistered_target(obs: &ZoneObservation) -> Vec<Finding> {
@@ -413,6 +443,7 @@ mod tests {
         let mut obs = healthy();
         obs.policy = Some(PolicyObservation {
             wildcard: None,
+            services: Vec::new(),
             apex_txt: lookup(ZONE, QType::Txt, "answer", &["\"v=spf1 mx -all\""]),
             dmarc: lookup(
                 "_dmarc.example.test.",

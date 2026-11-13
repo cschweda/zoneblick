@@ -195,6 +195,12 @@ impl Client {
     /// Fetch a URL over HTTPS. Redirects are not followed and at most 64 KB
     /// of the body is kept. A replaying client answers from its fixture.
     pub async fn http_get(&self, url: &str) -> HttpOutcome {
+        self.http_get_with(url, HTTP_BODY_LIMIT, Duration::from_secs(10))
+            .await
+    }
+
+    /// [`Client::http_get`] with its own body limit and timeout.
+    pub async fn http_get_with(&self, url: &str, limit: usize, timeout: Duration) -> HttpOutcome {
         let outcome = match &self.backend {
             Backend::Replay(_) => {
                 self.http_replay
@@ -204,7 +210,7 @@ impl Client {
                         message: "no recorded exchange for this URL".to_string(),
                     })
             }
-            Backend::Live(_) => live_http_get(url).await,
+            Backend::Live(_) => live_http_get(url, limit, timeout).await,
         };
         let mut rec = self.http_recording.lock().expect("recording lock");
         if !rec.iter().any(|e| e.url == url) {
@@ -279,13 +285,13 @@ impl Client {
     }
 }
 
-async fn live_http_get(url: &str) -> HttpOutcome {
+async fn live_http_get(url: &str, limit: usize, timeout: Duration) -> HttpOutcome {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let error = |e: reqwest::Error| HttpOutcome::Error {
         message: e.to_string(),
     };
     let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("zoneblick/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -302,9 +308,9 @@ async fn live_http_get(url: &str) -> HttpOutcome {
     loop {
         match response.chunk().await {
             Ok(Some(chunk)) => {
-                let room = HTTP_BODY_LIMIT.saturating_sub(body.len());
+                let room = limit.saturating_sub(body.len());
                 body.extend_from_slice(&chunk[..chunk.len().min(room)]);
-                if body.len() >= HTTP_BODY_LIMIT {
+                if body.len() >= limit {
                     break;
                 }
             }

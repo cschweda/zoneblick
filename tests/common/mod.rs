@@ -731,6 +731,27 @@ pub fn exposed_world() -> World {
         w.delegate_tld("ns.gone-dns.example.", qtype);
         w.nxdomain(TLD_SERVER, "ns.gone-dns.example.", qtype, "example.");
     }
+    // `docs` is an alias of a hosting service where nobody has claimed it.
+    for server in [NS1, NS3] {
+        w.serve_name(
+            server,
+            zone,
+            "docs.policy.example.",
+            &[cname("docs.policy.example.", "policy-docs.github.io.")],
+        );
+    }
+    // The test root answers for the service's name itself.
+    w.answer(
+        ROOT_V4,
+        "policy-docs.github.io.",
+        QType::A,
+        &[addr("policy-docs.github.io.", "192.0.2.80")],
+    );
+    w.http(
+        "http://docs.policy.example/",
+        404,
+        "<h1>404</h1><p>There isn't a GitHub Pages site here.</p>",
+    );
     for server in [NS1, NS3] {
         w.answer(
             server,

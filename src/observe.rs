@@ -411,6 +411,22 @@ pub struct TargetResolution {
     pub has_ipv6_only: bool,
 }
 
+/// What a hosting service answered for a hostname that is an alias of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceProbe {
+    /// The hostname in the zone.
+    pub owner: String,
+    /// The alias target that belongs to the service.
+    pub target: String,
+    pub service: String,
+    pub url: String,
+    /// HTTP status; `None` when the fetch failed.
+    pub status: Option<u16>,
+    pub error: Option<String>,
+    /// True when the answer is the service's "nobody has claimed this".
+    pub unclaimed: bool,
+}
+
 /// Mail and policy records, and where mail and alias targets lead.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyObservation {
@@ -427,6 +443,10 @@ pub struct PolicyObservation {
     /// `None` in observations built before it was collected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wildcard: Option<Lookup>,
+    /// What known hosting services answered for the aliases that point at
+    /// them. Filled in by `run`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<ServiceProbe>,
 }
 
 /// Everything recorded about one zone in one run.

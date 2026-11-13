@@ -4,7 +4,10 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use zoneblick::cli::{DiffArgs, RunArgs, SourceArgs, ZonesListArgs, diff, run, zones_list};
+use zoneblick::cli::{
+    BaselineAction, BaselineArgs, DiffArgs, PruneArgs, RunArgs, SourceArgs, ZonesListArgs,
+    baseline, diff, prune, run, zones_list,
+};
 
 const ZONE: &str = "drift.example";
 const NAMES: [&str; 4] = ["www", "api", "shop", "staging"];
@@ -29,6 +32,7 @@ fn run_args(db: &Path, state: &str, names: &[&str], json: bool) -> RunArgs {
         zone: ZONE.to_string(),
         names: names.iter().map(|s| s.to_string()).collect(),
         forget_names: vec![],
+        discover: vec![],
         db: db.to_path_buf(),
         json,
         source: SourceArgs {
@@ -43,6 +47,7 @@ fn diff_args(db: &Path, json: bool) -> DiffArgs {
         zone: ZONE.to_string(),
         from: None,
         to: None,
+        baseline: false,
         ignore: vec![],
         db: db.to_path_buf(),
         json,
@@ -286,5 +291,71 @@ async fn zones_list_and_failures() {
         out.stderr.contains("is not inside the zone"),
         "{}",
         out.stderr
+    );
+}
+
+fn baseline_args(db: &Path, run: Option<i64>) -> BaselineArgs {
+    BaselineArgs {
+        zone: ZONE.to_string(),
+        run,
+        db: db.to_path_buf(),
+    }
+}
+
+#[tokio::test]
+async fn a_diff_against_the_pinned_baseline() {
+    let db = db("baseline");
+    two_runs(&db).await;
+
+    // No baseline yet: the diff says how to pin one.
+    let mut args = diff_args(&db, false);
+    args.baseline = true;
+    let out = diff(&args, false);
+    assert_eq!(out.exit_code, 3);
+    assert!(
+        out.stderr.contains("zoneblick baseline pin"),
+        "{}",
+        out.stderr
+    );
+
+    let out = baseline(&BaselineAction::Pin(baseline_args(&db, Some(1))));
+    assert_eq!(out.exit_code, 0, "{}", out.stderr);
+    assert!(out.stdout.contains("is now run #1"), "{}", out.stdout);
+    let out = baseline(&BaselineAction::Show(baseline_args(&db, None)));
+    assert!(out.stdout.contains("is run #1"), "{}", out.stdout);
+
+    // A third run, identical to the second: nothing new since the run
+    // before, but still different from the baseline.
+    let third = run(&run_args(&db, "after", &[], false), false).await;
+    assert_eq!(third.exit_code, 1, "{}{}", third.stdout, third.stderr);
+    assert_eq!(diff(&diff_args(&db, false), false).exit_code, 0);
+    let out = diff(&args, false);
+    assert_eq!(out.exit_code, 1, "{}{}", out.stdout, out.stderr);
+    assert!(out.stdout.contains("run #1") && out.stdout.contains("run #3"));
+
+    let out = baseline(&BaselineAction::Clear(baseline_args(&db, None)));
+    assert!(out.stdout.contains("removed"), "{}", out.stdout);
+    assert_eq!(diff(&args, false).exit_code, 3);
+}
+
+#[tokio::test]
+async fn prune_reports_what_it_deleted() {
+    let db = db("prune");
+    two_runs(&db).await;
+    let args = |keep_all: &str, keep_daily: &str| PruneArgs {
+        keep_all: keep_all.to_string(),
+        keep_daily: keep_daily.to_string(),
+        db: db.clone(),
+    };
+    // The fixtures are dated 2024: past a year old, so only the latest stays.
+    let out = prune(&args("30d", "365d"));
+    assert_eq!(out.exit_code, 0, "{}", out.stderr);
+    assert!(out.stdout.starts_with("Deleted 1 runs"), "{}", out.stdout);
+    let bad = prune(&args("30d", "7d"));
+    assert_eq!(bad.exit_code, 3);
+    assert!(
+        bad.stderr.contains("keep_daily must not be shorter"),
+        "{}",
+        bad.stderr
     );
 }

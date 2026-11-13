@@ -110,17 +110,28 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - An alert is sent when findings open or resolve, records change or the delegation changes; on a zone's first run every finding counts as new; `info` findings never alert.
 - A failed run is logged and shown in the UI, not stored, and does not alert.
 - Email alerts are built with `lettre` over STARTTLS by default; they have not been tested against a real mail server.
-- The `discover` and `deep` config keys from the design are accepted and ignored for now.
+- The `deep` config key from the design is accepted and ignored for now.
 - Packaging: `install.sh` (also served at zoneblick.com/install.sh) installs the newest release, pre-releases included, and verifies its checksum; as root on Linux with systemd it creates the user, config, data directory and service.
 - The container image is built from the release's static binaries on `distroless/static` (no compiler in the image build, no emulation), runs as an unprivileged user, and is published to `ghcr.io/cschweda/zoneblick`.
 - The project website uses Plausible analytics; the binary and its web UI send no telemetry.
 
-## Phase 5 (partly)
+## Phase 5
 
-- Built: POL-01 to POL-05, TKO-01, TKO-03 and TKO-04. Not built: TKO-02 (service signatures; the licensing choice in the design is still open between fetching at run time and the MIT-only set), TKO-05 (wildcards) and discovery from certificate logs.
+- Built first: POL-01 to POL-05, TKO-01, TKO-03 and TKO-04. Added in 0.6.0: DEL-06, TKO-02, TKO-05 and discovery from certificate logs, which completes the 26 checks of the v1 design.
 - Mail and policy lookups go through the iterative resolver from the root, because SPF includes and alias targets live in other zones; no recursive resolver is used.
 - "Unregistered" is decided from DNS alone: NXDOMAIN from a top-level domain's servers means the domain is not delegated. No registry (RDAP or WHOIS) lookup and no public-suffix list. Domains under two-level suffixes are therefore reported as dangling (TKO-01), not unregistered.
-- TKO-03 covers CNAME and MX targets; nameserver targets are left to DEL-02 and the DEL-06 stub.
+- TKO-03 covers CNAME and MX targets. A nameserver in an unregistered domain is DEL-06 only, decided the same way (NXDOMAIN from a top-level domain); only nameservers outside the zone that have no address are looked up.
+- Signature licensing (the design's open question): option (b), the MIT-licensed set only. The page texts for TKO-02 are imported from nuclei-templates and bundled in `src/signatures.rs`, with the licence in `THIRD-PARTY.md`. Nothing is fetched at run time and no GPL-family data is used. This was chosen without asking, to finish v1; it is one file to replace if run-time fetching is preferred.
+- TKO-02 uses only templates that match on body text and status, for eleven services, and only for aliases whose target lies under the service's own hosting domain (those domains are not in the templates; they are the services' published ones). One plain-HTTP GET of the hostname's front page, no redirects, at most twenty hostnames per run. No confidence levels yet.
+- TKO-05 asks for `*.<zone>` by its literal name and reports a CNAME that leaves the zone. A wildcard A record is not reported: an address does not say whose it is.
+- Certificate-log discovery reads crt.sh, is opt-in (`--discover ct`, or `discover = ["ct"]` once a day in the daemon) because it tells crt.sh the zone, adds at most 200 names, and skips wildcards. A failed lookup does not fail the run. A forgotten name comes back if discovery finds it again.
+
+## Drift, continued (0.6.0)
+
+- Volatility: an A or AAAA set that changed in each of three consecutive run-to-run steps is volatile. A later change is `rotation`, not counted and not alerted, when every new address was seen in the last ten runs or shares a /24 or /48 with one that was. This stands in for the design's "new ASN" test, since there is no ASN data. It is computed from stored runs at diff time; the `names.volatile` column is not used.
+- Baselines: one pinned run per zone (`baselines` table, layout 4). `diff --baseline` compares it with the latest run; alerts still compare with the previous run only.
+- Retention: the design's default (every run for 30 days, then the last run of each UTC day for a year). A zone's latest run and its baseline are never deleted; finding history is kept. `zoneblick prune` by hand, and the daemon after every round.
+- Not built from the design's CLI list: `zones add | remove` and `export`; AXFR and provider-API discovery; muting a finding.
 - A target that is unregistered is reported once, as TKO-03, not also as TKO-01 or POL-05.
 - TKO-01 and the CNAME part of TKO-03 use the CNAME records `run` collects, so they need `run` or `serve`; the apex-level checks also run in `check`.
 - SPF: every `include`, `redirect`, `a`, `mx`, `exists` and `ptr` counts as one lookup, includes are followed breadth-first to depth 10, and following stops after 30 lookups. When a zone has several SPF records the first is followed.

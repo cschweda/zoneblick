@@ -391,6 +391,21 @@ pub fn evidence_lines(evidence: &Evidence) -> Vec<String> {
             }
             lines
         }
+        Evidence::UnclaimedService {
+            owner,
+            target,
+            service,
+            url,
+            status,
+        } => vec![
+            format!("{owner}  CNAME  {target}"),
+            match status {
+                Some(code) => format!(
+                    "{url} answered HTTP {code} with the {service} page for an unclaimed site"
+                ),
+                None => format!("{url} gave the {service} page for an unclaimed site"),
+            },
+        ],
         Evidence::WildcardAlias { wildcard, target } => {
             vec![format!("{wildcard}  CNAME  {target}")]
         }
@@ -671,13 +686,12 @@ fn change_label(st: &Style, kind: ChangeKind) -> String {
 }
 
 fn record_change(w: &mut String, st: &Style, c: &RecordChange) {
-    let _ = writeln!(
-        w,
-        "  {}  {} {}",
-        change_label(st, c.kind),
-        c.name,
-        c.rtype.as_str()
-    );
+    let label = if c.rotation {
+        st.dim("ROTATION")
+    } else {
+        change_label(st, c.kind)
+    };
+    let _ = writeln!(w, "  {}  {} {}", label, c.name, c.rtype.as_str());
     for value in &c.removed {
         let _ = writeln!(
             w,
@@ -697,6 +711,14 @@ fn record_change(w: &mut String, st: &Style, c: &RecordChange) {
         );
     }
     if c.kind == ChangeKind::Ttl {
+        return;
+    }
+    if c.rotation {
+        let _ = writeln!(
+            w,
+            "    {}",
+            st.dim("this name's addresses rotate; not counted as a change")
+        );
         return;
     }
     if c.all_servers {

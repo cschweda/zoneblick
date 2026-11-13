@@ -39,7 +39,7 @@ fn finding_line(verb: &str, f: &StoredFinding) -> String {
 
 fn change_lines(diff: &DiffReport) -> Vec<String> {
     let mut lines = Vec::new();
-    for c in &diff.changes {
+    for c in diff.changes.iter().filter(|c| !c.rotation) {
         let mut line = format!(
             "{} {} {}",
             c.kind.as_str().to_uppercase(),

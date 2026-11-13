@@ -99,6 +99,18 @@ pub struct RecordChange {
     pub servers: Vec<ServerChange>,
     /// True when every server observed in both runs changed the same way.
     pub all_servers: bool,
+    /// True when this is an address rotation of a name known to rotate:
+    /// reported, but not counted as a change.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub rotation: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -141,6 +153,9 @@ pub struct DiffSummary {
     pub ttl: usize,
     pub findings_opened: usize,
     pub findings_resolved: usize,
+    /// Address rotations of volatile names; not counted above.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotations: usize,
 }
 
 /// The result of comparing two runs. This is the `diff --json` document.
@@ -238,8 +253,87 @@ pub fn matches_pattern(pattern: &str, name: &str) -> bool {
     true
 }
 
+/// A name is volatile when its addresses changed in each of this many
+/// consecutive run-to-run steps.
+pub const VOLATILE_AFTER: usize = 3;
+
+/// What earlier runs say about names whose addresses rotate, as those
+/// behind a CDN or a load balancer do.
+#[derive(Debug, Default, Clone)]
+pub struct Volatility {
+    /// Per volatile record set: every address seen in the earlier runs.
+    pools: BTreeMap<Key, BTreeSet<String>>,
+}
+
+impl Volatility {
+    /// Learn from consecutive runs, oldest first, ending with the older run
+    /// of the diff. An A or AAAA set is volatile when it was present and
+    /// different in each of the last [`VOLATILE_AFTER`] steps.
+    pub fn learn(history: &[RunData]) -> Self {
+        let mut out = Volatility::default();
+        if history.len() <= VOLATILE_AFTER {
+            return out;
+        }
+        let all: Vec<BTreeMap<Key, View>> = history.iter().map(views).collect();
+        let recent = &all[all.len() - VOLATILE_AFTER - 1..];
+        for key in recent[0].keys() {
+            if !matches!(key.1, QType::A | QType::Aaaa) {
+                continue;
+            }
+            let pools: Option<Vec<&BTreeSet<String>>> = recent
+                .iter()
+                .map(|v| v.get(key).map(|view| &view.pool).filter(|p| !p.is_empty()))
+                .collect();
+            let Some(pools) = pools else { continue };
+            if pools.windows(2).all(|w| w[0] != w[1]) {
+                let seen = all
+                    .iter()
+                    .filter_map(|v| v.get(key))
+                    .flat_map(|view| view.pool.iter().cloned())
+                    .collect();
+                out.pools.insert(key.clone(), seen);
+            }
+        }
+        out
+    }
+
+    /// The volatile record sets, as (name, type).
+    pub fn names(&self) -> impl Iterator<Item = &(String, QType)> {
+        self.pools.keys()
+    }
+
+    /// True when a change to `key` is only rotation: the set is volatile
+    /// and every new address was seen before, or lies in the same /24
+    /// (IPv4) or /48 (IPv6) as one that was.
+    fn is_rotation(&self, key: &Key, added: &[String]) -> bool {
+        let Some(pool) = self.pools.get(key) else {
+            return false;
+        };
+        let prefix = |text: &str| -> Option<Vec<u8>> {
+            match text.parse::<IpAddr>().ok()? {
+                IpAddr::V4(a) => Some(a.octets()[..3].to_vec()),
+                IpAddr::V6(a) => Some(a.octets()[..6].to_vec()),
+            }
+        };
+        let known: BTreeSet<Vec<u8>> = pool.iter().filter_map(|a| prefix(a)).collect();
+        added
+            .iter()
+            .all(|a| pool.contains(a) || prefix(a).is_some_and(|p| known.contains(&p)))
+    }
+}
+
 /// Compare two runs of the same zone. `from` is the older one.
 pub fn diff(from: &RunData, to: &RunData, ignore: &[String]) -> DiffReport {
+    diff_with(from, to, ignore, &Volatility::default())
+}
+
+/// [`diff`], with what earlier runs taught about rotating names.
+pub fn diff_with(
+    from: &RunData,
+    to: &RunData,
+    ignore: &[String],
+    volatility: &Volatility,
+) -> DiffReport {
     let before = views(from);
     let after = views(to);
     let keys: BTreeSet<&Key> = before.keys().chain(after.keys()).collect();
@@ -340,11 +434,14 @@ pub fn diff(from: &RunData, to: &RunData, ignore: &[String]) -> DiffReport {
                 && servers.len() == in_both
                 && uniform(&servers));
 
+        let added: Vec<String> = a.pool.difference(&b.pool).cloned().collect();
+        let rotation = kind == ChangeKind::Modified && volatility.is_rotation(key, &added);
         changes.push(RecordChange {
             name: name.clone(),
             rtype: *rtype,
             kind,
-            added: a.pool.difference(&b.pool).cloned().collect(),
+            rotation,
+            added,
             removed: b.pool.difference(&a.pool).cloned().collect(),
             ttl_before: b.ttls.iter().copied().collect(),
             ttl_after: a.ttls.iter().copied().collect(),
@@ -389,7 +486,12 @@ pub fn diff(from: &RunData, to: &RunData, ignore: &[String]) -> DiffReport {
     findings_opened.sort();
     findings_resolved.sort();
 
-    let count = |k: ChangeKind| changes.iter().filter(|c| c.kind == k).count();
+    let count = |k: ChangeKind| {
+        changes
+            .iter()
+            .filter(|c| c.kind == k && !c.rotation)
+            .count()
+    };
     let summary = DiffSummary {
         added: count(ChangeKind::Added),
         removed: count(ChangeKind::Removed),
@@ -397,8 +499,9 @@ pub fn diff(from: &RunData, to: &RunData, ignore: &[String]) -> DiffReport {
         ttl: count(ChangeKind::Ttl),
         findings_opened: findings_opened.len(),
         findings_resolved: findings_resolved.len(),
+        rotations: changes.iter().filter(|c| c.rotation).count(),
     };
-    let changed = !changes.is_empty()
+    let changed = changes.iter().any(|c| !c.rotation)
         || delegation.is_some()
         || !findings_opened.is_empty()
         || !findings_resolved.is_empty();

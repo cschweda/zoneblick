@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use clap::{Args, Parser, Subcommand};
 
 use crate::checks::run_all;
-use crate::diff::{self, DiffReport};
+use crate::diff::DiffReport;
 use crate::output::{
     FailureReport, Report, RunDocument, SCHEMA_VERSION, StoredRun, ZonesDocument, exit, human, json,
 };
@@ -55,6 +55,21 @@ pub enum Command {
         action: ZonesAction,
     },
 
+    /// Pin, show or clear a zone's baseline: the stored run that counts
+    /// as correct. `zoneblick diff <zone> --baseline` compares against it.
+    Baseline {
+        #[command(subcommand)]
+        action: BaselineAction,
+    },
+
+    /// Delete old runs from the database.
+    ///
+    /// Runs younger than `--keep-all` stay. Older runs are thinned to the
+    /// last one of each day, and deleted once older than `--keep-daily`.
+    /// A zone's latest run and its baseline are never deleted. The daemon
+    /// does this by itself after every round of checks.
+    Prune(PruneArgs),
+
     /// Run the daemon: check every zone in the config file on a schedule,
     /// send alerts when something changes, and serve the API and web UI.
     Serve(ServeArgs),
@@ -78,6 +93,45 @@ pub struct ServeArgs {
 pub struct TokenArgs {
     /// The token to hash. Read from standard input when left out.
     pub token: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BaselineAction {
+    /// Pin a run as the baseline. Default: the latest run.
+    Pin(BaselineArgs),
+    /// Show which run is pinned.
+    Show(BaselineArgs),
+    /// Remove the baseline.
+    Clear(BaselineArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct BaselineArgs {
+    /// The zone.
+    pub zone: String,
+
+    /// For `pin`: the run to pin. Default: the latest run.
+    #[arg(long, value_name = "RUN")]
+    pub run: Option<i64>,
+
+    /// The database file.
+    #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
+    pub db: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct PruneArgs {
+    /// Keep every run younger than this, for example 30d.
+    #[arg(long, value_name = "TIME", default_value = "30d")]
+    pub keep_all: String,
+
+    /// Keep one run per day until this age, for example 365d.
+    #[arg(long, value_name = "TIME", default_value = "365d")]
+    pub keep_daily: String,
+
+    /// The database file.
+    #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
+    pub db: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -125,6 +179,12 @@ pub struct RunArgs {
     #[arg(long = "forget-name", value_name = "NAME")]
     pub forget_names: Vec<String>,
 
+    /// Look for more names of the zone and check those too. The one source
+    /// is `ct`: Certificate Transparency logs, read through crt.sh, which
+    /// is told the zone's name. Found names are remembered.
+    #[arg(long, value_name = "SOURCE", value_parser = ["ct"])]
+    pub discover: Vec<String>,
+
     /// The database file. Created when it does not exist.
     #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
     pub db: PathBuf,
@@ -149,6 +209,10 @@ pub struct DiffArgs {
     /// The newer run. Default: the latest run.
     #[arg(long, value_name = "RUN")]
     pub to: Option<i64>,
+
+    /// Compare against the zone's pinned baseline instead of the run before.
+    #[arg(long, conflicts_with = "from")]
+    pub baseline: bool,
 
     /// Leave out names matching this pattern, for example
     /// "_acme-challenge.*". `*` matches anything. Repeat for more.
@@ -192,6 +256,10 @@ pub enum CliError {
     Store(#[from] StoreError),
     #[error("there is no database at {path}; store a run first with: zoneblick run <zone>")]
     NoDatabase { path: PathBuf },
+    #[error("zone {zone} has no baseline; pin one with: zoneblick baseline pin {zone}")]
+    NoBaseline { zone: String },
+    #[error("{0}")]
+    Usage(String),
     #[error("cannot read fixture {path}: {source}")]
     ReadFixture {
         path: PathBuf,
@@ -236,6 +304,8 @@ impl CliError {
                 _ => "store_error",
             },
             CliError::NoDatabase { .. } => "no_database",
+            CliError::NoBaseline { .. } => "no_baseline",
+            CliError::Usage(_) => "usage",
             _ => "fixture_error",
         }
     }
@@ -379,9 +449,28 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
         store.forget_name(&zone, &name)?;
         names.retain(|n| *n != name);
     }
+    let (client, started_at, replaying) = make_client(&args.source, &zone)?;
+
+    // More names from certificate logs, when asked. A failure here is
+    // reported and the run goes on with the names it has.
+    let mut discovered: Vec<String> = Vec::new();
+    let mut notes = String::new();
+    if !args.discover.is_empty() {
+        match crate::discover::ct_names(&client, &zone).await {
+            Ok(found) => {
+                let total = found.len();
+                discovered = found.into_iter().filter(|n| !names.contains(n)).collect();
+                notes = format!(
+                    "zoneblick: certificate logs name {total} hosts in {zone}, {} of them new\n",
+                    discovered.len()
+                );
+                names.extend(discovered.iter().cloned());
+            }
+            Err(e) => notes = format!("zoneblick: discovery failed, continuing without it: {e}\n"),
+        }
+    }
     names.sort();
 
-    let (client, started_at, replaying) = make_client(&args.source, &zone)?;
     let observed = observe_zone_records(client.clone(), &zone, started_at, &names).await;
     save_recording(&args.source, &client, &zone, started_at)?;
     let obs = observed?;
@@ -395,14 +484,11 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
         trigger: "cli",
     };
     let run_id = store.save_run(&obs, &findings, &meta)?;
+    store.set_name_source(&zone, &discovered, "ct")?;
 
     // Compare with the previous stored run of the zone, when there is one.
     let diff: Option<DiffReport> = match store.pick_runs(&zone, None, Some(run_id)) {
-        Ok((from, to)) => Some(diff::diff(
-            &store.load_run(&zone, from)?,
-            &store.load_run(&zone, to)?,
-            &[],
-        )),
+        Ok((from, to)) => Some(store.diff(&zone, from, to, &[])?),
         Err(StoreError::NotEnoughRuns { .. }) => None,
         Err(e) => return Err(e.into()),
     };
@@ -429,7 +515,7 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     };
     Ok(CommandOutput {
         stdout,
-        stderr: String::new(),
+        stderr: notes,
         exit_code,
     })
 }
@@ -455,18 +541,22 @@ pub fn diff(args: &DiffArgs, color: bool) -> CommandOutput {
 fn try_diff(args: &DiffArgs, color: bool) -> Result<CommandOutput, CliError> {
     let zone = normalise_zone(&args.zone)?;
     let store = open_existing(&args.db)?;
-    let (from, to) = store.pick_runs(&zone, args.from, args.to)?;
-    // Whatever order the IDs were given in, the older run is the baseline.
+    let (from, to) = if args.baseline {
+        let pinned = store
+            .baseline(&zone)?
+            .ok_or_else(|| CliError::NoBaseline { zone: zone.clone() })?;
+        let (_, to) = store.pick_runs(&zone, Some(pinned.id), args.to)?;
+        (pinned, to)
+    } else {
+        store.pick_runs(&zone, args.from, args.to)?
+    };
+    // Whatever order the IDs were given in, the older run comes first.
     let (from, to) = if from.id > to.id {
         (to, from)
     } else {
         (from, to)
     };
-    let report = diff::diff(
-        &store.load_run(&zone, from)?,
-        &store.load_run(&zone, to)?,
-        &args.ignore,
-    );
+    let report = store.diff(&zone, from, to, &args.ignore)?;
     let stdout = if args.json {
         json::render(&report)
     } else {
@@ -481,6 +571,74 @@ fn try_diff(args: &DiffArgs, color: bool) -> Result<CommandOutput, CliError> {
             exit::CLEAN
         },
     })
+}
+
+/// Run `zoneblick baseline pin | show | clear`.
+pub fn baseline(action: &BaselineAction) -> CommandOutput {
+    let args = match action {
+        BaselineAction::Pin(a) | BaselineAction::Show(a) | BaselineAction::Clear(a) => a,
+    };
+    let result = (|| -> Result<String, CliError> {
+        let zone = normalise_zone(&args.zone)?;
+        let store = open_existing(&args.db)?;
+        let describe = |run: crate::diff::RunRef| {
+            format!(
+                "run #{} ({})",
+                run.id,
+                crate::output::utc(run.started_at_unix)
+            )
+        };
+        Ok(match action {
+            BaselineAction::Pin(_) => {
+                let run = store.pin_baseline(&zone, args.run, now_unix())?;
+                format!("The baseline of {zone} is now {}.\n", describe(run))
+            }
+            BaselineAction::Show(_) => match store.baseline(&zone)? {
+                Some(run) => format!("The baseline of {zone} is {}.\n", describe(run)),
+                None => format!("{zone} has no baseline.\n"),
+            },
+            BaselineAction::Clear(_) => {
+                if store.clear_baseline(&zone)? {
+                    format!("The baseline of {zone} is removed.\n")
+                } else {
+                    format!("{zone} has no baseline.\n")
+                }
+            }
+        })
+    })();
+    match result {
+        Ok(stdout) => CommandOutput {
+            stdout,
+            ..Default::default()
+        },
+        Err(e) => failed(&args.zone, false, &e),
+    }
+}
+
+/// Run `zoneblick prune`.
+pub fn prune(args: &PruneArgs) -> CommandOutput {
+    let result = (|| -> Result<String, CliError> {
+        let retention = crate::config::RetentionConfig {
+            keep_all: args.keep_all.clone(),
+            keep_daily: args.keep_daily.clone(),
+        };
+        let (keep_all, keep_daily) = retention
+            .limits()
+            .map_err(|e| CliError::Usage(e.to_string().replace("[retention] ", "")))?;
+        let mut store = open_existing(&args.db)?;
+        let pruned = store.prune(now_unix(), keep_all, keep_daily)?;
+        Ok(format!(
+            "Deleted {} runs and {} record sets no run uses any more.\n",
+            pruned.runs, pruned.record_sets
+        ))
+    })();
+    match result {
+        Ok(stdout) => CommandOutput {
+            stdout,
+            ..Default::default()
+        },
+        Err(e) => failed("", false, &e),
+    }
 }
 
 /// Run `zoneblick zones list`.
