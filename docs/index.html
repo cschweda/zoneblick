@@ -403,7 +403,7 @@ footer .grid{row-gap:24px}
         <h2>Five kinds of trouble, one pass.</h2>
         <p class="intro">Each check has a stable ID, a severity, and the evidence behind it. No recursive resolver sits in the middle, so you see what the authoritative servers really say.</p>
         <p class="tier"><b>Light run</b><span>Hourly. Twenty-six checks across the whole fleet.</span></p>
-        <p class="tier"><b>Working today</b><span>Delegation and consistency: ten checks, in the one-shot <span class="mono">check</span> command. DNSSEC, mail and policy, and takeover are planned.</span></p>
+        <p class="tier"><b>Working today</b><span>Delegation and consistency: ten checks, in the <span class="mono">check</span> and <span class="mono">run</span> commands. With <span class="mono">run</span>, consistency covers every name you list. DNSSEC, mail and policy, and takeover are planned.</span></p>
         <div class="checks">
           <article>
             <div class="label">DEL</div>
@@ -477,6 +477,7 @@ footer .grid{row-gap:24px}
       <div class="body">
         <h2>How a run works.</h2>
         <p class="intro">The same five steps on every schedule tick, or once from the command line.</p>
+        <p class="tier"><b>Working today</b><span>Steps 1 to 4 and the diff, from the command line with <span class="mono">run</span> and <span class="mono">diff</span>. Schedules and alerts are planned.</span></p>
         <ol class="steps">
           <li><span class="mono">1</span><b>Walk from the root</b><p>Follow referrals down to your zone and record the whole delegation path, glue included.</p></li>
           <li><span class="mono">2</span><b>Ask every server</b><p>Query each authoritative nameserver directly for each name and type, over UDP and TCP, IPv4 and IPv6.</p></li>
@@ -606,16 +607,22 @@ cargo uninstall zoneblick</pre>
         </div>
 
         <h3 class="h3big">Use it.</h3>
-        <p class="h3sub">One command works today. The daemon and the Docker image are planned.</p>
-        <div class="run">
+        <p class="h3sub">Checking a zone and tracking its changes work today. The daemon and the Docker image are planned.</p>
+        <div class="run two">
           <article>
             <h3>Try a zone</h3>
-            <p>No config and no database. Exit code follows severity, so it works in CI.</p>
+            <p>Works today. No config and no database. Exit code follows severity, so it works in CI.</p>
 <pre tabindex="0">zoneblick check example.org</pre>
           </article>
           <article>
+            <h3>Track changes</h3>
+            <p>Works today when built from source; in the binaries from the next release. Each run is stored in one SQLite file and compared with the last.</p>
+<pre tabindex="0">zoneblick run example.org --name www --name mail
+zoneblick diff example.org</pre>
+          </article>
+          <article>
             <h3>Run the daemon</h3>
-            <p>Scheduler, web UI and alerts. Put it behind your reverse proxy.</p>
+            <p>Planned. Scheduler, web UI and alerts. Put it behind your reverse proxy.</p>
 <pre tabindex="0"><span class="c"># /etc/zoneblick/zoneblick.toml</span>
 [[zone]]
 name  = "example.org"
@@ -625,7 +632,7 @@ zoneblick serve</pre>
           </article>
           <article>
             <h3>Or use Docker</h3>
-            <p>One image, one volume for data, one mounted config file.</p>
+            <p>Planned. One image, one volume for data, one mounted config file.</p>
 <pre tabindex="0">docker run -d \
   -v ./data:/data \
   -v ./zoneblick.toml:/etc/zoneblick.toml \
@@ -633,7 +640,7 @@ zoneblick serve</pre>
   zoneblick serve</pre>
           </article>
         </div>
-        <p class="status"><b>Early days</b><span>v0.1.1 is an early pre-release. The one-shot <span class="mono">check</span> command works today, with the delegation and consistency checks. The daemon and Docker commands show the planned interface.</span></p>
+        <p class="status"><b>Early days</b><span>v0.1.1 is an early pre-release with the <span class="mono">check</span> command. Stored runs and <span class="mono">diff</span> are in the source now and will be in the next release. The daemon and Docker commands show the planned interface.</span></p>
       </div>
     </div>
   </section>

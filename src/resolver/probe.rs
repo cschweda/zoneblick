@@ -10,7 +10,7 @@ use tokio::task::JoinSet;
 
 use super::ResolveError;
 use super::hints::ROOT_HINTS;
-use super::iterate::{Resolver, norm, parse_response, rcode_name};
+use super::iterate::{Resolver, norm, parse_response, printable, rcode_name};
 use super::transport::{Client, QuerySpec, RawOutcome, record_type};
 use crate::observe::{
     NsHost, Outcome, QType, RecordAnswer, RecordObservation, RecordOutcome, ResponseObs,
@@ -343,8 +343,13 @@ fn record_outcome(spec: &QuerySpec, raw: RawOutcome) -> Result<RecordOutcome, bo
 }
 
 /// Record data in a canonical text form: names lowercase and fully
-/// qualified, TXT strings quoted.
+/// qualified, TXT strings quoted, and nothing unprintable (see
+/// [`printable`]).
 fn rdata_text(data: &RData) -> String {
+    printable(&rdata_raw_text(data))
+}
+
+fn rdata_raw_text(data: &RData) -> String {
     match data {
         RData::A(a) => a.0.to_string(),
         RData::AAAA(a) => a.0.to_string(),
@@ -483,6 +488,27 @@ mod tests {
         assert_eq!(normalise_zone(".").unwrap(), ".");
         assert!(normalise_zone("  ").is_err());
         assert!(normalise_zone("bad..name").is_err());
+    }
+
+    #[test]
+    fn record_data_cannot_carry_terminal_control_sequences() {
+        use hickory_proto::rr::rdata::TXT;
+        // A TXT record that tries to clear the screen and fake a clean result.
+        let hostile: &[u8] = b"ok\x1b[2J\x1b[1;32mAll checks passed\x07\r\n";
+        let text = rdata_text(&RData::TXT(TXT::from_bytes(vec![hostile])));
+        assert!(!text.chars().any(|c| c.is_control()), "{text:?}");
+        assert_eq!(
+            text,
+            r#""ok\027[2J\027[1;32mAll checks passed\007\013\010""#
+        );
+        // Direction overrides are made visible too.
+        let rtl = "a\u{202e}b".as_bytes();
+        let text = rdata_text(&RData::TXT(TXT::from_bytes(vec![rtl])));
+        assert_eq!(text, r#""a\u{202e}b""#);
+        // Ordinary text, including non-ASCII, is left alone.
+        let plain = "v=spf1 -all caf\u{e9}".as_bytes();
+        let text = rdata_text(&RData::TXT(TXT::from_bytes(vec![plain])));
+        assert_eq!(text, "\"v=spf1 -all caf\u{e9}\"");
     }
 
     #[test]

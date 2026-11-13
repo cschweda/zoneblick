@@ -41,3 +41,33 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - The check modules are `delegation.rs` and `consistency.rs`, not `del.rs` and `con.rs`: `con` is a reserved file name on Windows and breaks a checkout there.
 - Install commands in the README and on the site name an exact release, so they must be updated with each release (GitHub's "latest" link skips pre-releases).
 - Rust edition 2024, which needs Rust 1.85; `hickory-proto` 0.26 needs 1.88.
+
+## Phase 1
+
+- Dependencies added with the author's agreement: `rusqlite` with bundled SQLite, and `sha2` for content hashes. Building from source now needs a C compiler.
+- Names to check come from repeated `--name` flags on `run` and are remembered in the database; the TOML config file waits for the daemon phase (agreed with the author).
+- Noise control in this phase is canonical record sets, comparison as pools across servers, and ignore patterns; volatility learning and pinned baselines wait for real run history (agreed with the author).
+- `run` is a new storing command; `check` is unchanged and still stores nothing.
+- The database defaults to `zoneblick.sqlite` in the current directory; `--db FILE` overrides it.
+- A stored run asks for A, AAAA, CNAME, MX, TXT and CAA at every name (no CNAME at the apex), and takes the apex SOA and NS from the nameserver probes instead of asking again.
+- Only nameserver addresses that answered a probe are asked for records; a dead server is already reported and would slow every run.
+- Record queries go over UDP with EDNS and are retried over TCP when truncated.
+- Record data is stored as canonical text: sorted, names lowercase and fully qualified, TXT strings quoted.
+- A record set's content hash covers name, type and data, not TTL; the TTL is kept on each observation.
+- A run that fails (exit code 3) is not stored.
+- A diff compares pools: the union of what all authoritative servers served for a name and type. Disagreement between servers within one run is CON-02's job, not the diff's.
+- Only authoritative NOERROR and NXDOMAIN answers count in a diff; NXDOMAIN is an empty set.
+- A name checked in only one of the two runs is listed as not compared, not as added or removed.
+- A TTL change is its own change kind and is not counted as a record change.
+- A SOA whose only difference is the serial is shown on one line and does not make `diff` exit 1.
+- Ignore patterns are given to `diff` with `--ignore`; they are not stored. `*` matches anything and the pattern must match the whole name.
+- `diff` exits 0 for no changes, 1 for changes and 3 on failure.
+- `run` exits with the same codes as `check`; changes since the last run do not affect its exit code.
+- A finding's identity across runs (its fingerprint) is its check ID, name and a stable detail such as the server address; moving values such as serials are left out.
+- A finding not seen in a run is marked resolved; seen again later, the same finding reopens.
+- CON-02 also covers every record set `run` collects, comparing authoritative answers across servers; NXDOMAIN on one server and data on another counts as a difference.
+- `--forget-name` was added so a remembered name can be dropped; its history stays in the database.
+- `zones list` is the only `zones` action so far; zones are added by running them, not by a separate command.
+- Retention (thinning old runs) is not implemented; every run is kept.
+- The database layout version is kept in SQLite's `user_version`; a database from a newer zoneblick is refused.
+- `DESIGN.md` now records the license decision: MIT or Apache-2.0.

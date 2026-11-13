@@ -1,6 +1,6 @@
 # zoneblick — High-Level Design
 
-**Author:** Christopher Schweda · **Date:** 2026-11-13 · **Status:** Draft v0.2 (adds deep checks)
+**Author:** Christopher Schweda · **Date:** 2026-11-13 · **Status:** Draft v0.2 (adds deep checks) · License question settled
 
 > *zoneblick* — *zone* + German *Blick* (a look, a glance). A self-hosted watchdog for DNS zones.
 
@@ -392,7 +392,7 @@ The DNSSEC chain view and the DNSViz / Zonemaster links ship with the web UI in 
 
 ### Open questions
 
-1. **License** — MIT, Apache-2.0, or GPL-family (tied to the signature question above)?
+1. ~~**License** — MIT, Apache-2.0, or GPL-family (tied to the signature question above)?~~ **Settled 2026-11-13:** dual-licensed MIT or Apache-2.0, the usual choice for Rust projects. This rules out option (c) under "Signature licensing"; GPL-family signature data cannot be bundled, so Phase 5 must use option (a) or (b).
 2. **Multiple vantage points** — is a second probe (e.g. another region) worth supporting later for geo-DNS zones, or out of scope?
 3. **Provider API import** — which provider first? DigitalOcean is the obvious one for the reference deployment.
 4. **UI config editing** — keep config file-only, or allow adding zones from the UI in a later version?

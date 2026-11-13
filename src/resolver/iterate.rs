@@ -31,11 +31,36 @@ const MAX_SERVERS_TRIED: usize = 4;
 
 /// A lowercase, fully qualified form of a name.
 pub(crate) fn norm(name: &Name) -> String {
-    let mut s = name.to_ascii().to_ascii_lowercase();
+    let mut s = printable(&name.to_ascii().to_ascii_lowercase());
     if !s.ends_with('.') {
         s.push('.');
     }
     s
+}
+
+/// Make text from the network safe to print and store.
+///
+/// DNS data is chosen by whoever runs the zone or its nameservers. Control
+/// characters (which include the escape character that starts terminal
+/// control sequences) and Unicode direction overrides are replaced with a
+/// visible escape, so a record cannot rewrite or hide terminal output.
+pub(crate) fn printable(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        let direction_override = matches!(
+            c,
+            '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        );
+        if c.is_control() {
+            // DNS presentation style: backslash and three decimal digits.
+            out.push_str(&format!("\\{:03}", c as u32));
+        } else if direction_override {
+            out.push_str(&format!("\\u{{{:04x}}}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// The standard mnemonic for a response code.
@@ -55,7 +80,7 @@ pub(crate) fn rcode_name(rcode: ResponseCode) -> String {
 
 /// Parse a response and check it answers the question that was asked.
 pub(crate) fn parse_response(spec: &QuerySpec, wire: &[u8]) -> Result<Message, String> {
-    let msg = Message::from_vec(wire).map_err(|e| e.to_string())?;
+    let msg = Message::from_vec(wire).map_err(|e| printable(&e.to_string()))?;
     if msg.metadata.message_type != MessageType::Response {
         return Err("not a response".to_string());
     }
