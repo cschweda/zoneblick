@@ -11,7 +11,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use hickory_proto::op::{Edns, Message, OpCode, Query, ResponseCode};
-use hickory_proto::rr::rdata::{A, AAAA, CNAME, MX, NS, SOA, TXT};
+use hickory_proto::rr::rdata::{A, AAAA, CNAME, MX, NS, NULL, SOA, TXT};
 use hickory_proto::rr::{Name, RData, Record, RecordType};
 use zoneblick::observe::{QType, Transport, ZoneObservation};
 use zoneblick::resolver::{
@@ -468,6 +468,128 @@ pub fn drift_world(after: bool) -> World {
             vec![]
         };
         w.serve_name(server, zone, "staging.drift.example.", &staging);
+    }
+    w
+}
+
+/// A record of a type hickory-proto does not decode here: raw record data.
+pub fn raw(owner: &str, rtype: RecordType, rdata: Vec<u8>) -> Record {
+    Record::from_rdata(
+        name(owner),
+        3600,
+        RData::Unknown {
+            code: rtype,
+            rdata: NULL::with(rdata),
+        },
+    )
+}
+
+/// DNSKEY record data: an ECDSA P-256 key with made-up key bytes.
+pub fn dnskey_rdata(seed: u8, ksk: bool) -> Vec<u8> {
+    let mut rdata = vec![0x01, if ksk { 0x01 } else { 0x00 }, 3, 13];
+    rdata.extend((0..64u8).map(|i| i.wrapping_mul(11).wrapping_add(seed)));
+    rdata
+}
+
+/// DS record data (SHA-256) pointing at a key.
+pub fn ds_rdata(owner: &str, key_rdata: &[u8]) -> Vec<u8> {
+    let digest = zoneblick::dnssec::ds_digest(owner, key_rdata, 2).unwrap();
+    let mut rdata = zoneblick::dnssec::key_tag(key_rdata).to_be_bytes().to_vec();
+    rdata.extend([13, 2]);
+    rdata.extend(
+        (0..digest.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&digest[i..i + 2], 16).unwrap()),
+    );
+    rdata
+}
+
+/// RRSIG record data with a made-up signature.
+pub fn rrsig_rdata(
+    type_covered: u16,
+    key_tag: u16,
+    inception: u64,
+    expiration: u64,
+    signer: &str,
+) -> Vec<u8> {
+    let mut rdata = type_covered.to_be_bytes().to_vec();
+    rdata.extend([13, 2]);
+    rdata.extend(3600u32.to_be_bytes());
+    rdata.extend((expiration as u32).to_be_bytes());
+    rdata.extend((inception as u32).to_be_bytes());
+    rdata.extend(key_tag.to_be_bytes());
+    for label in signer.split('.').filter(|l| !l.is_empty()) {
+        rdata.push(label.len() as u8);
+        rdata.extend(label.bytes());
+    }
+    rdata.push(0);
+    rdata.extend([0x5a; 64]);
+    rdata
+}
+
+pub const SIGNED_ZONE: &str = "signed.example.";
+
+/// A signed zone, `signed.example.`: a KSK and a ZSK on both servers, with
+/// signatures valid for another twenty days.
+///
+/// With `chain_ok`, the parent's DS points at the KSK. Without it, the DS
+/// points at a key the zone does not have, which makes the zone bogus.
+pub fn signed_world(chain_ok: bool) -> World {
+    let zone = SIGNED_ZONE;
+    let names = ["ns1.signed.example.", "ns2.signed.example."];
+    let servers = [NS1, NS3];
+    let (ksk, zsk) = (dnskey_rdata(1, true), dnskey_rdata(2, false));
+    let ds_key = if chain_ok {
+        ksk.clone()
+    } else {
+        dnskey_rdata(99, true)
+    };
+    let (inception, expiration) = (STARTED_AT - 10 * 86_400, STARTED_AT + 20 * 86_400);
+    let (ksk_tag, zsk_tag) = (
+        zoneblick::dnssec::key_tag(&ksk),
+        zoneblick::dnssec::key_tag(&zsk),
+    );
+
+    let mut w = World::new();
+    w.delegate_tld(zone, QType::Ns);
+    w.referral(
+        TLD_SERVER,
+        zone,
+        QType::Ns,
+        &[ns(zone, names[0]), ns(zone, names[1])],
+        &[addr(names[0], servers[0]), addr(names[1], servers[1])],
+    );
+    for transport in [Transport::Udp, Transport::Tcp] {
+        w.reply_signed(TLD_SERVER, transport, zone, QType::Ds, |m| {
+            m.metadata.authoritative = true;
+            m.add_answer(raw(zone, RecordType::DS, ds_rdata(zone, &ds_key)));
+        });
+    }
+    for server in servers {
+        w.serve_apex(server, zone, 2024111301, &names);
+        w.serve_host(server, zone, names[0], &[servers[0]]);
+        w.serve_host(server, zone, names[1], &[servers[1]]);
+        for transport in [Transport::Udp, Transport::Tcp] {
+            w.reply_signed(server, transport, zone, QType::Dnskey, |m| {
+                m.metadata.authoritative = true;
+                m.add_answer(raw(zone, RecordType::DNSKEY, ksk.clone()));
+                m.add_answer(raw(zone, RecordType::DNSKEY, zsk.clone()));
+                m.add_answer(raw(
+                    zone,
+                    RecordType::RRSIG,
+                    rrsig_rdata(48, ksk_tag, inception, expiration, zone),
+                ));
+            });
+            w.reply_signed(server, transport, zone, QType::Soa, |m| {
+                m.metadata.authoritative = true;
+                m.add_answer(soa(zone, 2024111301));
+                m.add_answer(raw(
+                    zone,
+                    RecordType::RRSIG,
+                    rrsig_rdata(6, zsk_tag, inception, expiration, zone),
+                ));
+            });
+        }
     }
     w
 }

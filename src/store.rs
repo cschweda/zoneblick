@@ -18,7 +18,15 @@ use crate::observe::{
 };
 
 /// Version of the database layout, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
+
+/// Changes to the layout since version 1, in order. Entry `i` takes a
+/// database from version `i + 1` to `i + 2`. A new database is created at
+/// version 1 and then walks the same steps, so both paths are the same code.
+const MIGRATIONS: &[&str] = &[
+    // 2: each run keeps the DNSSEC data it observed.
+    "ALTER TABLE runs ADD COLUMN dnssec_json TEXT;",
+];
 
 const SCHEMA: &str = "
 CREATE TABLE zones (
@@ -203,9 +211,16 @@ impl Store {
                 supported: SCHEMA_VERSION,
             });
         }
+        let mut version = version;
         if version == 0 {
+            conn.execute_batch(&format!("BEGIN; {SCHEMA} PRAGMA user_version = 1; COMMIT;"))?;
+            version = 1;
+        }
+        while version < SCHEMA_VERSION {
+            let step = MIGRATIONS[(version - 1) as usize];
+            version += 1;
             conn.execute_batch(&format!(
-                "BEGIN; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+                "BEGIN; {step} PRAGMA user_version = {version}; COMMIT;"
             ))?;
         }
         Ok(Self { conn })
@@ -263,8 +278,9 @@ impl Store {
 
         tx.execute(
             "INSERT INTO runs (zone_id, started_at, finished_at, trigger, level, status, queries,
-                               vantage_ipv4, vantage_ipv6, delegation_json, ns_hosts_json, probes_json)
-             VALUES (?1, ?2, ?3, ?4, 'light', 'ok', ?5, ?6, ?7, ?8, ?9, ?10)",
+                               vantage_ipv4, vantage_ipv6, delegation_json, ns_hosts_json, probes_json,
+                               dnssec_json)
+             VALUES (?1, ?2, ?3, ?4, 'light', 'ok', ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 zone_id,
                 started,
@@ -276,6 +292,7 @@ impl Store {
                 serde_json::to_string(&obs.delegation_path)?,
                 serde_json::to_string(&obs.ns_hosts)?,
                 serde_json::to_string(&obs.probes)?,
+                obs.dnssec.as_ref().map(serde_json::to_string).transpose()?,
             ],
         )?;
         let run_id = tx.last_insert_rowid();
@@ -758,6 +775,39 @@ mod tests {
             (zones[0].runs, zones[0].names, zones[0].open_findings),
             (5, 2, 1)
         );
+    }
+
+    #[test]
+    fn an_older_database_is_upgraded_in_place() {
+        // Build a version 1 database by hand, with one run in it.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!("{SCHEMA} PRAGMA user_version = 1;"))
+            .unwrap();
+        conn.execute_batch(
+            "INSERT INTO zones (name, created_at) VALUES ('example.test.', 1);
+             INSERT INTO runs (zone_id, started_at, finished_at, trigger, level, status, queries,
+                               vantage_ipv4, vantage_ipv6, delegation_json, ns_hosts_json, probes_json)
+             VALUES (1, 50, 51, 'cli', 'light', 'ok', 3, 1, 0, '[]', '[]', '[]');",
+        )
+        .unwrap();
+        let mut store = Store::init(conn).unwrap();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        // The old run is still there, and new runs can be added after it.
+        assert_eq!(store.runs(ZONE).unwrap().len(), 1);
+        save(&mut store, &obs_with("192.0.2.10", 100));
+        assert_eq!(store.runs(ZONE).unwrap().len(), 2);
+
+        // A database from the future is refused, not guessed at.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA user_version = 99;").unwrap();
+        assert!(matches!(
+            Store::init(conn),
+            Err(StoreError::NewerSchema { found: 99, .. })
+        ));
     }
 
     #[test]
