@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** Phase 1. `zoneblick check` checks a zone once. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed between runs. The daemon, alerts and web UI are not built yet. The current release, `v0.1.1`, is an early pre-release and has `check` only; `run` and `diff` are in the source and will be in the next release.
+**Status:** Phase 1. `zoneblick check` checks a zone once. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed between runs. The daemon, alerts and web UI are not built yet. The current release, `v0.2.0`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -52,7 +52,7 @@ There are two ways to install zoneblick: download a binary, or build it from sou
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.1.1`.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.2.0`.
 
 | System | File name ends in |
 |---|---|
@@ -64,12 +64,12 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.1.1` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.2.0` to install another release.
 
 **Linux**
 
 ```
-V=v0.1.1
+V=v0.2.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -82,7 +82,7 @@ zoneblick check example.org
 **macOS**
 
 ```
-V=v0.1.1
+V=v0.2.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -97,7 +97,7 @@ zoneblick check example.org
 **Windows (PowerShell)**
 
 ```
-$V = "v0.1.1"
+$V = "v0.2.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -197,8 +197,6 @@ zoneblick check broken.example --replay tests/fixtures/broken.example.json
 ```
 
 ## Track changes over time
-
-`run` and `diff` are newer than the `v0.1.1` binaries. Until the next release, [build from source](#build-from-source) to use them.
 
 `run` does everything `check` does, then asks every nameserver for the records of the names you care about, and stores the result in a SQLite file:
 
@@ -422,8 +420,8 @@ The same lint and tests run in CI on Linux, macOS and Windows for every push and
 Binaries are built by GitHub Actions (`.github/workflows/release.yml`). To publish a release, set the version in `Cargo.toml`, commit, then push a matching tag:
 
 ```
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, and attaches them to a GitHub Release with a `SHA256SUMS` file. Each archive holds the binary, this README and both license files. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
