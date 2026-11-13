@@ -1,9 +1,13 @@
 //! Consistency checks, `CON-01` to `CON-05`.
 
+use std::collections::BTreeMap;
 use std::net::IpAddr;
 
-use super::{Evidence, Finding, Severity, group_by, servers};
+use super::{Evidence, Finding, ServerRef, Severity, Variant, group_by, servers};
 use crate::observe::{QType, Transport, ZoneObservation};
+
+/// Servers grouped by the record data they served.
+type ServersByValue = BTreeMap<Vec<String>, Vec<ServerRef>>;
 
 /// The UDP payload size zoneblick advertises in EDNS queries.
 const EDNS_PAYLOAD: usize = 1232;
@@ -69,6 +73,58 @@ pub fn con_02_rrset(obs: &ZoneObservation) -> Vec<Finding> {
             ),
             Evidence::RrsetMismatch {
                 rrtype: rrtype.to_string(),
+                variants,
+            },
+        ));
+    }
+
+    // Record sets collected by `run`, for every name and type. The apex SOA
+    // and NS sets are covered above.
+    let mut by_set: BTreeMap<(&str, QType), ServersByValue> = BTreeMap::new();
+    for rec in &obs.records {
+        if rec.name == obs.zone && matches!(rec.qtype, QType::Soa | QType::Ns) {
+            continue;
+        }
+        let Some(answer) = rec.outcome.answer() else {
+            continue;
+        };
+        if !answer.authoritative {
+            continue;
+        }
+        let value = match answer.rcode.as_str() {
+            "NOERROR" => answer.rdata.clone(),
+            "NXDOMAIN" => vec!["NXDOMAIN".to_string()],
+            _ => continue,
+        };
+        by_set
+            .entry((&rec.name, rec.qtype))
+            .or_default()
+            .entry(value)
+            .or_default()
+            .push(ServerRef {
+                ns_name: rec.ns_name.clone(),
+                address: rec.address,
+            });
+    }
+    for ((name, qtype), sets) in by_set {
+        if sets.len() < 2 {
+            continue;
+        }
+        let variants: Vec<Variant<Vec<String>>> = sets
+            .into_iter()
+            .map(|(value, servers)| Variant { value, servers })
+            .collect();
+        findings.push(Finding::new(
+            "CON-02",
+            Severity::Warning,
+            name,
+            format!(
+                "Nameservers serve {} different versions of the {} record set for {name}",
+                variants.len(),
+                qtype.as_str()
+            ),
+            Evidence::RrsetMismatch {
+                rrtype: qtype.as_str().to_string(),
                 variants,
             },
         ));
@@ -313,6 +369,43 @@ mod tests {
             &findings[0].evidence,
             Evidence::RrsetMismatch { rrtype, .. } if rrtype == "SOA"
         ));
+    }
+
+    #[test]
+    fn con_02_covers_collected_record_sets() {
+        use crate::observe::{RecordAnswer, RecordObservation, RecordOutcome};
+        let mut obs = healthy();
+        let rec = |server: &str, rcode: &str, rdata: &[&str]| RecordObservation {
+            name: "www.example.test.".to_string(),
+            qtype: QType::A,
+            ns_name: "ns.example.test.".to_string(),
+            address: ip(server),
+            transport: Transport::Udp,
+            outcome: RecordOutcome::Answer(RecordAnswer {
+                rcode: rcode.to_string(),
+                authoritative: true,
+                ttl: Some(300),
+                rdata: rdata.iter().map(|s| s.to_string()).collect(),
+            }),
+        };
+        obs.records = vec![
+            rec(V4_A, "NOERROR", &["192.0.2.10"]),
+            rec(V4_B, "NOERROR", &["192.0.2.10"]),
+        ];
+        assert!(con_02_rrset(&obs).is_empty());
+
+        obs.records[1] = rec(V4_B, "NOERROR", &["192.0.2.99"]);
+        let findings = con_02_rrset(&obs);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].name, "www.example.test.");
+        assert!(matches!(
+            &findings[0].evidence,
+            Evidence::RrsetMismatch { rrtype, variants } if rrtype == "A" && variants.len() == 2
+        ));
+
+        // One server says the name does not exist at all.
+        obs.records[1] = rec(V4_B, "NXDOMAIN", &[]);
+        assert_eq!(con_02_rrset(&obs).len(), 1);
     }
 
     #[test]

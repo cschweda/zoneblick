@@ -160,6 +160,35 @@ pub struct Finding {
 }
 
 impl Finding {
+    /// The part of a finding that stays the same from run to run while the
+    /// underlying problem persists. Values that move, such as serials, are
+    /// left out, so one problem is one finding across runs.
+    pub fn fingerprint_key(&self) -> String {
+        let detail = match &self.evidence {
+            Evidence::NsSetMismatch { .. } => String::new(),
+            Evidence::LameServer {
+                address, reason, ..
+            } => format!("{address:?}/{reason:?}"),
+            Evidence::GlueMismatch { .. } => String::new(),
+            Evidence::TooFewNameservers { .. } => "count".to_string(),
+            Evidence::SingleNetwork { addresses, .. } => {
+                if addresses.iter().any(|a| a.is_ipv6()) {
+                    "ipv6".to_string()
+                } else {
+                    "ipv4".to_string()
+                }
+            }
+            Evidence::NsIsCname { .. } => String::new(),
+            Evidence::SerialMismatch { .. } => String::new(),
+            Evidence::RrsetMismatch { rrtype, .. } => rrtype.clone(),
+            Evidence::NoTcp { address, .. }
+            | Evidence::Ipv6Unreachable { address, .. }
+            | Evidence::EdnsProblem { address, .. } => address.to_string(),
+            Evidence::Ipv6NotTested { .. } => "not-tested".to_string(),
+        };
+        format!("{}|{}|{}", self.check_id, self.name, detail)
+    }
+
     pub(crate) fn new(
         check_id: &str,
         severity: Severity,

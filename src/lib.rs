@@ -11,6 +11,7 @@
 
 pub mod checks;
 pub mod cli;
+pub mod diff;
 pub mod observe;
 pub mod output;
 pub mod resolver;
