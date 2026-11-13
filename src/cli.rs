@@ -275,8 +275,10 @@ pub struct RunArgs {
     /// Certificate Transparency logs through crt.sh, which is told the
     /// zone's name; the names are checked in this run. `axfr` asks the
     /// zone's nameservers for a zone transfer, which most refuse; the names
-    /// are checked from the next run on. Repeat for both.
-    #[arg(long, value_name = "SOURCE", value_parser = ["ct", "axfr"])]
+    /// are checked from the next run on. `digitalocean` asks DigitalOcean's
+    /// API for the zone's records, with the read-only token in the
+    /// environment variable ZONEBLICK_DIGITALOCEAN_TOKEN. Repeat for more.
+    #[arg(long, value_name = "SOURCE", value_parser = ["ct", "axfr", "digitalocean"])]
     pub discover: Vec<String>,
 
     /// Also make the deep checks: a few unusual queries per nameserver and
@@ -576,6 +578,35 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
             Err(e) => notes = format!("zoneblick: discovery failed, continuing without it: {e}\n"),
         }
     }
+    let mut provided: Vec<String> = Vec::new();
+    if args.discover.iter().any(|d| d == "digitalocean") {
+        let token = std::env::var(crate::discover::DIGITALOCEAN_TOKEN_ENV)
+            .ok()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
+        let found = match token {
+            Some(token) => crate::discover::digitalocean_names(&client, &zone, &token).await,
+            None if replaying => crate::discover::digitalocean_names(&client, &zone, "").await,
+            None => Err(format!(
+                "set {} to a read-only API token",
+                crate::discover::DIGITALOCEAN_TOKEN_ENV
+            )),
+        };
+        match found {
+            Ok(found) => {
+                let total = found.len();
+                provided = found.into_iter().filter(|n| !names.contains(n)).collect();
+                notes.push_str(&format!(
+                    "zoneblick: DigitalOcean lists {total} hosts in {zone}, {} of them new\n",
+                    provided.len()
+                ));
+                names.extend(provided.iter().cloned());
+            }
+            Err(e) => notes.push_str(&format!(
+                "zoneblick: discovery failed, continuing without it: {e}\n"
+            )),
+        }
+    }
     names.sort();
 
     let mut observed = observe_zone_records(client.clone(), &zone, started_at, &names).await;
@@ -615,6 +646,7 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     };
     let run_id = store.save_run(&obs, &findings, &meta)?;
     store.set_name_source(&zone, &discovered, "ct")?;
+    store.set_name_source(&zone, &provided, "digitalocean")?;
     if let Some(found) = &transferred {
         let added = store.add_names(&zone, found, "axfr", run_id)?;
         notes.push_str(&format!(

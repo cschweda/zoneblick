@@ -300,4 +300,38 @@ mod tests {
         assert_eq!(rsa_parts(&[3, 1, 0, 1]), None);
         assert_eq!(rsa_parts(&[]), None);
     }
+
+    #[test]
+    fn ecdsa_p384_signatures_verify() {
+        use ring::signature::ECDSA_P384_SHA384_FIXED_SIGNING;
+        let rng = SystemRandom::new();
+        let doc = EcdsaKeyPair::generate_pkcs8(&ECDSA_P384_SHA384_FIXED_SIGNING, &rng).unwrap();
+        let ec =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P384_SHA384_FIXED_SIGNING, doc.as_ref(), &rng).unwrap();
+        let rdata = dnskey_rdata(14, &ec.public_key().as_ref()[1..]);
+        let keys = vec![parse_dnskey(&rdata).unwrap()];
+        let set = vec![rdata];
+        let sig = rrsig(DNSKEY, 14, &keys[0], &set, |m| {
+            ec.sign(&rng, m).unwrap().as_ref().to_vec()
+        });
+        assert_eq!(
+            verify_rrset(ZONE, DNSKEY, &set, &[&sig], &keys),
+            Verdict::Valid
+        );
+        let mut broken = sig.clone();
+        *broken.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            verify_rrset(ZONE, DNSKEY, &set, &[&broken], &keys),
+            Verdict::Invalid
+        );
+        // An algorithm this program does not know is left untried.
+        let mut unknown = keys.clone();
+        unknown[0].algorithm = 16;
+        let mut sig16 = sig.clone();
+        sig16[2] = 16;
+        assert_eq!(
+            verify_rrset(ZONE, DNSKEY, &set, &[&sig16], &unknown),
+            Verdict::Untried
+        );
+    }
 }

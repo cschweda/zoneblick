@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use zoneblick::config::Config;
 use zoneblick::resolver::{Client, Fixture};
-use zoneblick::serve::{AppState, ClientFactory, router, run_zone, token_hash};
+use zoneblick::serve::{AppState, ClientFactory, router, run_zone, run_zone_level, token_hash};
 use zoneblick::store::Store;
 
 fn fixture(name: &str) -> Fixture {
@@ -433,4 +433,98 @@ async fn an_open_local_api_refuses_other_hosts_and_other_sites() {
         .await
         .unwrap();
     assert_eq!(r.status(), 202);
+}
+
+#[tokio::test]
+async fn findings_are_muted_through_the_api() {
+    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
+    let zone = state.config.zones[0].clone();
+    run_zone(&state, &zone, "test").await.unwrap();
+    run_zone(&state, &zone, "test").await.unwrap();
+    let base = serve(router(state)).await;
+    let http = reqwest::Client::new();
+
+    let (_, ui) = get(&format!("{base}/api/v1/ui")).await;
+    let finding = &ui["zones"][0]["findings"][0];
+    assert_eq!(finding["muted"], false);
+    let key = finding["key"].as_str().unwrap().to_string();
+
+    let post = |path: &'static str, body: Value| {
+        let (http, base) = (http.clone(), base.clone());
+        async move {
+            let r = http
+                .post(format!("{base}/api/v1/findings/{path}"))
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            (
+                r.status().as_u16(),
+                r.json::<Value>().await.unwrap_or(Value::Null),
+            )
+        }
+    };
+    let body = serde_json::json!({ "zone": "drift.example", "id": &key[..12] });
+    let (status, out) = post("mute", body.clone()).await;
+    assert_eq!(status, 200);
+    assert_eq!(out["finding"]["state"], "muted");
+    let (_, zones) = get(&format!("{base}/api/v1/zones")).await;
+    assert_eq!(zones["zones"][0]["open_findings"], 0);
+    let (_, ui) = get(&format!("{base}/api/v1/ui")).await;
+    assert_eq!(ui["zones"][0]["findings"][0]["muted"], true);
+
+    let (status, out) = post("unmute", body).await;
+    assert_eq!(
+        (status, &out["finding"]["state"]),
+        (200, &Value::from("open"))
+    );
+    let (status, out) = post(
+        "mute",
+        serde_json::json!({ "zone": "drift.example", "id": "no-such-finding" }),
+    )
+    .await;
+    assert_eq!(
+        (status, &out["error"]["kind"]),
+        (404, &Value::from("unknown_finding"))
+    );
+}
+
+#[tokio::test]
+async fn a_deep_run_is_made_when_asked_or_due() {
+    // Not configured, not asked for: light runs only.
+    let db = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("serve_deep.sqlite");
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", db.display()));
+    }
+    let state = AppState::with_store(config(""), Store::open(&db).unwrap(), drifting());
+    let zone = state.config.zones[0].clone();
+    run_zone(&state, &zone, "test").await.unwrap();
+    run_zone_level(&state, &zone, "test", true).await.unwrap();
+    run_zone(&state, &zone, "test").await.unwrap();
+
+    // With deep = "1h": the first run is deep, the next ones are not yet due.
+    let scheduled = AppState::with_store(
+        Config::parse(
+            "[schedule]\ndeep = \"1h\"\n[[zone]]\nname = \"drift.example\"\nseeds = [\"www\"]\n",
+        )
+        .unwrap(),
+        Store::open(&db).unwrap(),
+        drifting(),
+    );
+    let zone = scheduled.config.zones[0].clone();
+    run_zone(&scheduled, &zone, "test").await.unwrap();
+    run_zone(&scheduled, &zone, "test").await.unwrap();
+    drop((state, scheduled));
+
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let levels: Vec<String> = conn
+        .prepare("SELECT level FROM runs ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(levels, ["light", "deep", "light", "deep", "light"]);
+    assert!(Config::parse("[schedule]\ndeep = \"sometimes\"\n").is_err());
+    assert!(Config::parse("[schedule]\ndeep = \"off\"\n").is_ok());
 }

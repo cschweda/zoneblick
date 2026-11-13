@@ -204,6 +204,19 @@ impl Client {
 
     /// [`Client::http_get`] with its own body limit and timeout.
     pub async fn http_get_with(&self, url: &str, limit: usize, timeout: Duration) -> HttpOutcome {
+        self.http_get_auth(url, None, limit, timeout).await
+    }
+
+    /// [`Client::http_get_with`], sending `bearer` as a bearer token when
+    /// given. The token is never recorded: a fixture holds only the URL and
+    /// the answer.
+    pub async fn http_get_auth(
+        &self,
+        url: &str,
+        bearer: Option<&str>,
+        limit: usize,
+        timeout: Duration,
+    ) -> HttpOutcome {
         let outcome = match &self.backend {
             Backend::Replay(_) => {
                 self.http_replay
@@ -213,7 +226,7 @@ impl Client {
                         message: "no recorded exchange for this URL".to_string(),
                     })
             }
-            Backend::Live(_) => live_http_get(url, limit, timeout).await,
+            Backend::Live(_) => live_http_get(url, bearer, limit, timeout).await,
         };
         let mut rec = self.http_recording.lock().expect("recording lock");
         if !rec.iter().any(|e| e.url == url) {
@@ -293,7 +306,12 @@ impl Client {
     }
 }
 
-async fn live_http_get(url: &str, limit: usize, timeout: Duration) -> HttpOutcome {
+async fn live_http_get(
+    url: &str,
+    bearer: Option<&str>,
+    limit: usize,
+    timeout: Duration,
+) -> HttpOutcome {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let error = |e: reqwest::Error| HttpOutcome::Error {
         message: e.to_string(),
@@ -307,7 +325,11 @@ async fn live_http_get(url: &str, limit: usize, timeout: Duration) -> HttpOutcom
         Ok(client) => client,
         Err(e) => return error(e),
     };
-    let mut response = match client.get(url).send().await {
+    let mut request = client.get(url);
+    if let Some(token) = bearer {
+        request = request.bearer_auth(token);
+    }
+    let mut response = match request.send().await {
         Ok(response) => response,
         Err(e) => return error(e),
     };

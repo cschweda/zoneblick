@@ -185,6 +185,96 @@ async fn probe_server(
     }
 }
 
+/// An NSEC3 record: the hash it is at, the next hash, and how names are
+/// hashed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Nsec3 {
+    pub hash: Vec<u8>,
+    pub next: Vec<u8>,
+    pub algorithm: u8,
+    pub iterations: u16,
+    pub salt: Vec<u8>,
+}
+
+/// Decode base32 with the "extended hex" alphabet (RFC 4648), unpadded.
+fn base32hex(text: &str) -> Option<Vec<u8>> {
+    let (mut bits, mut have, mut out) = (0u32, 0, Vec::new());
+    for c in text.bytes() {
+        let v = match c.to_ascii_lowercase() {
+            d @ b'0'..=b'9' => d - b'0',
+            l @ b'a'..=b'v' => l - b'a' + 10,
+            _ => return None,
+        };
+        bits = (bits << 5) | u32::from(v);
+        have += 5;
+        if have >= 8 {
+            have -= 8;
+            out.push((bits >> have) as u8);
+            bits &= (1 << have) - 1;
+        }
+    }
+    Some(out)
+}
+
+fn parse_nsec3(owner: &str, rdata: &[u8]) -> Option<Nsec3> {
+    let salt_len = *rdata.get(4)? as usize;
+    let salt = rdata.get(5..5 + salt_len)?.to_vec();
+    let hash_len = *rdata.get(5 + salt_len)? as usize;
+    let next = rdata.get(6 + salt_len..6 + salt_len + hash_len)?.to_vec();
+    Some(Nsec3 {
+        hash: base32hex(owner.split('.').next()?)?,
+        next,
+        algorithm: rdata[0],
+        iterations: u16::from_be_bytes([rdata[2], rdata[3]]),
+        salt,
+    })
+}
+
+/// The NSEC3 hash of a name (RFC 5155, section 5): SHA-1 over the name in
+/// wire form and the salt, repeated.
+pub(crate) fn nsec3_hash(name: &str, salt: &[u8], iterations: u16) -> Vec<u8> {
+    let sha1 = |data: &[u8]| {
+        ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, data)
+            .as_ref()
+            .to_vec()
+    };
+    let mut hash = sha1(&[&crate::verify::name_wire(name)[..], salt].concat());
+    for _ in 0..iterations {
+        hash = sha1(&[&hash[..], salt].concat());
+    }
+    hash
+}
+
+/// Whether NSEC3 records prove that `qname`, one label below the apex of
+/// `zone`, does not exist: one record is at the apex (the closest name that
+/// does exist), one covers the name, and one covers the wildcard that could
+/// have answered instead. A record at the name itself also counts: some
+/// servers answer "the name exists, but has no such record".
+pub(crate) fn nsec3_proves_absence(records: &[Nsec3], zone: &str, qname: &str) -> Option<bool> {
+    let first = records.first()?;
+    // Only SHA-1 is defined. Refuse absurd iteration counts.
+    if first.algorithm != 1 || first.iterations > 2500 {
+        return None;
+    }
+    let hash = |name: &str| nsec3_hash(name, &first.salt, first.iterations);
+    let matches = |h: &[u8]| records.iter().any(|r| r.hash == h);
+    let covers = |h: &[u8]| {
+        records.iter().any(|r| {
+            if r.hash < r.next {
+                r.hash.as_slice() < h && h < r.next.as_slice()
+            } else {
+                h > r.hash.as_slice() || h < r.next.as_slice()
+            }
+        })
+    };
+    let name_hash = hash(qname);
+    if matches(&name_hash) {
+        return Some(true);
+    }
+    let wildcard = hash(&format!("*.{zone}"));
+    Some(matches(&hash(zone)) && covers(&name_hash) && (covers(&wildcard) || matches(&wildcard)))
+}
+
 /// A label nobody would create, for asking about a name that is not there.
 pub const ABSENT_LABEL: &str = "zz--zoneblick-absent";
 
@@ -249,16 +339,17 @@ async fn probe_denial(client: &Client, server: IpAddr, zone: &str) -> Option<Den
     let signed = raw(RecordType::RRSIG)
         .filter_map(|(_, rdata)| crate::dnssec::parse_rrsig(rdata))
         .any(|sig| matches!(sig.type_covered.as_str(), "NSEC" | "NSEC3"));
+    let nsec3: Vec<Nsec3> = raw(RecordType::NSEC3)
+        .filter_map(|(owner, rdata)| parse_nsec3(&owner, rdata))
+        .collect();
+    let nsec3_proof = nsec3_proves_absence(&nsec3, zone, &qname);
     Some(Denial {
+        nsec3_proof,
         qname,
         rcode: rcode_name(msg.metadata.response_code),
         answered: !msg.answers.is_empty(),
         nsec,
-        nsec3: msg
-            .authorities
-            .iter()
-            .filter(|rec| rec.record_type() == RecordType::NSEC3)
-            .count(),
+        nsec3: nsec3.len(),
         signed,
     })
 }
@@ -461,5 +552,97 @@ mod tests {
         );
         assert_eq!(parse_origin("nonsense"), (vec![], None));
         assert_eq!(parse_origin("1 | <script>"), (vec![1], None));
+    }
+
+    fn b32(hash: &[u8]) -> String {
+        // The inverse of `base32hex`, for writing test records.
+        let alphabet = b"0123456789abcdefghijklmnopqrstuv";
+        let (mut bits, mut have, mut out) = (0u32, 0, String::new());
+        for b in hash {
+            bits = (bits << 8) | u32::from(*b);
+            have += 8;
+            while have >= 5 {
+                have -= 5;
+                out.push(alphabet[((bits >> have) & 31) as usize] as char);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn nsec3_hashes_match_the_rfc() {
+        // RFC 5155, appendix A: zone "example", salt aabbccdd, 12 iterations.
+        let salt = [0xaa, 0xbb, 0xcc, 0xdd];
+        for (name, expected) in [
+            ("example.", "0p9mhaveqvm6t7vbl5lop2u3t2rp3tom"),
+            ("a.example.", "35mthgpgcu1qg68fab165klnsnk3dpvl"),
+            ("*.w.example.", "r53bq7cc2uvmubfu5ocmm6pers9tk9en"),
+        ] {
+            let hash = nsec3_hash(name, &salt, 12);
+            assert_eq!(b32(&hash), expected, "{name}");
+            assert_eq!(base32hex(expected).unwrap(), hash);
+        }
+        assert_eq!(base32hex("not base32!"), None);
+    }
+
+    #[test]
+    fn an_nsec3_proof_needs_the_apex_the_name_and_the_wildcard() {
+        let (zone, qname) = ("example.test.", "zz--zoneblick-absent.example.test.");
+        let hash = |name: &str| nsec3_hash(name, &[], 0);
+        let record = |hash: Vec<u8>, next: Vec<u8>| Nsec3 {
+            hash,
+            next,
+            algorithm: 1,
+            iterations: 0,
+            salt: vec![],
+        };
+        // A record just before a hash and ending just after it covers it.
+        let around = |h: &[u8]| {
+            let (mut before, mut after) = (h.to_vec(), h.to_vec());
+            *before.last_mut().unwrap() = before.last().unwrap().wrapping_sub(1);
+            *after.last_mut().unwrap() = after.last().unwrap().wrapping_add(1);
+            record(before, after)
+        };
+        let apex = record(hash(zone), vec![0xff; 20]);
+        let name = around(&hash(qname));
+        let wildcard = around(&hash("*.example.test."));
+
+        let full = [apex.clone(), name.clone(), wildcard.clone()];
+        assert_eq!(nsec3_proves_absence(&full, zone, qname), Some(true));
+        // Any one part missing, and it is no proof.
+        assert_eq!(
+            nsec3_proves_absence(&[name.clone(), wildcard.clone()], zone, qname),
+            Some(false)
+        );
+        assert_eq!(
+            nsec3_proves_absence(&[apex.clone(), wildcard], zone, qname),
+            Some(false)
+        );
+        assert_eq!(
+            nsec3_proves_absence(&[apex.clone(), name], zone, qname),
+            Some(false)
+        );
+        // A record at the name itself is the "no such record" form.
+        let at_name = record(hash(qname), vec![0; 20]);
+        assert_eq!(nsec3_proves_absence(&[at_name], zone, qname), Some(true));
+        // Nothing to judge, or a hash this program does not know.
+        assert_eq!(nsec3_proves_absence(&[], zone, qname), None);
+        let odd = Nsec3 {
+            algorithm: 2,
+            ..apex
+        };
+        assert_eq!(nsec3_proves_absence(&[odd], zone, qname), None);
+    }
+
+    #[test]
+    fn nsec3_records_are_read() {
+        // algorithm 1, flags 0, 5 iterations, salt ab, next hash of 2 bytes.
+        let r = parse_nsec3("0p9mhave.example.", &[1, 0, 0, 5, 1, 0xab, 2, 9, 8]).unwrap();
+        assert_eq!(
+            (r.algorithm, r.iterations, r.salt, r.next),
+            (1, 5, vec![0xab], vec![9, 8])
+        );
+        assert_eq!(r.hash, base32hex("0p9mhave").unwrap());
+        assert!(parse_nsec3("0p9mhave.example.", &[1, 0, 0, 5, 9]).is_none());
     }
 }

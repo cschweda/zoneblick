@@ -142,6 +142,17 @@ pub async fn run_zone(
     zone: &ZoneConfig,
     trigger: &str,
 ) -> Result<i64, String> {
+    run_zone_level(state, zone, trigger, false).await
+}
+
+/// [`run_zone`], with `deep` to make this run a deep one whether or not
+/// one is due.
+pub async fn run_zone_level(
+    state: &Arc<AppState>,
+    zone: &ZoneConfig,
+    trigger: &str,
+    deep: bool,
+) -> Result<i64, String> {
     if !state
         .running
         .lock()
@@ -150,7 +161,7 @@ pub async fn run_zone(
     {
         return Err("a run of this zone is already in progress".to_string());
     }
-    let result = run_zone_inner(state, zone, trigger).await;
+    let result = run_zone_inner(state, zone, trigger, deep).await;
     state.running.lock().expect("lock").remove(&zone.name);
     match &result {
         Ok(id) => {
@@ -173,6 +184,7 @@ async fn run_zone_inner(
     state: &Arc<AppState>,
     zone: &ZoneConfig,
     trigger: &str,
+    force_deep: bool,
 ) -> Result<i64, String> {
     // Names: the seeds in the config plus any remembered from `zoneblick run`.
     let mut names = zone.seeds.clone();
@@ -186,6 +198,7 @@ async fn run_zone_inner(
 
     // More names from certificate logs, when the zone asks for that.
     let mut discovered = Vec::new();
+    let mut provided: Vec<String> = Vec::new();
     let due = state
         .discovered_at
         .lock()
@@ -216,22 +229,58 @@ async fn run_zone_inner(
             Err(e) => log(&format!("{} discovery failed: {e}", zone.name)),
         }
     }
+    if due && zone.discover.iter().any(|d| d == "digitalocean") {
+        let found = match state
+            .config
+            .providers
+            .digitalocean
+            .as_ref()
+            .map(|p| p.token())
+        {
+            Some(Ok(token)) => {
+                crate::discover::digitalocean_names(&client, &zone.name, &token).await
+            }
+            Some(Err(e)) => Err(e),
+            None => Err("no [providers.digitalocean] section".to_string()),
+        };
+        match found {
+            Ok(found) => {
+                let new: Vec<String> = found.into_iter().filter(|n| !names.contains(n)).collect();
+                if !new.is_empty() {
+                    log(&format!(
+                        "{} found {} new names at DigitalOcean",
+                        zone.name,
+                        new.len()
+                    ));
+                }
+                names.extend(new.iter().cloned());
+                provided = new;
+            }
+            Err(e) => log(&format!("{} discovery failed: {e}", zone.name)),
+        }
+    }
     names.sort();
 
     let mut obs = observe_zone_records(client.clone(), &zone.name, started, &names)
         .await
         .map_err(|e| e.to_string())?;
-    // A deep run, when one is due for this zone.
-    if let Ok(Some(every)) = state.config.deep_interval() {
-        let mut deep_at = state.deep_at.lock().expect("lock").clone();
-        if deep_at
+    // A deep run, when one is asked for or due for this zone.
+    let deep_due = match state.config.deep_interval() {
+        Ok(Some(every)) => state
+            .deep_at
+            .lock()
+            .expect("lock")
             .get(&zone.name)
-            .is_none_or(|at| started >= at + every.as_secs())
-        {
-            crate::resolver::add_deep(client.clone(), &mut obs).await;
-            deep_at.insert(zone.name.clone(), started);
-            *state.deep_at.lock().expect("lock") = deep_at;
-        }
+            .is_none_or(|at| started >= at + every.as_secs()),
+        _ => false,
+    };
+    if force_deep || deep_due {
+        crate::resolver::add_deep(client.clone(), &mut obs).await;
+        state
+            .deep_at
+            .lock()
+            .expect("lock")
+            .insert(zone.name.clone(), started);
     }
     // A zone transfer, when the zone asks for that and a server allows it.
     // Names it finds are checked from the next run on.
@@ -256,6 +305,9 @@ async fn run_zone_inner(
         .map_err(|e| e.to_string())?;
         store
             .set_name_source(&zone.name, &discovered, "ct")
+            .map_err(|e| e.to_string())?;
+        store
+            .set_name_source(&zone.name, &provided, "digitalocean")
             .map_err(|e| e.to_string())?;
         let added = store
             .add_names(&zone.name, &transferred, "axfr", outcome.run_id)
@@ -354,6 +406,8 @@ impl From<StoreError> for ApiError {
             StoreError::UnknownZone { .. } => (StatusCode::NOT_FOUND, "unknown_zone"),
             StoreError::UnknownRun { .. } => (StatusCode::NOT_FOUND, "unknown_run"),
             StoreError::NotEnoughRuns { .. } => (StatusCode::CONFLICT, "not_enough_runs"),
+            StoreError::UnknownFinding { .. } => (StatusCode::NOT_FOUND, "unknown_finding"),
+            StoreError::AmbiguousFinding { .. } => (StatusCode::BAD_REQUEST, "ambiguous_finding"),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, "store_error"),
         };
         ApiError(status, kind, e.to_string())
@@ -467,6 +521,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/zones/{zone}", get(api_zone))
         .route("/runs", get(api_runs).post(api_trigger))
         .route("/findings", get(api_findings))
+        .route("/findings/mute", axum::routing::post(api_mute))
+        .route("/findings/unmute", axum::routing::post(api_unmute))
         .route("/diff", get(api_diff))
         .route("/ui", get(api_ui))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
@@ -607,6 +663,41 @@ async fn api_diff(
 #[derive(Deserialize, Default)]
 struct TriggerBody {
     zone: Option<String>,
+    /// Make it a deep run.
+    #[serde(default)]
+    deep: bool,
+}
+
+#[derive(Deserialize)]
+struct MuteBody {
+    zone: String,
+    /// The finding's fingerprint, or the start of it.
+    id: String,
+}
+
+async fn set_muted(
+    state: &Arc<AppState>,
+    body: MuteBody,
+    muted: bool,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let zone = normalise_zone(&body.zone).map_err(|_| bad_zone(&body.zone))?;
+    let row = state.store().set_muted(&zone, &body.id, muted)?;
+    Ok(Json(serde_json::json!({ "finding": row })))
+}
+
+/// Mute one finding: it is still recorded, but no longer reported.
+async fn api_mute(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<MuteBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    set_muted(&state, body, true).await
+}
+
+async fn api_unmute(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<MuteBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    set_muted(&state, body, false).await
 }
 
 /// Start a run of one configured zone, or of all of them. Returns at once;
@@ -633,9 +724,10 @@ async fn api_trigger(
     };
     let started: Vec<String> = zones.iter().map(|z| z.name.clone()).collect();
     let background = state.clone();
+    let deep = body.deep;
     tokio::spawn(async move {
         for zone in zones {
-            let _ = run_zone(&background, &zone, "manual").await;
+            let _ = run_zone_level(&background, &zone, "manual", deep).await;
         }
     });
     Ok((
@@ -671,6 +763,9 @@ struct UiFinding {
     since: String,
     /// The run in which the finding was first gone, when it is resolved.
     resolved: Option<i64>,
+    /// The finding's fingerprint, for muting it.
+    key: String,
+    muted: bool,
 }
 
 #[derive(Serialize)]
@@ -908,6 +1003,8 @@ fn ui_zone(state: &AppState, store: &Store, zone: &str) -> Result<UiZone, StoreE
                 ev: human::evidence_lines(&row.evidence).join("\n"),
                 since: format!("run {}", row.first_seen_run),
                 resolved,
+                muted: row.state == "muted",
+                key: row.fingerprint,
             });
         }
     }

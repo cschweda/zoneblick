@@ -238,3 +238,54 @@ async fn an_alias_of_an_unclaimed_hosted_site_is_critical() {
     let obs = exposed_world().observe(POLICY_ZONE).await.unwrap();
     assert!(obs.policy.unwrap().services.is_empty());
 }
+
+#[tokio::test]
+async fn a_run_can_discover_names_at_digitalocean() {
+    use zoneblick::cli::{RunArgs, SourceArgs, run};
+
+    let mut world = policy_world();
+    world.http(
+        &zoneblick::discover::digitalocean_url(POLICY_ZONE, 1),
+        200,
+        r#"{"domain_records":[{"type":"CNAME","name":"app","data":"app.gone-host.example."},{"type":"A","name":"@","data":"192.0.2.1"}],"links":{}}"#,
+    );
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let fixture = dir.join("discover-do.fixture.json");
+    std::fs::write(
+        &fixture,
+        serde_json::to_string(&world.fixture(POLICY_ZONE)).unwrap(),
+    )
+    .unwrap();
+    let db = dir.join("discover-do.sqlite");
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", db.display()));
+    }
+    let out = run(
+        &RunArgs {
+            zone: POLICY_ZONE.to_string(),
+            names: vec![],
+            forget_names: vec![],
+            discover: vec!["digitalocean".to_string()],
+            deep: false,
+            db,
+            json: true,
+            source: SourceArgs {
+                record: None,
+                replay: Some(fixture),
+            },
+        },
+        false,
+    )
+    .await;
+    assert!(
+        out.stderr
+            .contains("DigitalOcean lists 1 hosts in policy.example., 1 of them new"),
+        "{}",
+        out.stderr
+    );
+    let doc: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(
+        doc["run"]["names"],
+        serde_json::json!(["app.policy.example."])
+    );
+}

@@ -524,6 +524,11 @@ pub struct Denial {
     pub nsec3: usize,
     /// A signature over an NSEC or NSEC3 record came with them.
     pub signed: bool,
+    /// Whether the NSEC3 records prove the name is missing: one matches
+    /// the zone apex and others cover the name and the wildcard. `None`
+    /// when there are no NSEC3 records or their hash is not known.
+    #[serde(default)]
+    pub nsec3_proof: Option<bool>,
 }
 
 /// What the deep probes found at one nameserver address.

@@ -34,6 +34,36 @@ pub struct Config {
     pub alerts: AlertsConfig,
     #[serde(default)]
     pub retention: RetentionConfig,
+    #[serde(default)]
+    pub providers: ProvidersConfig,
+}
+
+/// Credentials for DNS hosting providers, for `discover`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProvidersConfig {
+    #[serde(default)]
+    pub digitalocean: Option<DigitalOceanConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DigitalOceanConfig {
+    /// A file holding an API token with read access, and nothing else.
+    pub token_file: PathBuf,
+}
+
+impl DigitalOceanConfig {
+    /// Read the token. The error names the file, never its contents.
+    pub fn token(&self) -> Result<String, String> {
+        let text = std::fs::read_to_string(&self.token_file)
+            .map_err(|e| format!("cannot read {}: {e}", self.token_file.display()))?;
+        let token = text.trim().to_string();
+        if token.is_empty() {
+            return Err(format!("{} is empty", self.token_file.display()));
+        }
+        Ok(token)
+    }
 }
 
 /// How long stored runs are kept.
@@ -300,10 +330,17 @@ impl Config {
             if let Some(other) = zone
                 .discover
                 .iter()
-                .find(|d| !matches!(d.as_str(), "ct" | "axfr"))
+                .find(|d| !matches!(d.as_str(), "ct" | "axfr" | "digitalocean"))
             {
                 return Err(ConfigError::Invalid(format!(
-                    "zone {name}, discover: \"{other}\" is not a discovery source; they are \"ct\" and \"axfr\""
+                    "zone {name}, discover: \"{other}\" is not a discovery source; they are \"ct\", \"axfr\" and \"digitalocean\""
+                )));
+            }
+            if zone.discover.iter().any(|d| d == "digitalocean")
+                && config.providers.digitalocean.is_none()
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "zone {name} uses discover = [\"digitalocean\"], which needs [providers.digitalocean] token_file"
                 )));
             }
             seen.push(name.clone());
@@ -435,6 +472,23 @@ smtp_host = "smtp.example.org"
                 "[server]\nbind = \"0.0.0.0:8053\"\ntoken_sha256 = \"{hash}\""
             ))
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn provider_discovery_needs_its_token_file() {
+        let zone = "[[zone]]\nname = \"example.org\"\ndiscover = [\"digitalocean\"]\n";
+        let err = Config::parse(zone).unwrap_err().to_string();
+        assert!(err.contains("[providers.digitalocean] token_file"), "{err}");
+        let config = Config::parse(&format!(
+            "[providers.digitalocean]\ntoken_file = \"/nonexistent/do-token\"\n{zone}"
+        ))
+        .unwrap();
+        // A missing file is reported by name when the token is needed.
+        let err = config.providers.digitalocean.unwrap().token().unwrap_err();
+        assert!(err.contains("/nonexistent/do-token"), "{err}");
+        assert!(
+            Config::parse("[[zone]]\nname = \"example.org\"\ndiscover = [\"route53\"]\n").is_err()
         );
     }
 }

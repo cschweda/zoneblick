@@ -469,7 +469,7 @@ pub(crate) fn nsec_covers(owner: &str, next: &str, name: &str) -> bool {
 
 /// SEC-06: a signed zone must prove that a name does not exist, with
 /// signed NSEC or NSEC3 records. Without the proof, validating resolvers
-/// reject the answer. NSEC3 proofs are checked for presence only.
+/// reject the answer. The signatures on the proof are not verified.
 pub fn sec_06_denial(obs: &ZoneObservation) -> Vec<Finding> {
     let (Some(d), Some(sec)) = (deep(obs), obs.dnssec.as_ref()) else {
         return Vec::new();
@@ -487,6 +487,8 @@ pub fn sec_06_denial(obs: &ZoneObservation) -> Vec<Finding> {
             "no NSEC or NSEC3 record came with the answer"
         } else if !denial.signed {
             "the NSEC or NSEC3 records came without a signature"
+        } else if denial.nsec3_proof == Some(false) {
+            "the NSEC3 records do not prove that the name is missing"
         } else if denial.nsec3 == 0
             && !denial
                 .nsec
@@ -1111,6 +1113,7 @@ mod tests {
                 .collect(),
             nsec3,
             signed,
+            nsec3_proof: None,
         };
         let mut obs = sound();
         // An unsigned zone owes no proof.

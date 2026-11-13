@@ -258,7 +258,7 @@ function el(tag,attrs,kids){
   (kids||[]).forEach(function(c){if(c!=null)n.appendChild(typeof c==="string"?document.createTextNode(c):c);});
   return n;
 }
-function open(z){return z.findings.filter(function(f){return !f.resolved;});}
+function open(z){return z.findings.filter(function(f){return !f.resolved&&!f.muted;});}
 function worst(z){var w="ok";open(z).forEach(function(f){if(SEV[f.sev]<SEV[w])w=f.sev;});return w;}
 function count(sev){var n=0;zones.forEach(function(z){open(z).forEach(function(f){if(f.sev===sev)n++;});});return n;}
 function pill(sev,text){return el("span",{class:"pill "+sev,text:text||SEVNAME[sev]});}
@@ -274,7 +274,8 @@ function renderSummary(){
   s.appendChild(stat("Notice",count("note"),"note"));
   s.appendChild(stat("Last run",runNo?"#"+runNo+" · "+state.lastRun:"none yet","",true));
   s.appendChild(el("div",{class:"runbox"},[
-    el("button",{class:"btn",id:"runbtn",type:"button",disabled:state.running,onclick:startRun,text:state.running?"Running…":"Run checks now"}),
+    el("button",{class:"btn",id:"runbtn",type:"button",disabled:state.running,onclick:function(){startRun(false);},text:state.running?"Running…":"Run checks now"}),
+    el("button",{class:"chip",id:"deepbtn",type:"button",disabled:state.running||!state.zone,onclick:function(){startRun(true);},title:"Run the deep checks on the selected zone now",text:"Deep check of this zone"}),
     el("div",{class:"progress","aria-hidden":"true"},[el("i",{id:"bar"})]),
     el("div",{id:"runstatus",role:"status",text:state.running?"Checking zones…":until(model&&model.next_run_unix)})
   ]));
@@ -328,9 +329,10 @@ function viewFindings(z){
   var box=el("div",{role:"tabpanel"});
   if(!z.last_run_id){box.appendChild(el("div",{class:"allclear"},["No run has been stored for this zone yet."]));return box;}
   if(!z.findings.length){box.appendChild(el("div",{class:"allclear"},[pill("ok","Clean"),"All checks passed in the last run."]));return box;}
-  z.findings.slice().sort(function(a,b){return (a.resolved?9:SEV[a.sev])-(b.resolved?9:SEV[b.sev]);}).forEach(function(f){
-    box.appendChild(el("article",{class:"finding"+(f.resolved?" resolved":"")},[
-      el("div",null,[f.resolved?pill("res","Resolved"):pill(f.sev),el("div",{class:"id",text:f.id})]),
+  z.findings.slice().sort(function(a,b){return (a.resolved?9:a.muted?8:SEV[a.sev])-(b.resolved?9:b.muted?8:SEV[b.sev]);}).forEach(function(f){
+    box.appendChild(el("article",{class:"finding"+(f.resolved||f.muted?" resolved":"")},[
+      el("div",null,[f.resolved?pill("res","Resolved"):f.muted?pill("res","Muted"):pill(f.sev),el("div",{class:"id",text:f.id}),
+        f.resolved||!f.key?null:el("button",{class:"chip",type:"button",style:"margin-top:8px",text:f.muted?"Unmute":"Mute",title:f.muted?"Report this finding again":"Keep recording this finding, but stop reporting it",onclick:function(){setMuted(z,f,!f.muted);}})]),
       el("div",null,[
         el("h2",{text:f.title}),
         el("div",{class:"mono",style:"color:var(--muted);margin-bottom:8px",text:f.name+" · "+(f.resolved?"closed in run "+f.resolved:"open since "+f.since)}),
@@ -388,11 +390,19 @@ function viewHistory(z){
   return box;
 }
 
+/* ---------- mute ---------- */
+function setMuted(z,f,muted){
+  api("findings/"+(muted?"mute":"unmute"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({zone:z.name,id:f.key})})
+    .then(function(){return load();})
+    .catch(function(e){if(e.message!=="unauthorized")notice("The finding could not be changed: "+e.message,true);});
+}
+
 /* ---------- run now ---------- */
-function startRun(){
+function startRun(deep){
   if(state.running)return;
   state.running=true;renderSummary();
-  api("runs",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
+  var body=deep===true&&state.zone?{zone:state.zone,deep:true}:{};
+  api("runs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
     .then(function(){setTimeout(poll,1500);})
     .catch(function(e){state.running=false;renderSummary();if(e.message!=="unauthorized")notice("The run could not be started: "+e.message,true);});
 }

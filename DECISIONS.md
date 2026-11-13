@@ -179,3 +179,10 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - The offline test zones are now really signed (Ed25519 keys made from fixed seeds), so the signed fixtures verify.
 - NET-01 uses Team Cymru's IP-to-ASN service over DNS (approved 2026-11-13; the design's open question 5), one TXT lookup per nameserver address in deep runs, through zoneblick's own resolver. It reports only when every address has a known origin and all share an ASN.
 - All 14 deep checks of the design are now built.
+
+## 0.11.0
+
+- The API gained `POST /findings/mute`, `POST /findings/unmute` and `"deep": true` on `POST /runs`; the web UI has a Mute button per finding and a deep-check button for the selected zone. The UI file is now edited in `src/ui/index.html` directly; `docs/demo.html` does not have these controls.
+- SEC-06 now checks NSEC3 proofs: for the probe name, one label below the apex, a record must match the apex hash and records must cover the hashes of the name and of the wildcard (or match the name, the "no such record" form). The hash is checked against the examples in RFC 5155. Zones with more than 2500 iterations or a hash other than SHA-1 are not judged. No live NSEC3 zone was checked: none of the permitted test zones uses NSEC3.
+- Provider discovery: DigitalOcean only (`discover = ["digitalocean"]`), the design's first choice. The token comes from a file in the daemon and from `ZONEBLICK_DIGITALOCEAN_TOKEN` in the CLI; it is sent as a bearer token, redirects are not followed, and it is never recorded. Tested against recorded answers only; the response shape is from DigitalOcean's API documentation as I know it, not from a live call.
+- No RSA signing test: it would need a private key in the repository. RSA verification is checked live against the root zone.
