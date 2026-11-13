@@ -93,6 +93,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
+<script>document.documentElement.classList.add("js")</script>
 <style>
 /* Layout idea: 12-column Swiss grid, flush left, hairline rules, section numbers in a narrow left rail. One red accent. Dark only. */
 :root{
@@ -112,7 +113,9 @@
 html{scroll-behavior:smooth}
 body{margin:0;background:var(--ground);color:var(--text);font-family:var(--sans);font-size:17px;line-height:1.5;-webkit-font-smoothing:antialiased}
 a{color:inherit}
-a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+a:focus-visible,button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.skip{position:absolute;left:var(--gutter);top:-100px;z-index:30;background:var(--text);color:var(--ground);padding:10px 14px;font-size:15px;font-weight:700;text-decoration:none}
+.skip:focus{top:10px}
 .wrap{max-width:1280px;margin:0 auto;padding:0 var(--gutter)}
 .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px}
 .mono{font-family:var(--mono);font-size:13px;letter-spacing:.01em}
@@ -126,6 +129,7 @@ header{border-bottom:1px solid var(--line)}
 nav{display:flex;gap:28px;flex-wrap:wrap}
 nav a{text-decoration:none;font-size:14px;color:var(--muted)}
 nav a:hover{color:var(--text)}
+.menu{display:none}
 
 /* Hero */
 .hero{padding-top:clamp(48px,9vw,120px);padding-bottom:clamp(40px,6vw,72px)}
@@ -248,16 +252,36 @@ footer .grid{row-gap:24px}
   .steps li{grid-template-columns:48px minmax(0,1fr)}.steps p{grid-column:2}
   .etym,.flinks{grid-column:1/-1}
 }
-@media (max-width:520px){.checks,.checks.four{grid-template-columns:1fr}nav{gap:16px}nav a.opt{display:none}}
-@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.btn{transition:none}}
+/* Small screens: the nav folds into a menu button. Without JavaScript the
+   button stays hidden and the links stay in the bar, as before. */
+@media (max-width:860px){
+  .js header{position:relative}
+  .js .menu{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;margin-right:-10px;padding:0;background:none;border:0;color:var(--text);cursor:pointer}
+  .menu span,.menu span::before,.menu span::after{display:block;width:22px;height:2px;background:currentColor;transition:transform .18s ease,background-color .18s ease}
+  .menu span{position:relative}
+  .menu span::before,.menu span::after{content:"";position:absolute;left:0}
+  .menu span::before{top:-7px}
+  .menu span::after{top:7px}
+  .menu[aria-expanded="true"] span{background:transparent}
+  .menu[aria-expanded="true"] span::before{transform:translateY(7px) rotate(45deg)}
+  .menu[aria-expanded="true"] span::after{transform:translateY(-7px) rotate(-45deg)}
+  .js nav{display:none;position:absolute;left:0;right:0;top:100%;z-index:20;flex-direction:column;flex-wrap:nowrap;gap:0;background:var(--ground);border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:4px var(--gutter) 12px;box-shadow:0 24px 40px rgba(0,0,0,.55)}
+  .js nav.open{display:flex}
+  .js nav a{display:block;padding:15px 0;font-size:17px;color:var(--text);border-top:1px solid var(--line)}
+  .js nav a:first-child{border-top:0}
+}
+@media (max-width:520px){.checks,.checks.four{grid-template-columns:1fr}html:not(.js) nav{gap:16px}html:not(.js) nav a.opt{display:none}}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.btn,.menu span,.menu span::before,.menu span::after{transition:none}}
 </style>
 </head>
 <body>
 
+<a class="skip" href="#main">Skip to content</a>
 <header>
   <div class="wrap bar">
     <a class="mark" href="./"><i aria-hidden="true"></i>zoneblick</a>
-    <nav aria-label="Primary">
+    <button class="menu" type="button" aria-expanded="false" aria-controls="nav" aria-label="Menu"><span aria-hidden="true"></span></button>
+    <nav id="nav" aria-label="Primary">
       <a class="opt" href="#drift">Drift</a>
       <a class="opt" href="#checks">Checks</a>
       <a class="opt" href="#how">How it works</a>
@@ -270,7 +294,7 @@ footer .grid{row-gap:24px}
   </div>
 </header>
 
-<main>
+<main id="main">
   <div class="wrap hero">
     <div class="grid">
       <div class="label">Self-hosted DNS zone watchdog</div>
@@ -283,14 +307,14 @@ footer .grid{row-gap:24px}
     </div>
   </div>
 
-  <div class="specimen" aria-label="Example of a detected change">
+  <div class="specimen" role="group" aria-label="Example of a detected change">
     <div class="wrap">
       <div class="grid">
         <div class="spec-head">
           <div class="label">Run 412 &rarr; 413</div>
           <p>Three records changed in <span class="mono">example.org</span>. One nameserver has not caught up.</p>
         </div>
-        <div class="diff" role="img" aria-label="Diff: the api CNAME target changed, a staging CNAME now points to an unclaimed host, and a CAA record was removed.">
+        <div class="diff" tabindex="0" role="img" aria-label="Diff: the api CNAME target changed, a staging CNAME now points to an unclaimed host, and a CAA record was removed.">
           <div class="ctx">&nbsp; www&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; A&nbsp;&nbsp;&nbsp;&nbsp; 192.0.2.10</div>
           <div class="del">- api&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; CNAME edge-1.example.net.</div>
           <div class="add">+ api&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; CNAME edge-2.example.net.</div>
@@ -364,6 +388,7 @@ footer .grid{row-gap:24px}
         <h2>Five kinds of trouble, one pass.</h2>
         <p class="intro">Each check has a stable ID, a severity, and the evidence behind it. No recursive resolver sits in the middle, so you see what the authoritative servers really say.</p>
         <p class="tier"><b>Light run</b><span>Hourly. Twenty-six checks across the whole fleet.</span></p>
+        <p class="tier"><b>Working today</b><span>Delegation and consistency: ten checks, in the one-shot <span class="mono">check</span> command. DNSSEC, mail and policy, and takeover are planned.</span></p>
         <div class="checks">
           <article>
             <div class="label">DEL</div>
@@ -454,7 +479,7 @@ footer .grid{row-gap:24px}
       <div class="body">
         <h2>How it differs from existing tools.</h2>
         <p class="intro">Good tools exist for each part of this job. None of the open-source ones covers zone health, takeover exposure and drift history together while keeping your zone data on your own server.</p>
-        <div class="tablebox">
+        <div class="tablebox" tabindex="0" role="region" aria-label="Comparison of zoneblick with existing tools">
           <table class="cmp">
             <thead><tr><th scope="col">Tool</th><th scope="col">Core zone health</th><th scope="col">Deep analysis</th><th scope="col">Takeover exposure</th><th scope="col">Drift history</th><th scope="col">Self-hosted</th></tr></thead>
             <tbody>
@@ -489,18 +514,29 @@ footer .grid{row-gap:24px}
         <h2>Run it on your own server.</h2>
         <p class="intro">One binary, one config file, one SQLite file. There is no hosted version and no account to create.</p>
         <h3 class="h3big" id="install">Install it.</h3>
-        <p class="h3sub">There are no release binaries yet, so you build zoneblick from source. That needs a stable <a href="https://rustup.rs">Rust toolchain</a>, version 1.88 or later, and takes about a minute.</p>
+        <p class="h3sub">Download a ready-built binary, or build from source. The first release is not out yet; until it is, build from source.</p>
         <div class="run two">
           <article class="wide">
-            <h3>With cargo</h3>
-            <p>Builds the latest source and puts the <span class="mono">zoneblick</span> binary in <span class="mono">~/.cargo/bin</span>, which rustup adds to your PATH.</p>
-<pre>cargo install --git https://github.com/cschweda/zoneblick
+            <h3>Download a binary</h3>
+            <p>Every <a href="https://github.com/cschweda/zoneblick/releases">release</a> has binaries for Linux (x86_64 and ARM, statically linked) and macOS (Apple Silicon and Intel), with checksums. The macOS binaries are not signed by Apple: download with <span class="mono">curl</span>, as here, and macOS will run them. The <a href="https://github.com/cschweda/zoneblick#install">README</a> has the details.</p>
+<pre tabindex="0"><span class="c"># pick a release and your system</span>
+V=v0.1.0
+T=x86_64-unknown-linux-musl   <span class="c"># or aarch64-unknown-linux-musl, aarch64-apple-darwin, x86_64-apple-darwin</span>
+
+curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
+tar -xzf zoneblick-$V-$T.tar.gz
+sudo install zoneblick-$V-$T/zoneblick /usr/local/bin/</pre>
+          </article>
+          <article class="wide">
+            <h3>Build with cargo</h3>
+            <p>Needs a stable <a href="https://rustup.rs">Rust toolchain</a>, version 1.88 or later, and takes about a minute. Builds the latest source and puts the <span class="mono">zoneblick</span> binary in <span class="mono">~/.cargo/bin</span>, which rustup adds to your PATH.</p>
+<pre tabindex="0">cargo install --git https://github.com/cschweda/zoneblick
 zoneblick --version</pre>
           </article>
           <article>
             <h3>From a clone</h3>
             <p>The same result from a local checkout, if you want to read or change the code first.</p>
-<pre>git clone \
+<pre tabindex="0">git clone \
   https://github.com/cschweda/zoneblick
 cd zoneblick
 cargo install --path .</pre>
@@ -508,7 +544,7 @@ cargo install --path .</pre>
           <article>
             <h3>Update or remove</h3>
             <p>Run the install again with <span class="mono">--force</span> to update. It is one binary, so removing it leaves nothing behind.</p>
-<pre><span class="c"># update</span>
+<pre tabindex="0"><span class="c"># update</span>
 cargo install --force --git \
   https://github.com/cschweda/zoneblick
 
@@ -523,12 +559,12 @@ cargo uninstall zoneblick</pre>
           <article>
             <h3>Try a zone</h3>
             <p>No config and no database. Exit code follows severity, so it works in CI.</p>
-<pre>zoneblick check example.org</pre>
+<pre tabindex="0">zoneblick check example.org</pre>
           </article>
           <article>
             <h3>Run the daemon</h3>
             <p>Scheduler, web UI and alerts. Put it behind your reverse proxy.</p>
-<pre><span class="c"># /etc/zoneblick/zoneblick.toml</span>
+<pre tabindex="0"><span class="c"># /etc/zoneblick/zoneblick.toml</span>
 [[zone]]
 name  = "example.org"
 seeds = ["www", "api", "mail"]
@@ -538,14 +574,14 @@ zoneblick serve</pre>
           <article>
             <h3>Or use Docker</h3>
             <p>One image, one volume for data, one mounted config file.</p>
-<pre>docker run -d \
+<pre tabindex="0">docker run -d \
   -v ./data:/data \
   -v ./zoneblick.toml:/etc/zoneblick.toml \
   -p 127.0.0.1:8053:8053 \
   zoneblick serve</pre>
           </article>
         </div>
-        <p class="status"><b>Early days</b><span>zoneblick is not released yet. The one-shot <span class="mono">check</span> command works today when built from source. The daemon and Docker commands show the planned interface.</span></p>
+        <p class="status"><b>Early days</b><span>zoneblick has no release yet. The one-shot <span class="mono">check</span> command works today when built from source, with the delegation and consistency checks. The daemon and Docker commands show the planned interface.</span></p>
       </div>
     </div>
   </section>
@@ -553,7 +589,7 @@ zoneblick serve</pre>
 
 <footer>
   <div class="wrap grid">
-    <p class="etym"><strong>zoneblick</strong> joins <em>zone</em> with the German <em>Blick</em>, a look or glance. Written in Rust. Scan only zones you control.</p>
+    <p class="etym"><strong>zoneblick</strong> joins <em>zone</em> with the German <em>Blick</em>, a look or glance. Written in Rust. Open source under the MIT or Apache-2.0 license, at your option. Scan only zones you control.</p>
     <div class="flinks">
       <a href="demo.html">Demo with sample data</a>
       <a href="https://github.com/cschweda/zoneblick">github.com/cschweda/zoneblick</a>
@@ -561,5 +597,17 @@ zoneblick serve</pre>
   </div>
 </footer>
 
+<script>
+(function(){
+  var btn=document.querySelector(".menu"),nav=document.getElementById("nav");
+  if(!btn||!nav)return;
+  function set(open){nav.classList.toggle("open",open);btn.setAttribute("aria-expanded",open?"true":"false")}
+  btn.addEventListener("click",function(){set(btn.getAttribute("aria-expanded")!=="true")});
+  nav.addEventListener("click",function(e){if(e.target.closest("a"))set(false)});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape"&&btn.getAttribute("aria-expanded")==="true"){set(false);btn.focus()}});
+  document.addEventListener("click",function(e){if(!e.target.closest("header"))set(false)});
+  window.matchMedia("(min-width:861px)").addEventListener("change",function(e){if(e.matches)set(false)});
+})();
+</script>
 </body>
 </html>

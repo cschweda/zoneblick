@@ -2,7 +2,7 @@
 
 > zoneblick is a self-hosted DNS zone watchdog, written in Rust. It resolves each zone from the root, asks every authoritative nameserver directly, checks the answers for correctness and risk, and reports what changed. It is open source and runs on your own server; it is not a hosted service.
 
-Status as of 2026-11-13: early development. The one-shot command `zoneblick check <zone>` works and runs the delegation and consistency checks. History, drift detection, the daemon, alerts, the web UI, and the DNSSEC, mail-policy and takeover checks are designed but not built yet. Nothing is released; there are no binaries to download. To install it, build from source with a stable Rust toolchain (1.88 or later): `cargo install --git https://github.com/cschweda/zoneblick`. The name is always written in lowercase.
+Status as of 2026-11-13: early development. The one-shot command `zoneblick check <zone>` works and runs the delegation and consistency checks. History, drift detection, the daemon, alerts, the web UI, and the DNSSEC, mail-policy and takeover checks are designed but not built yet. No release has been published yet. Each release will come with ready-built binaries for Linux (x86_64 and ARM 64-bit, static) and macOS (Apple Silicon and Intel, unsigned) on the GitHub releases page. Until the first release, build from source with a stable Rust toolchain (1.88 or later): `cargo install --git https://github.com/cschweda/zoneblick`. The name is always written in lowercase.
 
 Key facts:
 
