@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zoneblick demo</title>
+<meta name="description" content="A demo of the zoneblick interface using sample data.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://zoneblick.com/demo.html">
+<link rel="canonical" href="https://zoneblick.com/demo.html">
+<meta property="og:title" content="zoneblick demo">
+<meta property="og:description" content="A demo of the zoneblick interface using sample data.">
+<meta property="og:image" content="https://zoneblick.com/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="zoneblick. Know the moment your DNS drifts.">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: summary strip on top, zone list left, zone detail right. Hairline rules, flush left, same tokens as the landing page. */
+:root{
+  color-scheme:dark;
+  --ground:#0b0b0c;
+  --panel:#131315;
+  --line:#2b2b2f;
+  --text:#f0efea;
+  --muted:#a3a29b;
+  --accent:#ff4a33;
+  --crit:#ff5a45;
+  --warn:#e9b44c;
+  --note:#86b4ff;
+  --ok:#74d3a0;
+  --sans:"Helvetica Neue",Helvetica,"Inter",Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --gutter:clamp(16px,3vw,32px);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1360px;margin:0 auto;padding:0 var(--gutter)}
+.mono{font-family:var(--mono);font-size:13px}
+.label{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.num{font-variant-numeric:tabular-nums}
+
+header{border-bottom:1px solid var(--line)}
+.bar{display:flex;align-items:center;gap:16px;min-height:60px;flex-wrap:wrap;padding-top:8px;padding-bottom:8px}
+.mark{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:-.02em;font-size:18px;text-decoration:none}
+.mark i{width:11px;height:11px;background:var(--accent);display:block}
+.demo-tag{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--warn);color:var(--warn);padding:3px 8px}
+.bar .sp{flex:1}
+.bar a.back{font-size:14px;color:var(--muted);text-decoration:none}
+.bar a.back:hover{color:var(--text)}
+.notice{border-bottom:1px solid var(--line);background:var(--panel);font-size:13.5px;color:var(--muted)}
+.notice .wrap{padding-top:9px;padding-bottom:9px}
+
+/* Summary */
+.summary{display:grid;grid-template-columns:repeat(5,minmax(0,1fr)) auto;border-bottom:1px solid var(--line)}
+.stat{padding:20px 20px 18px 0;border-right:1px solid var(--line)}
+.stat+.stat{padding-left:20px}
+.stat b{display:block;font-size:40px;font-weight:800;letter-spacing:-.04em;line-height:1;margin-top:8px}
+.stat b.small{font-size:20px;letter-spacing:-.02em;margin-top:18px;font-weight:700}
+.stat.crit b{color:var(--crit)}.stat.warn b{color:var(--warn)}.stat.note b{color:var(--note)}
+.runbox{padding:20px 0 18px 20px;display:flex;flex-direction:column;justify-content:space-between;gap:10px;min-width:230px}
+.btn{border:1px solid var(--accent);background:var(--accent);color:#140403;font-weight:700;padding:11px 16px;font-size:14px}
+.btn:hover{background:#ff6a56}
+.btn[disabled]{background:transparent;color:var(--muted);border-color:var(--line);cursor:default}
+.progress{height:2px;background:var(--line);position:relative}
+.progress i{position:absolute;inset:0 auto 0 0;width:0;background:var(--accent);transition:width .5s linear}
+#runstatus{font-family:var(--mono);font-size:12px;color:var(--muted);min-height:17px}
+
+/* Main */
+.main{display:grid;grid-template-columns:minmax(280px,380px) minmax(0,1fr);gap:0;align-items:start}
+.list{border-right:1px solid var(--line);padding:20px 20px 40px 0}
+.detail{padding:20px 0 56px 28px;min-width:0}
+.tools{display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
+#q{width:100%;background:var(--panel);border:1px solid var(--line);padding:9px 12px;font-family:var(--mono);font-size:13px}
+#q::placeholder{color:var(--muted)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{background:transparent;border:1px solid var(--line);padding:5px 10px;font-size:12.5px;color:var(--muted)}
+.chip:hover{border-color:var(--muted);color:var(--text)}
+.chip[aria-pressed="true"]{background:var(--text);border-color:var(--text);color:var(--ground);font-weight:700}
+.zones{list-style:none;margin:0;padding:0;border-top:1px solid var(--text)}
+.zones button{width:100%;display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:12px;align-items:center;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--line);padding:13px 8px 13px 0}
+.zones button:hover{background:var(--panel)}
+.zones button[aria-current="true"]{background:var(--panel)}
+.zones button[aria-current="true"] .zn{font-weight:700}
+.stripe{width:4px;height:30px;background:var(--ok)}
+.stripe.crit{background:var(--crit)}.stripe.warn{background:var(--warn)}.stripe.note{background:var(--note)}
+.zn{font-family:var(--mono);font-size:14px;overflow-wrap:anywhere}
+.zmeta{display:block;font-family:var(--sans);font-size:12.5px;color:var(--muted);margin-top:2px}
+.counts{display:flex;gap:5px}
+.empty{padding:20px 0;color:var(--muted)}
+
+.pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border:1px solid currentColor;white-space:nowrap}
+.pill.crit{color:var(--crit)}.pill.warn{color:var(--warn)}.pill.note{color:var(--note)}.pill.ok{color:var(--ok)}.pill.res{color:var(--muted)}
+.pill.n{border-color:transparent;padding:2px 4px}
+
+.dhead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px}
+.dhead h1{margin:6px 0 0;font-size:clamp(30px,4.2vw,56px);font-weight:800;letter-spacing:-.04em;line-height:1;overflow-wrap:anywhere}
+.dhead p{margin:0;color:var(--muted);font-size:13.5px;text-align:right}
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--text);margin-bottom:4px}
+.tab{background:transparent;border:0;padding:11px 18px 11px 0;margin-right:14px;font-size:15px;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-2px}
+.tab:hover{color:var(--text)}
+.tab[aria-selected="true"]{color:var(--text);font-weight:700;border-bottom-color:var(--accent)}
+.tab .c{font-family:var(--mono);font-size:12px;color:var(--muted);margin-left:5px}
+
+.finding{display:grid;grid-template-columns:96px minmax(0,1fr);gap:16px;padding:18px 0;border-bottom:1px solid var(--line)}
+.finding h3{margin:0 0 4px;font-size:17px;font-weight:700;letter-spacing:-.01em}
+.finding .id{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:8px}
+.finding p{margin:0 0 10px;color:var(--muted);max-width:60ch}
+.ev{background:var(--panel);border:1px solid var(--line);padding:10px 12px;font-family:var(--mono);font-size:12.5px;line-height:1.7;overflow-x:auto;white-space:pre}
+.finding.resolved h3{color:var(--muted);text-decoration:line-through}
+.allclear{padding:28px 0;color:var(--muted);display:flex;gap:12px;align-items:center}
+
+.tbox{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:560px}
+th,td{text-align:left;padding:11px 14px 11px 0;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:13px;font-weight:400}
+thead th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+td.g{color:var(--ok)}td.b{color:var(--crit);font-weight:500}
+.sub{margin:26px 0 8px}
+.path{font-family:var(--mono);font-size:13px;line-height:2;color:var(--muted);overflow-x:auto;white-space:nowrap}
+.path b{color:var(--text);font-weight:500}
+
+.hist{display:grid;grid-template-columns:minmax(200px,260px) minmax(0,1fr);gap:24px;padding-top:6px}
+.runs{list-style:none;margin:0;padding:0}
+.runs button{width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--line);padding:10px 8px 10px 0;display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:13px}
+.runs button:hover{background:var(--panel)}
+.runs button[aria-current="true"]{background:var(--panel);box-shadow:inset 3px 0 0 var(--accent);padding-left:10px}
+.runs .ch{color:var(--muted)}.runs .ch.has{color:var(--text)}
+.diff{font-family:var(--mono);font-size:13px;line-height:1.9;border:1px solid var(--line);background:var(--panel);padding:10px 0;overflow-x:auto;white-space:pre}
+.diff div{padding:0 14px}
+.diff .del{color:var(--crit);background:rgba(255,90,69,.09)}
+.diff .add{color:var(--ok);background:rgba(116,211,160,.08)}
+.diff .ctx{color:var(--muted)}
+.dcap{margin:0 0 10px;color:var(--muted);font-size:13.5px}
+
+@media (max-width:900px){
+  .summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .stat,.stat+.stat{padding:16px 12px 14px 0;border-right:0;border-bottom:1px solid var(--line)}
+  .runbox{grid-column:1/-1;padding:16px 0}
+  .main{grid-template-columns:1fr}
+  .list{border-right:0;padding-right:0;padding-bottom:8px}
+  .detail{padding-left:0;border-top:1px solid var(--line)}
+  .hist{grid-template-columns:1fr}
+  .finding{grid-template-columns:1fr;gap:8px}
+  .dhead p{text-align:left}
+}
+@media (prefers-reduced-motion:reduce){.progress i{transition:none}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <a class="mark" href="./"><i aria-hidden="true"></i>zoneblick</a>
+    <span class="demo-tag">Demo</span>
+    <span class="sp"></span>
+    <a class="back" href="./">&larr; Back to overview</a>
+  </div>
+</header>
+<div class="notice"><div class="wrap">Sample data only. Every zone, nameserver and finding here is invented, and nothing is queried live.</div></div>
+
+<main class="wrap">
+  <div class="summary" id="summary"></div>
+  <div class="main">
+    <aside class="list" aria-label="Zones">
+      <div class="tools">
+        <label class="label" for="q">Filter zones</label>
+        <input id="q" type="search" placeholder="example.org" autocomplete="off">
+        <div class="chips" id="chips" role="group" aria-label="Filter by status"></div>
+      </div>
+      <ul class="zones" id="zones"></ul>
+    </aside>
+    <section class="detail" id="detail" aria-live="polite"></section>
+  </div>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------- sample data (all invented; reserved example domains) ---------- */
+var SEV={crit:0,warn:1,note:2,ok:3};
+var SEVNAME={crit:"Critical",warn:"Warning",note:"Notice",ok:"Clean"};
+function ns(name,serial,o){o=o||{};return{name:name,serial:serial,udp:o.udp!==false,tcp:o.tcp!==false,v4:o.v4!==false,v6:o.v6!==false,auth:o.auth!==false};}
+function quiet(first,n){var a=[];for(var i=0;i<n;i++)a.push({id:first-i,when:(i+1)+"h ago",changes:[]});return a;}
+
+var runNo=413;
+var zones=[
+ {name:"example.org",names:42,
+  ns:[ns("ns1.example.org","2026111302"),ns("ns2.example.org","2026111302"),ns("ns3.example.net","2026111302"),ns("ns4.example.net","2026111301")],
+  path:[". ","org. ","example.org."],dnssec:"Signed, chain valid",
+  findings:[
+   {id:"TKO-02",sev:"crit",name:"staging.example.org",title:"CNAME points to an unclaimed hosting resource",
+    text:"The target matches the provider's “no such app” response. Anyone who registers that app name can serve content on this hostname.",
+    ev:"staging.example.org.  CNAME  old-app.hosting.example.\nGET https://staging.example.org/  →  404 “No such app”\nsignature: hosting-example-unclaimed (confidence: confirmed)",since:"run 413"},
+   {id:"CON-01",sev:"warn",name:"example.org",title:"SOA serial differs across nameservers",
+    text:"One nameserver is serving an older copy of the zone. Some resolvers will see stale records until it catches up.",
+    ev:"ns1.example.org   2026111302\nns2.example.org   2026111302\nns3.example.net   2026111302\nns4.example.net   2026111301   ← behind",since:"run 413",transient:true},
+   {id:"POL-03",sev:"note",name:"example.org",title:"CAA record removed",
+    text:"Without CAA, any certificate authority may issue for this domain. The record existed in the baseline.",
+    ev:"- example.org.  CAA  0 issue \"ca.example\"",since:"run 413"}],
+  history:[
+   {id:413,when:"12 min ago",changes:[
+     [" ","www       A      192.0.2.10"],
+     ["-","api       CNAME  edge-1.example.net."],
+     ["+","api       CNAME  edge-2.example.net."],
+     ["-","@         CAA    0 issue \"ca.example\""],
+     ["+","staging   CNAME  old-app.hosting.example."]]},
+   {id:412,when:"1h ago",changes:[]},{id:411,when:"2h ago",changes:[]},
+   {id:410,when:"3h ago",changes:[["-","@         TXT    \"v=spf1 mx -all\""],["+","@         TXT    \"v=spf1 mx include:_spf.example.net -all\""]]},
+   {id:409,when:"4h ago",changes:[]}]},
+
+ {name:"shop.example",names:18,
+  ns:[ns("ns1.shop.example","2026110907"),ns("ns2.shop.example","2026110907"),ns("ns-old.example.net","—",{auth:false})],
+  path:[". ","example. ","shop.example."],dnssec:"Not signed",
+  findings:[
+   {id:"DEL-02",sev:"crit",name:"shop.example",title:"Lame delegation",
+    text:"The parent zone lists a nameserver that does not answer authoritatively for this zone. Queries sent to it fail or get refused.",
+    ev:"parent NS:  ns1.shop.example  ns2.shop.example  ns-old.example.net\nns-old.example.net  →  REFUSED (aa=0)",since:"run 398"},
+   {id:"DEL-01",sev:"warn",name:"shop.example",title:"Parent and child NS sets differ",
+    text:"The zone's own NS records do not match what the parent publishes.",
+    ev:"parent:  ns1  ns2  ns-old.example.net\nchild:   ns1  ns2",since:"run 398"}],
+  history:quiet(413,5)},
+
+ {name:"example.com",names:27,
+  ns:[ns("a.ns.example.com","2026111201"),ns("b.ns.example.com","2026111201")],
+  path:[". ","com. ","example.com."],dnssec:"Signed, signatures expire in 5 days",
+  findings:[
+   {id:"SEC-02",sev:"warn",name:"example.com",title:"DNSSEC signatures expire in 5 days",
+    text:"If the zone is not re-signed before then, validating resolvers will treat every answer as bogus.",
+    ev:"RRSIG DNSKEY  alg 13  keytag 20326\nexpires  2026-11-18 04:00 UTC   (5d 6h)",since:"run 405"}],
+  history:quiet(413,5)},
+
+ {name:"mail.example",names:9,
+  ns:[ns("ns1.mail.example","2026102204"),ns("ns2.mail.example","2026102204",{v6:false})],
+  path:[". ","example. ","mail.example."],dnssec:"Signed, chain valid",
+  findings:[
+   {id:"POL-01",sev:"warn",name:"mail.example",title:"SPF needs 12 DNS lookups; the limit is 10",
+    text:"Receivers stop evaluating at ten lookups and return a permanent error, which can cause mail to be rejected.",
+    ev:"v=spf1 include:_spf.a.example include:_spf.b.example include:_spf.c.example mx a -all\nlookups: 12",since:"run 371"},
+   {id:"POL-02",sev:"note",name:"_dmarc.mail.example",title:"DMARC policy is p=none",
+    text:"Reports are collected but spoofed mail is not rejected or quarantined.",
+    ev:"v=DMARC1; p=none; rua=mailto:dmarc@mail.example",since:"run 120"},
+   {id:"CON-04",sev:"note",name:"ns2.mail.example",title:"Nameserver does not answer over IPv6",
+    text:"An AAAA record is published for this server, but queries to that address time out.",
+    ev:"ns2.mail.example  AAAA  2001:db8::53   →  timeout (3 tries)",since:"run 402"}],
+  history:quiet(413,5)},
+
+ {name:"library.example",names:14,
+  ns:[ns("ns1.example.net","2026110101"),ns("ns2.example.net","2026110101")],
+  path:[". ","example. ","library.example."],dnssec:"Signed, no DS at parent",
+  findings:[
+   {id:"SEC-03",sev:"note",name:"library.example",title:"Zone is signed but not chained to the parent",
+    text:"DNSKEY records exist, but the parent has no DS record, so resolvers cannot validate the signatures.",
+    ev:"DNSKEY  257 3 13  (keytag 41102)\nDS at parent: none",since:"run 88"}],
+  history:quiet(413,5)},
+
+ {name:"example.net",names:31,ns:[ns("ns1.example.net","2026111001"),ns("ns2.example.net","2026111001"),ns("ns3.example.net","2026111001")],
+  path:[". ","net. ","example.net."],dnssec:"Signed, chain valid",findings:[],history:quiet(413,5)},
+ {name:"transit.example",names:11,ns:[ns("ns1.example.net","2026103002"),ns("ns2.example.net","2026103002")],
+  path:[". ","example. ","transit.example."],dnssec:"Signed, chain valid",findings:[],history:quiet(413,5)},
+ {name:"intranet.example",names:6,ns:[ns("ns1.example.org","2026092201"),ns("ns2.example.org","2026092201")],
+  path:[". ","example. ","intranet.example."],dnssec:"Not signed",findings:[],history:quiet(413,5)}
+];
+
+/* ---------- state ---------- */
+var state={zone:zones[0].name,tab:"findings",filter:"all",q:"",run:null,running:false,lastRun:"12 min ago"};
+
+/* ---------- helpers ---------- */
+function $(id){return document.getElementById(id);}
+function el(tag,attrs,kids){
+  var n=document.createElement(tag),k;
+  if(attrs)for(k in attrs){
+    if(k==="class")n.className=attrs[k];
+    else if(k==="text")n.textContent=attrs[k];
+    else if(k.slice(0,2)==="on")n.addEventListener(k.slice(2),attrs[k]);
+    else if(attrs[k]!==false&&attrs[k]!=null)n.setAttribute(k,attrs[k]===true?"":attrs[k]);
+  }
+  (kids||[]).forEach(function(c){if(c!=null)n.appendChild(typeof c==="string"?document.createTextNode(c):c);});
+  return n;
+}
+function open(z){return z.findings.filter(function(f){return !f.resolved;});}
+function worst(z){var w="ok";open(z).forEach(function(f){if(SEV[f.sev]<SEV[w])w=f.sev;});return w;}
+function count(sev){var n=0;zones.forEach(function(z){open(z).forEach(function(f){if(f.sev===sev)n++;});});return n;}
+function pill(sev,text){return el("span",{class:"pill "+sev,text:text||SEVNAME[sev]});}
+function current(){return zones.filter(function(z){return z.name===state.zone;})[0];}
+
+/* ---------- summary ---------- */
+function renderSummary(){
+  var s=$("summary");s.textContent="";
+  function stat(label,val,cls,small){return el("div",{class:"stat "+(cls||"")},[el("span",{class:"label",text:label}),el("b",{class:"num"+(small?" small":""),text:String(val)})]);}
+  s.appendChild(stat("Zones",zones.length));
+  s.appendChild(stat("Critical",count("crit"),"crit"));
+  s.appendChild(stat("Warning",count("warn"),"warn"));
+  s.appendChild(stat("Notice",count("note"),"note"));
+  s.appendChild(stat("Last run","#"+runNo+" · "+state.lastRun,"",true));
+  s.appendChild(el("div",{class:"runbox"},[
+    el("button",{class:"btn",id:"runbtn",type:"button",disabled:state.running,onclick:startRun,text:state.running?"Running…":"Run checks now"}),
+    el("div",{class:"progress","aria-hidden":"true"},[el("i",{id:"bar"})]),
+    el("div",{id:"runstatus",role:"status",text:state.running?"":"Next scheduled run in 48 min"})
+  ]));
+}
+
+/* ---------- zone list ---------- */
+function renderChips(){
+  var c=$("chips");c.textContent="";
+  [["all","All"],["crit","Critical"],["warn","Warning"],["note","Notice"],["ok","Clean"]].forEach(function(p){
+    c.appendChild(el("button",{class:"chip",type:"button","aria-pressed":String(state.filter===p[0]),text:p[1],onclick:function(){state.filter=p[0];renderChips();renderZones();}}));
+  });
+}
+function renderZones(){
+  var ul=$("zones");ul.textContent="";
+  var shown=zones.filter(function(z){
+    if(state.q&&z.name.indexOf(state.q.toLowerCase())<0)return false;
+    return state.filter==="all"||worst(z)===state.filter;
+  }).sort(function(a,b){return SEV[worst(a)]-SEV[worst(b)]||a.name.localeCompare(b.name);});
+  if(!shown.length){ul.appendChild(el("li",{class:"empty",text:"No zones match this filter."}));return;}
+  shown.forEach(function(z){
+    var w=worst(z),counts=el("span",{class:"counts"});
+    ["crit","warn","note"].forEach(function(s){var n=open(z).filter(function(f){return f.sev===s;}).length;if(n)counts.appendChild(el("span",{class:"pill n "+s,text:String(n),title:n+" "+SEVNAME[s].toLowerCase()}));});
+    if(w==="ok")counts.appendChild(pill("ok","Clean"));
+    ul.appendChild(el("li",null,[el("button",{type:"button","aria-current":String(z.name===state.zone),onclick:function(){state.zone=z.name;state.run=null;renderZones();renderDetail();}},[
+      el("span",{class:"stripe "+w,"aria-hidden":"true"}),
+      el("span",{class:"zn"},[z.name,el("span",{class:"zmeta",text:z.names+" names · "+z.ns.length+" nameservers"})]),
+      counts
+    ])]));
+  });
+}
+
+/* ---------- detail ---------- */
+function renderDetail(){
+  var z=current(),d=$("detail");d.textContent="";
+  var w=worst(z);
+  d.appendChild(el("div",{class:"dhead"},[
+    el("div",null,[pill(w),el("h1",{text:z.name})]),
+    el("p",null,[z.dnssec,el("br"),"Checked in run #"+runNo+", "+state.lastRun])
+  ]));
+  var tabs=el("div",{class:"tabs",role:"tablist"});
+  [["findings","Findings",open(z).length],["servers","Nameservers",z.ns.length],["history","History",z.history.length]].forEach(function(t){
+    tabs.appendChild(el("button",{class:"tab",type:"button",role:"tab","aria-selected":String(state.tab===t[0]),onclick:function(){state.tab=t[0];renderDetail();}},[t[1],el("span",{class:"c",text:String(t[2])})]));
+  });
+  d.appendChild(tabs);
+  d.appendChild(state.tab==="findings"?viewFindings(z):state.tab==="servers"?viewServers(z):viewHistory(z));
+}
+
+function viewFindings(z){
+  var box=el("div",{role:"tabpanel"});
+  if(!z.findings.length){box.appendChild(el("div",{class:"allclear"},[pill("ok","Clean"),"All checks passed in the last run."]));return box;}
+  z.findings.slice().sort(function(a,b){return (a.resolved?9:SEV[a.sev])-(b.resolved?9:SEV[b.sev]);}).forEach(function(f){
+    box.appendChild(el("article",{class:"finding"+(f.resolved?" resolved":"")},[
+      el("div",null,[f.resolved?pill("res","Resolved"):pill(f.sev),el("div",{class:"id",text:f.id})]),
+      el("div",null,[
+        el("h3",{text:f.title}),
+        el("div",{class:"mono",style:"color:var(--muted);margin-bottom:8px",text:f.name+" · "+(f.resolved?"closed in run "+f.resolved:"open since "+f.since)}),
+        el("p",{text:f.text}),
+        el("div",{class:"ev",text:f.ev})
+      ])
+    ]));
+  });
+  return box;
+}
+
+function cell(ok,yes,no){return el("td",{class:ok?"g":"b",text:ok?(yes||"ok"):(no||"fail")});}
+function viewServers(z){
+  var box=el("div",{role:"tabpanel"});
+  var serials={};z.ns.forEach(function(n){if(n.auth)serials[n.serial]=(serials[n.serial]||0)+1;});
+  var common=Object.keys(serials).sort(function(a,b){return serials[b]-serials[a]||(a<b?1:-1);})[0];
+  var tb=el("tbody");
+  z.ns.forEach(function(n){
+    tb.appendChild(el("tr",null,[
+      el("th",{scope:"row",text:n.name}),
+      cell(n.auth,"yes","no"),cell(n.udp&&n.auth),cell(n.tcp&&n.auth),cell(n.v4&&n.auth),cell(n.v6&&n.auth,"ok","timeout"),
+      el("td",{class:!n.auth||n.serial!==common?"b":"",text:n.serial+(n.auth&&n.serial!==common?"  behind":"")})
+    ]));
+  });
+  box.appendChild(el("div",{class:"tbox"},[el("table",null,[
+    el("thead",null,[el("tr",null,["Nameserver","Authoritative","UDP","TCP","IPv4","IPv6","SOA serial"].map(function(h){return el("th",{scope:"col",text:h});}))]),tb])]));
+  box.appendChild(el("div",{class:"label sub",text:"Delegation path"}));
+  var p=el("div",{class:"path"});
+  z.path.forEach(function(step,i){p.appendChild(i===z.path.length-1?el("b",{text:step}):document.createTextNode(step));if(i<z.path.length-1)p.appendChild(document.createTextNode(" → "));});
+  box.appendChild(p);
+  return box;
+}
+
+function viewHistory(z){
+  var box=el("div",{class:"hist",role:"tabpanel"});
+  var sel=state.run!=null?state.run:z.history[0].id;
+  var ul=el("ul",{class:"runs"});
+  z.history.forEach(function(r){
+    var n=r.changes.filter(function(c){return c[0]!==" ";}).length;
+    ul.appendChild(el("li",null,[el("button",{type:"button","aria-current":String(r.id===sel),onclick:function(){state.run=r.id;renderDetail();}},[
+      el("span",{text:"#"+r.id+"  "+r.when}),
+      el("span",{class:"ch"+(n?" has":""),text:n?n+" changed":"no change"})
+    ])]));
+  });
+  var r=z.history.filter(function(x){return x.id===sel;})[0]||z.history[0];
+  var right=el("div");
+  right.appendChild(el("p",{class:"dcap",text:"Run #"+r.id+" compared with run #"+(r.id-1)}));
+  var diff=el("div",{class:"diff"});
+  if(!r.changes.length)diff.appendChild(el("div",{class:"ctx",text:"  No record changes. "+z.names+" names checked on "+z.ns.length+" servers."}));
+  r.changes.forEach(function(c){diff.appendChild(el("div",{class:c[0]==="+"?"add":c[0]==="-"?"del":"ctx",text:c[0]+" "+c[1]}));});
+  right.appendChild(diff);
+  box.appendChild(ul);box.appendChild(right);
+  return box;
+}
+
+/* ---------- simulated run ---------- */
+var STEPS=["Walking delegation from the root","Querying 22 authoritative servers","Validating DNSSEC chains","Checking mail and policy records","Matching takeover signatures","Writing snapshot and diffing"];
+function startRun(){
+  if(state.running)return;
+  state.running=true;renderSummary();
+  var i=0,status=$("runstatus"),bar=$("bar");
+  (function tick(){
+    if(i<STEPS.length){
+      status.textContent=(i+1)+"/"+STEPS.length+"  "+STEPS[i];
+      bar.style.width=Math.round((i+1)/STEPS.length*100)+"%";
+      i++;setTimeout(tick,650);
+    }else finishRun();
+  })();
+}
+function finishRun(){
+  runNo++;var closed=0;
+  zones.forEach(function(z){
+    var changes=[];
+    z.findings.forEach(function(f){
+      if(f.transient&&!f.resolved){f.resolved=runNo;closed++;
+        z.ns.forEach(function(n){if(n.serial==="2026111301")n.serial="2026111302";});
+        changes.push([" ","ns4.example.net caught up: SOA serial 2026111302 on all servers"]);}
+    });
+    z.history.forEach(function(r){r.when=r.when==="12 min ago"?"12 min ago":r.when;});
+    z.history.unshift({id:runNo,when:"just now",changes:changes});
+  });
+  state.running=false;state.lastRun="just now";state.run=null;
+  renderSummary();renderZones();renderDetail();
+  $("runstatus").textContent=closed?"Run #"+runNo+" done. "+closed+" finding resolved, 0 new.":"Run #"+runNo+" done. No changes.";
+}
+
+/* ---------- boot ---------- */
+$("q").addEventListener("input",function(e){state.q=e.target.value.trim();renderZones();});
+renderSummary();renderChips();renderZones();renderDetail();
+})();
+</script>
+</body>
+</html>
