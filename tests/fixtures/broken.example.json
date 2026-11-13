@@ -1,0 +1,700 @@
+{
+  "version": 1,
+  "zone": "broken.example.",
+  "started_at_unix": 1700000000,
+  "exchanges": [
+    {
+      "server": "198.41.0.4",
+      "transport": "udp",
+      "qname": ".",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010001000000010000020001000002000100000e10001401610c726f6f742d73657276657273036e65740000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.41.0.4",
+      "transport": "udp",
+      "qname": ".",
+      "qtype": "NS",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010001000000000000020001000002000100000e10001401610c726f6f742d73657276657273036e657400"
+      }
+    },
+    {
+      "server": "198.41.0.4",
+      "transport": "tcp",
+      "qname": ".",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010001000000010000020001000002000100000e10001401610c726f6f742d73657276657273036e65740000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.41.0.4",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800000010000000100020662726f6b656e076578616d706c650000020001c0130002000100000e100009026e73036e6963c013c02c0001000100000e100004c000020100002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.41.0.4",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800000010000000100010662726f6b656e076578616d706c650000020001c0130002000100000e100009026e73036e6963c013c02c0001000100000e100004c0000201"
+      }
+    },
+    {
+      "server": "198.41.0.4",
+      "transport": "tcp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800000010000000100020662726f6b656e076578616d706c650000020001c0130002000100000e100009026e73036e6963c013c02c0001000100000e100004c000020100002904d0000000000000"
+      }
+    },
+    {
+      "server": "192.0.2.1",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800000010000000300040662726f6b656e076578616d706c650000020001c00c0002000100000e100006036e7331c00cc00c0002000100000e100006036e7332c00cc00c0002000100000e100006036e7333c00cc02c0001000100000e100004c6336401c03e0001000100000e100004c6336402c0500001000100000e100004cb00710300002904d0000000000000"
+      }
+    },
+    {
+      "server": "192.0.2.1",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800000010000000300030662726f6b656e076578616d706c650000020001c00c0002000100000e100006036e7331c00cc00c0002000100000e100006036e7332c00cc00c0002000100000e100006036e7333c00cc02c0001000100000e100004c6336401c03e0001000100000e100004c6336402c0500001000100000e100004cb007103"
+      }
+    },
+    {
+      "server": "192.0.2.1",
+      "transport": "tcp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800000010000000300040662726f6b656e076578616d706c650000020001c00c0002000100000e100006036e7331c00cc00c0002000100000e100006036e7332c00cc00c0002000100000e100006036e7333c00cc02c0001000100000e100004c6336401c03e0001000100000e100004c6336402c0500001000100000e100004cb00710300002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "SOA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010001000000010662726f6b656e076578616d706c650000060001c00c0006000100000e100027036e7331c00c0a686f73746d6173746572c00c78a57cc500001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "SOA",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010001000000000662726f6b656e076578616d706c650000060001c00c0006000100000e100027036e7331c00c0a686f73746d6173746572c00c78a57cc500001c2000000e100012750000000e10"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "tcp",
+      "qname": "broken.example.",
+      "qtype": "SOA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010001000000010662726f6b656e076578616d706c650000060001c00c0006000100000e100027036e7331c00c0a686f73746d6173746572c00c78a57cc500001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010003000000010662726f6b656e076578616d706c650000020001c00c0002000100000e100006036e7331c00cc00c0002000100000e100006036e7332c00cc00c0002000100000e100006036e7333c00c00002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010003000000000662726f6b656e076578616d706c650000020001c00c0002000100000e100006036e7331c00cc00c0002000100000e100006036e7332c00cc00c0002000100000e100006036e7333c00c"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "tcp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010003000000010662726f6b656e076578616d706c650000020001c00c0002000100000e100006036e7331c00cc00c0002000100000e100006036e7332c00cc00c0002000100000e100006036e7333c00c00002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns1.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73310662726f6b656e076578616d706c650000010001c00c0001000100000e100004c633640100002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns1.broken.example.",
+      "qtype": "A",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000000036e73310662726f6b656e076578616d706c650000010001c00c0001000100000e100004c6336401"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "tcp",
+      "qname": "ns1.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73310662726f6b656e076578616d706c650000010001c00c0001000100000e100004c633640100002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns1.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73310662726f6b656e076578616d706c6500001c0001c0100006000100000e100023c00c0a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns1.broken.example.",
+      "qtype": "AAAA",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010000036e73310662726f6b656e076578616d706c6500001c0001c0100006000100000e100023c00c0a686f73746d6173746572c0100000000100001c2000000e100012750000000e10"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "tcp",
+      "qname": "ns1.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73310662726f6b656e076578616d706c6500001c0001c0100006000100000e100023c00c0a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns2.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73320662726f6b656e076578616d706c650000010001c00c0001000100000e100004c633640200002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns2.broken.example.",
+      "qtype": "A",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000000036e73320662726f6b656e076578616d706c650000010001c00c0001000100000e100004c6336402"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "tcp",
+      "qname": "ns2.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73320662726f6b656e076578616d706c650000010001c00c0001000100000e100004c633640200002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns2.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73320662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns2.broken.example.",
+      "qtype": "AAAA",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010000036e73320662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e10"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "tcp",
+      "qname": "ns2.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73320662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns3.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73330662726f6b656e076578616d706c650000010001c00c0001000100000e100004cb00710300002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns3.broken.example.",
+      "qtype": "A",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000000036e73330662726f6b656e076578616d706c650000010001c00c0001000100000e100004cb007103"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "tcp",
+      "qname": "ns3.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73330662726f6b656e076578616d706c650000010001c00c0001000100000e100004cb00710300002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns3.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73330662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "udp",
+      "qname": "ns3.broken.example.",
+      "qtype": "AAAA",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010000036e73330662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e10"
+      }
+    },
+    {
+      "server": "198.51.100.1",
+      "transport": "tcp",
+      "qname": "ns3.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73330662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "SOA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010001000000010662726f6b656e076578616d706c650000060001c00c0006000100000e100027036e7331c00c0a686f73746d6173746572c00c78a57cc600001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "SOA",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010001000000000662726f6b656e076578616d706c650000060001c00c0006000100000e100027036e7331c00c0a686f73746d6173746572c00c78a57cc600001c2000000e100012750000000e10"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "tcp",
+      "qname": "broken.example.",
+      "qtype": "SOA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010001000000010662726f6b656e076578616d706c650000060001c00c0006000100000e100027036e7331c00c0a686f73746d6173746572c00c78a57cc600001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010003000000010662726f6b656e076578616d706c650000020001c00c0002000100000e100006036e7331c00cc00c0002000100000e100006036e7332c00cc00c0002000100000e100006036e7333c00c00002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010003000000000662726f6b656e076578616d706c650000020001c00c0002000100000e100006036e7331c00cc00c0002000100000e100006036e7332c00cc00c0002000100000e100006036e7333c00c"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "tcp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000840000010003000000010662726f6b656e076578616d706c650000020001c00c0002000100000e100006036e7331c00cc00c0002000100000e100006036e7332c00cc00c0002000100000e100006036e7333c00c00002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns1.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73310662726f6b656e076578616d706c650000010001c00c0001000100000e100004c633640100002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns1.broken.example.",
+      "qtype": "A",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000000036e73310662726f6b656e076578616d706c650000010001c00c0001000100000e100004c6336401"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "tcp",
+      "qname": "ns1.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73310662726f6b656e076578616d706c650000010001c00c0001000100000e100004c633640100002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns1.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73310662726f6b656e076578616d706c6500001c0001c0100006000100000e100023c00c0a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns1.broken.example.",
+      "qtype": "AAAA",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010000036e73310662726f6b656e076578616d706c6500001c0001c0100006000100000e100023c00c0a686f73746d6173746572c0100000000100001c2000000e100012750000000e10"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "tcp",
+      "qname": "ns1.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73310662726f6b656e076578616d706c6500001c0001c0100006000100000e100023c00c0a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns2.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73320662726f6b656e076578616d706c650000010001c00c0001000100000e100004c633640200002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns2.broken.example.",
+      "qtype": "A",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000000036e73320662726f6b656e076578616d706c650000010001c00c0001000100000e100004c6336402"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "tcp",
+      "qname": "ns2.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73320662726f6b656e076578616d706c650000010001c00c0001000100000e100004c633640200002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns2.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73320662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns2.broken.example.",
+      "qtype": "AAAA",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010000036e73320662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e10"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "tcp",
+      "qname": "ns2.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73320662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns3.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73330662726f6b656e076578616d706c650000010001c00c0001000100000e100004cb00710300002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns3.broken.example.",
+      "qtype": "A",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000000036e73330662726f6b656e076578616d706c650000010001c00c0001000100000e100004cb007103"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "tcp",
+      "qname": "ns3.broken.example.",
+      "qtype": "A",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000100000001036e73330662726f6b656e076578616d706c650000010001c00c0001000100000e100004cb00710300002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns3.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73330662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "udp",
+      "qname": "ns3.broken.example.",
+      "qtype": "AAAA",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010000036e73330662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e10"
+      }
+    },
+    {
+      "server": "198.51.100.2",
+      "transport": "tcp",
+      "qname": "ns3.broken.example.",
+      "qtype": "AAAA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "000084000001000000010001036e73330662726f6b656e076578616d706c6500001c0001c0100006000100000e100027036e7331c0100a686f73746d6173746572c0100000000100001c2000000e100012750000000e1000002904d0000000000000"
+      }
+    },
+    {
+      "server": "203.0.113.3",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "SOA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800500010000000000010662726f6b656e076578616d706c65000006000100002904d0000000000000"
+      }
+    },
+    {
+      "server": "203.0.113.3",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "SOA",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800500010000000000000662726f6b656e076578616d706c650000060001"
+      }
+    },
+    {
+      "server": "203.0.113.3",
+      "transport": "tcp",
+      "qname": "broken.example.",
+      "qtype": "SOA",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800500010000000000010662726f6b656e076578616d706c65000006000100002904d0000000000000"
+      }
+    },
+    {
+      "server": "203.0.113.3",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800500010000000000010662726f6b656e076578616d706c65000002000100002904d0000000000000"
+      }
+    },
+    {
+      "server": "203.0.113.3",
+      "transport": "udp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800500010000000000000662726f6b656e076578616d706c650000020001"
+      }
+    },
+    {
+      "server": "203.0.113.3",
+      "transport": "tcp",
+      "qname": "broken.example.",
+      "qtype": "NS",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "wire": "0000800500010000000000010662726f6b656e076578616d706c65000002000100002904d0000000000000"
+      }
+    }
+  ]
+}

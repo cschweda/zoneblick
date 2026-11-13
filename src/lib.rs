@@ -9,5 +9,6 @@
 //! - [`output`]: human and JSON rendering
 //! - [`cli`]: argument parsing and the `check` command
 
+pub mod checks;
 pub mod observe;
 pub mod resolver;
