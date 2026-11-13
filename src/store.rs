@@ -146,6 +146,16 @@ pub enum StoreError {
     },
     #[error("zone {zone} has only {runs} stored run; a diff needs two")]
     NotEnoughRuns { zone: String, runs: usize },
+    #[error(
+        "zone {zone} has no finding whose ID starts with {id}; list them with: zoneblick findings list {zone}"
+    )]
+    UnknownFinding { zone: String, id: String },
+    #[error("{count} findings of {zone} have an ID starting with {id}; give more of it")]
+    AmbiguousFinding {
+        zone: String,
+        id: String,
+        count: usize,
+    },
 }
 
 /// One zone in the store, for `zones list`.
@@ -183,7 +193,7 @@ pub struct FindingRow {
     pub evidence: Evidence,
     pub first_seen_run: i64,
     pub last_seen_run: i64,
-    /// `open` or `resolved`.
+    /// `open`, `resolved` or `muted`.
     pub state: String,
 }
 
@@ -432,7 +442,8 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 'open')
                  ON CONFLICT (zone_id, fingerprint) DO UPDATE SET
                      severity = ?5, summary = ?6, evidence_json = ?7,
-                     last_seen_run = ?8, state = 'open'",
+                     last_seen_run = ?8,
+                     state = CASE state WHEN 'muted' THEN 'muted' ELSE 'open' END",
             )?;
             let mut link = tx.prepare(
                 "INSERT OR IGNORE INTO run_findings (run_id, finding_id, severity, summary)
@@ -550,12 +561,122 @@ impl Store {
             Some(data) if data.run == from => data,
             _ => self.load_run(zone, from)?,
         };
-        Ok(diff_with(
-            &from_data,
-            &self.load_run(zone, to)?,
-            ignore,
-            &volatility,
-        ))
+        let mut report = diff_with(&from_data, &self.load_run(zone, to)?, ignore, &volatility);
+        report.drop_findings(&self.muted(zone)?);
+        Ok(report)
+    }
+
+    /// The fingerprints of the zone's muted findings.
+    pub fn muted(&self, zone: &str) -> Result<BTreeSet<String>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.fingerprint FROM findings f JOIN zones z ON z.id = f.zone_id
+             WHERE z.name = ?1 AND f.state = 'muted'",
+        )?;
+        let rows = stmt.query_map([zone], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Mute or unmute the one finding whose fingerprint starts with `id`.
+    /// A muted finding is still recorded but not reported or alerted on.
+    /// Unmuting makes it open when the latest run saw it, else resolved.
+    /// Returns the finding with its new state.
+    pub fn set_muted(&self, zone: &str, id: &str, muted: bool) -> Result<FindingRow, StoreError> {
+        let zone_id = self.zone_id(zone)?;
+        let id = id.trim().to_ascii_lowercase();
+        let mut matches: Vec<FindingRow> = self
+            .finding_rows(Some(zone), None)?
+            .into_iter()
+            .filter(|f| !id.is_empty() && f.fingerprint.starts_with(&id))
+            .collect();
+        if matches.len() > 1 {
+            return Err(StoreError::AmbiguousFinding {
+                zone: zone.to_string(),
+                id,
+                count: matches.len(),
+            });
+        }
+        let Some(mut row) = matches.pop() else {
+            return Err(StoreError::UnknownFinding {
+                zone: zone.to_string(),
+                id,
+            });
+        };
+        let latest: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(id), 0) FROM runs WHERE zone_id = ?1",
+            [zone_id],
+            |r| r.get(0),
+        )?;
+        row.state = if muted {
+            "muted"
+        } else if row.last_seen_run == latest {
+            "open"
+        } else {
+            "resolved"
+        }
+        .to_string();
+        self.conn.execute(
+            "UPDATE findings SET state = ?3 WHERE zone_id = ?1 AND fingerprint = ?2",
+            params![zone_id, row.fingerprint, row.state],
+        )?;
+        Ok(row)
+    }
+
+    /// Add a zone that has no runs yet. True when it was not there before.
+    pub fn add_zone(&self, zone: &str, now_unix: u64) -> Result<bool, StoreError> {
+        let n = self.conn.execute(
+            "INSERT OR IGNORE INTO zones (name, created_at) VALUES (?1, ?2)",
+            params![zone, now_unix as i64],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Remember names for a zone, to be checked from the next run on.
+    /// `run` is the run that found them, 0 for names given by hand.
+    /// Returns how many were new.
+    pub fn add_names(
+        &self,
+        zone: &str,
+        names: &[String],
+        source: &str,
+        run: i64,
+    ) -> Result<usize, StoreError> {
+        let zone_id = self.zone_id(zone)?;
+        let mut added = 0;
+        for name in names.iter().filter(|n| *n != zone) {
+            added += self.conn.execute(
+                "INSERT OR IGNORE INTO names (zone_id, fqdn, source, first_seen_run, last_seen_run)
+                 VALUES (?1, ?2, ?3, ?4, ?4)",
+                params![zone_id, name, source, run],
+            )?;
+        }
+        Ok(added)
+    }
+
+    /// Delete a zone with all its runs, names and findings. Returns how
+    /// many runs went with it.
+    pub fn remove_zone(&mut self, zone: &str) -> Result<usize, StoreError> {
+        let zone_id = self.zone_id(zone)?;
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM baselines WHERE zone_id = ?1", [zone_id])?;
+        tx.execute(
+            "DELETE FROM run_findings WHERE run_id IN (SELECT id FROM runs WHERE zone_id = ?1)",
+            [zone_id],
+        )?;
+        tx.execute(
+            "DELETE FROM observations WHERE run_id IN (SELECT id FROM runs WHERE zone_id = ?1)",
+            [zone_id],
+        )?;
+        tx.execute("DELETE FROM findings WHERE zone_id = ?1", [zone_id])?;
+        tx.execute("DELETE FROM names WHERE zone_id = ?1", [zone_id])?;
+        let runs = tx.execute("DELETE FROM runs WHERE zone_id = ?1", [zone_id])?;
+        tx.execute("DELETE FROM zones WHERE id = ?1", [zone_id])?;
+        tx.execute(
+            "DELETE FROM rrsets WHERE hash NOT IN
+                 (SELECT rrset_hash FROM observations WHERE rrset_hash IS NOT NULL)",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(runs)
     }
 
     /// Pin a run as the zone's baseline: the state that counts as correct.
@@ -1246,5 +1367,91 @@ mod tests {
         // Discovered names are checked like any other, and can be forgotten.
         assert_eq!(store.names(ZONE).unwrap().len(), 2);
         assert!(store.forget_name(ZONE, "www.example.test.").unwrap());
+    }
+
+    #[test]
+    fn a_muted_finding_stays_muted_and_out_of_diffs() {
+        let mut store = Store::open_in_memory().unwrap();
+        // A lame server gives a finding in every run.
+        let broken = |at: u64| {
+            let mut obs = obs_with("192.0.2.10", at);
+            set_child_ns(&mut obs, &["ns1.example.test.", "ns3.example.test."]);
+            obs
+        };
+        save(&mut store, &obs_with("192.0.2.10", 100));
+        save(&mut store, &broken(200));
+        let rows = store.finding_rows(Some(ZONE), Some("open")).unwrap();
+        assert_eq!(rows.len(), 1);
+        let print = rows[0].fingerprint.clone();
+        let runs = store.runs(ZONE).unwrap();
+        assert_eq!(
+            store
+                .diff(ZONE, runs[0], runs[1], &[])
+                .unwrap()
+                .findings_opened
+                .len(),
+            1
+        );
+
+        assert!(matches!(
+            store.set_muted(ZONE, "zzzz", true),
+            Err(StoreError::UnknownFinding { .. })
+        ));
+        let row = store.set_muted(ZONE, &print[..8], true).unwrap();
+        assert_eq!(row.state, "muted");
+        assert_eq!(store.muted(ZONE).unwrap().len(), 1);
+        // Muted: no longer a finding that opened, and the diff is quiet.
+        let d = store.diff(ZONE, runs[0], runs[1], &[]).unwrap();
+        assert!(d.findings_opened.is_empty() && !d.changed);
+        // Seen again in a later run, it stays muted.
+        save(&mut store, &broken(300));
+        assert_eq!(store.muted(ZONE).unwrap().len(), 1);
+        assert_eq!(store.zones().unwrap()[0].open_findings, 0);
+        // Unmuted while still seen, it is open again; once gone, resolved.
+        assert_eq!(store.set_muted(ZONE, &print, false).unwrap().state, "open");
+        store.set_muted(ZONE, &print, true).unwrap();
+        save(&mut store, &obs_with("192.0.2.10", 400));
+        assert_eq!(
+            store.set_muted(ZONE, &print, false).unwrap().state,
+            "resolved"
+        );
+    }
+
+    #[test]
+    fn zones_are_added_and_removed() {
+        let mut store = Store::open_in_memory().unwrap();
+        assert!(store.add_zone("other.test.", 1).unwrap());
+        assert!(!store.add_zone("other.test.", 2).unwrap());
+        let names = vec!["www.other.test.".to_string(), "other.test.".to_string()];
+        assert_eq!(
+            store.add_names("other.test.", &names, "seed", 0).unwrap(),
+            1
+        );
+        assert_eq!(
+            store.add_names("other.test.", &names, "seed", 0).unwrap(),
+            0
+        );
+        assert_eq!(store.names("other.test.").unwrap(), ["www.other.test."]);
+
+        save(&mut store, &obs_with("192.0.2.10", 100));
+        save(&mut store, &obs_with("192.0.2.20", 200));
+        store.pin_baseline(ZONE, None, 300).unwrap();
+        assert_eq!(store.remove_zone(ZONE).unwrap(), 2);
+        for table in [
+            "runs",
+            "observations",
+            "rrsets",
+            "findings",
+            "run_findings",
+            "baselines",
+        ] {
+            assert_eq!(store.count(table), 0, "{table}");
+        }
+        // The other zone is untouched.
+        assert_eq!(store.zones().unwrap().len(), 1);
+        assert!(matches!(
+            store.remove_zone(ZONE),
+            Err(StoreError::UnknownZone { .. })
+        ));
     }
 }

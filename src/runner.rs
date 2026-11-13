@@ -1,7 +1,7 @@
 //! The run pipeline shared by `zoneblick run` and the daemon: check the
 //! findings, store the snapshot, and compare with the previous run.
 
-use crate::checks::run_all;
+use crate::checks::{Finding, run_all};
 use crate::diff::DiffReport;
 use crate::observe::ZoneObservation;
 use crate::output::Report;
@@ -16,6 +16,8 @@ pub struct RunOutcome {
     pub diff: Option<DiffReport>,
     pub names: Vec<String>,
     pub queries: usize,
+    /// How many findings of this run are muted and left out of the report.
+    pub muted: usize,
 }
 
 /// Run the checks over an observation, store it, and diff it against the
@@ -38,6 +40,7 @@ pub fn store_observation(
         trigger,
     };
     let run_id = store.save_run(&obs, &findings, &meta)?;
+    let (findings, muted) = split_muted(store, &zone, findings)?;
     let diff = match store.pick_runs(&zone, None, Some(run_id)) {
         Ok((from, to)) => Some(store.diff(&zone, from, to, ignore)?),
         Err(StoreError::NotEnoughRuns { .. }) => None,
@@ -49,5 +52,23 @@ pub fn store_observation(
         diff,
         names,
         queries,
+        muted,
     })
+}
+
+/// Take the zone's muted findings out of a run's findings. Returns what is
+/// left and how many were taken out.
+pub fn split_muted(
+    store: &Store,
+    zone: &str,
+    findings: Vec<Finding>,
+) -> Result<(Vec<Finding>, usize), StoreError> {
+    let muted = store.muted(zone)?;
+    let before = findings.len();
+    let kept: Vec<Finding> = findings
+        .into_iter()
+        .filter(|f| !muted.contains(&crate::store::fingerprint(f)))
+        .collect();
+    let dropped = before - kept.len();
+    Ok((kept, dropped))
 }

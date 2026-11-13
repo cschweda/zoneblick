@@ -7,9 +7,15 @@
 //! off unless asked for.
 
 use std::collections::BTreeSet;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
-use crate::observe::is_ancestor_or_equal;
+use hickory_proto::op::{Message, MessageType, Query, ResponseCode};
+use hickory_proto::rr::{Name, RecordType};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+
+use crate::observe::{ZoneObservation, is_ancestor_or_equal};
 use crate::resolver::{Client, HttpOutcome, normalise_zone};
 
 /// At most this many discovered names are added per zone.
@@ -85,6 +91,109 @@ pub async fn ct_names(client: &Client, zone: &str) -> Result<Vec<String>, String
         HttpOutcome::Response { status: 200, body } => Ok(parse_ct(zone, &body)),
         HttpOutcome::Response { status, .. } => Err(format!("crt.sh answered HTTP {status}")),
     }
+}
+
+/// The addresses of the nameservers that answered in a run.
+pub fn servers_of(obs: &ZoneObservation) -> Vec<IpAddr> {
+    let set: BTreeSet<IpAddr> = obs
+        .probes
+        .iter()
+        .filter(|p| p.outcome.response().is_some())
+        .map(|p| p.address)
+        .collect();
+    set.into_iter().collect()
+}
+
+/// At most this many names are taken from a zone transfer.
+pub const AXFR_MAX_NAMES: usize = 500;
+const AXFR_BYTE_LIMIT: usize = 32 * 1024 * 1024;
+const AXFR_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Ask the zone's nameservers for a zone transfer (AXFR), one after
+/// another until one allows it, and return the names in the zone that
+/// have address, alias, mail or text records. Most servers refuse
+/// transfers to strangers; that is the expected answer, reported as an
+/// error here.
+pub async fn axfr_names(zone: &str, servers: &[IpAddr]) -> Result<Vec<String>, String> {
+    let mut last = "there is no nameserver to ask".to_string();
+    for address in servers {
+        let addr = SocketAddr::new(*address, 53);
+        last = match tokio::time::timeout(AXFR_TIMEOUT, axfr_from(zone, addr)).await {
+            Ok(Ok(names)) => return Ok(names),
+            Ok(Err(e)) => format!("{address}: {e}"),
+            Err(_) => format!("{address}: timed out"),
+        };
+    }
+    Err(last)
+}
+
+/// One zone transfer from one server.
+pub async fn axfr_from(zone: &str, addr: SocketAddr) -> Result<Vec<String>, String> {
+    let name = Name::from_ascii(zone).map_err(|e| e.to_string())?;
+    let mut query = Message::query();
+    query.metadata.recursion_desired = false;
+    query.add_query(Query::query(name, RecordType::AXFR));
+    let wire = query.to_vec().map_err(|e| e.to_string())?;
+
+    let io = |e: std::io::Error| e.to_string();
+    let mut stream = TcpStream::connect(addr).await.map_err(io)?;
+    stream
+        .write_all(&(wire.len() as u16).to_be_bytes())
+        .await
+        .map_err(io)?;
+    stream.write_all(&wire).await.map_err(io)?;
+
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    let (mut soa_seen, mut total) = (0, 0);
+    while soa_seen < 2 {
+        let mut len = [0u8; 2];
+        stream.read_exact(&mut len).await.map_err(io)?;
+        let mut buf = vec![0u8; u16::from_be_bytes(len) as usize];
+        stream.read_exact(&mut buf).await.map_err(io)?;
+        total += buf.len();
+        if total > AXFR_BYTE_LIMIT {
+            return Err("the transfer is too large".to_string());
+        }
+        let msg = Message::from_vec(&buf).map_err(|e| e.to_string())?;
+        if msg.metadata.message_type != MessageType::Response
+            || msg.metadata.id != query.metadata.id
+        {
+            return Err("unexpected answer".to_string());
+        }
+        if msg.metadata.response_code != ResponseCode::NoError {
+            return Err(format!(
+                "transfer refused ({})",
+                crate::resolver::iterate::rcode_name(msg.metadata.response_code)
+            ));
+        }
+        if msg.answers.is_empty() {
+            return Err("transfer refused (empty answer)".to_string());
+        }
+        for rec in &msg.answers {
+            let rtype = rec.record_type();
+            if rtype == RecordType::SOA {
+                soa_seen += 1;
+            }
+            if !matches!(
+                rtype,
+                RecordType::A
+                    | RecordType::AAAA
+                    | RecordType::CNAME
+                    | RecordType::MX
+                    | RecordType::TXT
+            ) {
+                continue;
+            }
+            let owner = crate::resolver::iterate::norm(&rec.name);
+            let plain = owner
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+            if plain && owner != zone && is_ancestor_or_equal(zone, &owner) {
+                names.insert(owner);
+            }
+        }
+    }
+    Ok(names.into_iter().take(AXFR_MAX_NAMES).collect())
 }
 
 #[cfg(test)]

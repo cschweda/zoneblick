@@ -222,6 +222,11 @@ impl Client {
         outcome
     }
 
+    /// True when this client talks to the network, not to a fixture.
+    pub fn is_live(&self) -> bool {
+        matches!(self.backend, Backend::Live(_))
+    }
+
     /// How many queries were asked of this client.
     pub fn queries_sent(&self) -> usize {
         self.sent.load(Ordering::Relaxed)

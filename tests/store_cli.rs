@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use zoneblick::cli::{
-    BaselineAction, BaselineArgs, DiffArgs, PruneArgs, RunArgs, SourceArgs, ZonesListArgs,
-    baseline, diff, prune, run, zones_list,
+    BaselineAction, BaselineArgs, DiffArgs, ExportArgs, FindingsAction, FindingsListArgs,
+    FindingsMuteArgs, PruneArgs, RunArgs, SourceArgs, ZonesAction, ZonesEditArgs, ZonesListArgs,
+    baseline, diff, export, findings, prune, run, zones_edit, zones_list,
 };
 
 const ZONE: &str = "drift.example";
@@ -358,4 +359,99 @@ async fn prune_reports_what_it_deleted() {
         "{}",
         bad.stderr
     );
+}
+
+#[tokio::test]
+async fn findings_are_listed_muted_and_exported() {
+    let db = db("findings");
+    two_runs(&db).await;
+    let list = |state: Option<&str>, json: bool| {
+        findings(&FindingsAction::List(FindingsListArgs {
+            zone: Some(ZONE.to_string()),
+            state: state.map(str::to_string),
+            db: db.clone(),
+            json,
+        }))
+    };
+    let doc: Value = serde_json::from_str(&list(Some("open"), true).stdout).unwrap();
+    let open = doc["findings"].as_array().unwrap();
+    assert!(!open.is_empty());
+    let id = open[0]["fingerprint"].as_str().unwrap().to_string();
+    let text = list(None, false).stdout;
+    assert!(text.contains(&id[..10]) && text.contains("open"), "{text}");
+
+    let mute = |id: &str, muting: bool| {
+        let args = FindingsMuteArgs {
+            zone: ZONE.to_string(),
+            id: id.to_string(),
+            db: db.clone(),
+        };
+        findings(&if muting {
+            FindingsAction::Mute(args)
+        } else {
+            FindingsAction::Unmute(args)
+        })
+    };
+    let out = mute(&id[..10], true);
+    assert_eq!(out.exit_code, 0, "{}", out.stderr);
+    assert!(out.stdout.contains("is now muted"), "{}", out.stdout);
+    assert_eq!(mute("nothing-like-this", true).exit_code, 3);
+
+    // The next run leaves the muted finding out and says so.
+    let doc_before = open.len();
+    let third = run(&run_args(&db, "after", &[], true), false).await;
+    assert!(
+        third.stderr.contains("1 muted findings are not shown"),
+        "{}",
+        third.stderr
+    );
+    let doc: Value = serde_json::from_str(&third.stdout).unwrap();
+    assert_eq!(
+        doc["report"]["findings"].as_array().unwrap().len(),
+        doc_before - 1
+    );
+
+    // The export holds every finding with its state; the CSV has one row each.
+    let export_as = |format: &str| {
+        export(&ExportArgs {
+            zone: Some(ZONE.to_string()),
+            format: format.to_string(),
+            db: db.clone(),
+        })
+    };
+    let doc: Value = serde_json::from_str(&export_as("json").stdout).unwrap();
+    let all = doc["findings"].as_array().unwrap();
+    assert!(all.iter().any(|f| f["state"] == "muted"));
+    assert_eq!(doc["zones"][0]["zone"], "drift.example.");
+    let csv = export_as("csv").stdout;
+    assert!(csv.starts_with("zone,state,severity,check_id,name,summary,"));
+    assert_eq!(csv.lines().count(), all.len() + 1);
+
+    assert!(mute(&id, false).stdout.contains("is now open"));
+}
+
+#[tokio::test]
+async fn a_zone_is_added_with_names_and_removed() {
+    let db = db("zones_edit");
+    let edit = |names: &[&str]| ZonesEditArgs {
+        zone: ZONE.to_string(),
+        names: names.iter().map(|s| s.to_string()).collect(),
+        db: db.clone(),
+    };
+    let out = zones_edit(&ZonesAction::Add(edit(&NAMES)));
+    assert_eq!(out.exit_code, 0, "{}", out.stderr);
+    assert!(
+        out.stdout
+            .starts_with("Added drift.example., 4 names added"),
+        "{}",
+        out.stdout
+    );
+    // The first run needs no names: they were added with the zone.
+    let first = run(&run_args(&db, "before", &[], true), false).await;
+    let doc: Value = serde_json::from_str(&first.stdout).unwrap();
+    assert_eq!(doc["run"]["names"].as_array().unwrap().len(), 4);
+
+    let out = zones_edit(&ZonesAction::Remove(edit(&[])));
+    assert_eq!(out.stdout, "Removed drift.example. and its 1 runs.\n");
+    assert_eq!(zones_edit(&ZonesAction::Remove(edit(&[]))).exit_code, 3);
 }

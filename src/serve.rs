@@ -189,12 +189,15 @@ async fn run_zone_inner(
         .expect("lock")
         .get(&zone.name)
         .is_none_or(|at| started >= at + DISCOVER_EVERY_SECS);
-    if due && zone.discover.iter().any(|d| d == "ct") {
+    let due = due && !zone.discover.is_empty();
+    if due {
         state
             .discovered_at
             .lock()
             .expect("lock")
             .insert(zone.name.clone(), started);
+    }
+    if due && zone.discover.iter().any(|d| d == "ct") {
         match crate::discover::ct_names(&client, &zone.name).await {
             Ok(found) => {
                 discovered = found.into_iter().filter(|n| !names.contains(n)).collect();
@@ -215,6 +218,15 @@ async fn run_zone_inner(
     let obs = observe_zone_records(client.clone(), &zone.name, started, &names)
         .await
         .map_err(|e| e.to_string())?;
+    // A zone transfer, when the zone asks for that and a server allows it.
+    // Names it finds are checked from the next run on.
+    let mut transferred = Vec::new();
+    if due && zone.discover.iter().any(|d| d == "axfr") && client.is_live() {
+        match crate::discover::axfr_names(&zone.name, &crate::discover::servers_of(&obs)).await {
+            Ok(found) => transferred = found,
+            Err(e) => log(&format!("{} zone transfer not available: {e}", zone.name)),
+        }
+    }
     let outcome = {
         let mut store = state.store();
         let outcome = store_observation(
@@ -230,6 +242,15 @@ async fn run_zone_inner(
         store
             .set_name_source(&zone.name, &discovered, "ct")
             .map_err(|e| e.to_string())?;
+        let added = store
+            .add_names(&zone.name, &transferred, "axfr", outcome.run_id)
+            .map_err(|e| e.to_string())?;
+        if added > 0 {
+            log(&format!(
+                "{} found {added} new names by zone transfer",
+                zone.name
+            ));
+        }
         outcome
     };
 

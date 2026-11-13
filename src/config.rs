@@ -152,8 +152,9 @@ pub struct ZoneConfig {
     /// Name patterns left out of change reports and alerts.
     #[serde(default)]
     pub ignore: Vec<String>,
-    /// Where to look for more names. `"ct"` reads Certificate Transparency
-    /// logs through crt.sh, once a day.
+    /// Where to look for more names, once a day. `"ct"` reads Certificate
+    /// Transparency logs through crt.sh; `"axfr"` asks the zone's own
+    /// nameservers for a zone transfer.
     #[serde(default)]
     pub discover: Vec<String>,
 }
@@ -294,9 +295,13 @@ impl Config {
                 }
             }
             zone.seeds = seeds;
-            if let Some(other) = zone.discover.iter().find(|d| d.as_str() != "ct") {
+            if let Some(other) = zone
+                .discover
+                .iter()
+                .find(|d| !matches!(d.as_str(), "ct" | "axfr"))
+            {
                 return Err(ConfigError::Invalid(format!(
-                    "zone {name}, discover: \"{other}\" is not a discovery source; the only one is \"ct\""
+                    "zone {name}, discover: \"{other}\" is not a discovery source; they are \"ct\" and \"axfr\""
                 )));
             }
             seen.push(name.clone());
@@ -349,7 +354,7 @@ max_qps_per_server = 5
 [[zone]]
 name = "Example.org"
 seeds = ["www", "api", "mail", "www"]
-discover = ["ct"]
+discover = ["ct", "axfr"]
 ignore = ["_acme-challenge.*"]
 
 [alerts.email]

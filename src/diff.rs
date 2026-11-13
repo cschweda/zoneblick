@@ -178,6 +178,26 @@ pub struct DiffReport {
     pub changed: bool,
 }
 
+impl DiffReport {
+    /// Leave out findings with these fingerprints (muted ones), and count
+    /// again.
+    pub fn drop_findings(&mut self, fingerprints: &BTreeSet<String>) {
+        if fingerprints.is_empty() {
+            return;
+        }
+        self.findings_opened
+            .retain(|f| !fingerprints.contains(&f.fingerprint));
+        self.findings_resolved
+            .retain(|f| !fingerprints.contains(&f.fingerprint));
+        self.summary.findings_opened = self.findings_opened.len();
+        self.summary.findings_resolved = self.findings_resolved.len();
+        self.changed = self.changes.iter().any(|c| !c.rotation)
+            || self.delegation.is_some()
+            || !self.findings_opened.is_empty()
+            || !self.findings_resolved.is_empty();
+    }
+}
+
 /// One run's view of one record set.
 #[derive(Default)]
 struct View {

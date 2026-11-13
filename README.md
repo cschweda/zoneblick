@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, compare against a pinned baseline, and thin out old runs by itself. All 26 checks of the v1 design are built; the deep checks planned for after v1 are not. The current release, `v0.6.1`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs or by zone transfer, compare against a pinned baseline, mute findings you have accepted, export findings as JSON or CSV, and thin out old runs by itself. All 26 checks of the v1 design are built; the deep checks planned for after v1 are not. The current release, `v0.7.0`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -66,7 +66,7 @@ On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick`
 
 | Option | Effect |
 |---|---|
-| `--version v0.6.1` | Install that release instead of the newest |
+| `--version v0.7.0` | Install that release instead of the newest |
 | `--prefix DIR` | Install the binary to `DIR/bin` |
 | `--no-service` | Binary only; no user, config or service |
 
@@ -92,7 +92,7 @@ Then open `http://127.0.0.1:8053` and enter the token. The container listens on 
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.6.1`.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.7.0`.
 
 | System | File name ends in |
 |---|---|
@@ -104,12 +104,12 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.6.1` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.7.0` to install another release.
 
 **Linux**
 
 ```
-V=v0.6.1
+V=v0.7.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -122,7 +122,7 @@ zoneblick check example.org
 **macOS**
 
 ```
-V=v0.6.1
+V=v0.7.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -137,7 +137,7 @@ zoneblick check example.org
 **Windows (PowerShell)**
 
 ```
-$V = "v0.6.1"
+$V = "v0.7.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -339,7 +339,35 @@ zoneblick baseline clear example.org
 zoneblick run example.org --discover ct
 ```
 
-The names found are remembered like names given with `--name`; wildcard entries are left out and at most 200 names are added. The lookup goes to [crt.sh](https://crt.sh), a public search of the logs, so crt.sh learns which zone you asked about. That is why discovery is off unless you ask for it. crt.sh is often slow or briefly unavailable; when it fails, the run says so and carries on with the names it has.
+`--discover axfr` asks the zone's own nameservers for a zone transfer instead, which lists every name in the zone:
+
+```
+zoneblick run example.org --discover axfr
+```
+
+Most nameservers refuse transfers to strangers, and the run then says so and carries on; it works when your servers allow transfers from the machine zoneblick runs on. Names found this way (at most 500, those with address, alias, mail or text records) are checked from the next run on. A transfer request can look like probing to an intrusion detection system, so ask for it only on your own zones.
+
+The names found are remembered like names given with `--name`; from certificate logs, wildcard entries are left out and at most 200 names are added. The lookup goes to [crt.sh](https://crt.sh), a public search of the logs, so crt.sh learns which zone you asked about. That is why discovery is off unless you ask for it. crt.sh is often slow or briefly unavailable; when it fails, the run says so and carries on with the names it has.
+
+### Findings you have accepted
+
+Some findings are true and intended, such as a zone that deliberately has no CAA record. Mute one and it is still recorded, but it is left out of reports, does not set the exit code, and sends no alert:
+
+```
+zoneblick findings list example.org           # every open and muted finding, with its ID
+zoneblick findings mute example.org 5524cc29  # the ID, or the start of it
+zoneblick findings unmute example.org 5524cc29
+```
+
+A run that leaves muted findings out says how many. `findings list --state muted` shows them; `--state resolved` and `--state all` show history.
+
+### Export
+
+`zoneblick export` writes every stored finding with its state and the runs it was first and last seen in, as JSON, or as CSV with `--format csv`; `--zone` limits it to one zone. The output is a list of what is wrong with your zones, so handle it as you would the database. In the CSV, a value that a spreadsheet would read as a formula gets a leading apostrophe.
+
+### Zones in the database
+
+`zoneblick zones add example.org --name www --name mail` stores a zone and its names before the first run. `zoneblick zones remove example.org` deletes a zone with all its runs, names and findings; it does not ask first.
 
 ### Old runs
 
@@ -371,7 +399,7 @@ max_qps_per_server = 5
 name = "example.org"
 seeds = ["www", "api", "mail"]     # names to check besides the apex
 ignore = ["_acme-challenge.*"]     # left out of change reports and alerts
-# discover = ["ct"]                # also check names found in certificate logs
+# discover = ["ct", "axfr"]        # find more names: certificate logs, zone transfer
 
 [retention]
 keep_all = "30d"                   # keep every run this long
@@ -394,7 +422,7 @@ smtp_host = "smtp.example.org"
 # password_file = "/etc/zoneblick/smtp-password"
 ```
 
-Every section is optional. Unknown keys are refused, so a typo is reported instead of ignored. With `discover = ["ct"]`, the daemon asks crt.sh for the zone's names at most once a day (see [Finding more names](#finding-more-names)). `deep` under `[schedule]` is accepted for the deep checks planned after v1 and does nothing yet.
+Every section is optional. Unknown keys are refused, so a typo is reported instead of ignored. With `discover`, the daemon looks for more names at most once a day per zone: `"ct"` asks crt.sh, `"axfr"` asks the zone's nameservers for a zone transfer (see [Finding more names](#finding-more-names)). `deep` under `[schedule]` is accepted for the deep checks planned after v1 and does nothing yet.
 
 ### The API token
 
@@ -449,7 +477,10 @@ Errors are JSON too: `{"error": {"kind": "...", "message": "..."}}` with a match
 | `zoneblick diff <zone>` | Compares two stored runs | No |
 | `zoneblick baseline pin\|show\|clear <zone>` | Pins, shows or removes the zone's baseline run | Yes |
 | `zoneblick prune` | Deletes old runs | Yes |
+| `zoneblick findings list\|mute\|unmute` | Lists findings, or mutes one | Yes |
+| `zoneblick export` | Writes the stored findings as JSON or CSV | No |
 | `zoneblick zones list` | Lists the stored zones | No |
+| `zoneblick zones add\|remove <zone>` | Adds a zone with names, or deletes a zone and its history | Yes |
 | `zoneblick serve` | Runs the daemon: schedule, alerts, API and web UI | Yes |
 | `zoneblick token` | Prints the hash of an API token for the config file | No |
 
@@ -458,13 +489,15 @@ Errors are JSON too: `{"error": {"kind": "...", "message": "..."}}` with a match
 | Option | Commands | Effect |
 |---|---|---|
 | `--json` | all | Print one JSON document instead of text |
-| `--db FILE` | `run`, `diff`, `baseline`, `prune`, `zones list` | The database file. Default: `zoneblick.sqlite` |
+| `--db FILE` | every command that reads or writes stored runs | The database file. Default: `zoneblick.sqlite` |
 | `--name NAME` | `run` | Also check this name in the zone; repeatable; remembered |
 | `--forget-name NAME` | `run` | Stop checking a remembered name; repeatable |
 | `--from RUN`, `--to RUN` | `diff` | The runs to compare. Default: the latest and the one before it |
 | `--baseline` | `diff` | Compare against the pinned baseline instead of the run before |
 | `--ignore PATTERN` | `diff` | Leave out matching names; repeatable |
-| `--discover ct` | `run` | Also check names found in certificate logs; remembered |
+| `--discover ct`, `--discover axfr` | `run` | Find more names in certificate logs, or by zone transfer; remembered |
+| `--state STATE` | `findings list` | `open`, `muted`, `resolved` or `all`. Default: open and muted |
+| `--format json\|csv`, `--zone ZONE` | `export` | The output format, and one zone only |
 | `--run RUN` | `baseline pin` | The run to pin. Default: the latest |
 | `--keep-all TIME`, `--keep-daily TIME` | `prune` | The retention limits. Default: `30d` and `365d` |
 | `--config FILE` | `serve` | The configuration file. Default: `zoneblick.toml` |
@@ -482,7 +515,7 @@ For `check` and `run`:
 | `2` | At least one critical finding |
 | `3` | The run itself failed: bad arguments, zone not found, not a zone apex, no nameserver reachable |
 
-For `diff`: `0` nothing changed, `1` something changed, `3` the command failed (no database, unknown zone or run, fewer than two runs, no baseline). A moved SOA serial alone is not a change, and neither is rotation of a volatile name. `baseline` and `prune` exit `0`, or `3` on failure. `zones list` exits `0`, or `3` on failure.
+For `diff`: `0` nothing changed, `1` something changed, `3` the command failed (no database, unknown zone or run, fewer than two runs, no baseline). A moved SOA serial alone is not a change, and neither is rotation of a volatile name. The other commands exit `0`, or `3` on failure. Muted findings do not count towards the exit code of `run`. `zones list` exits `0`, or `3` on failure.
 
 ### Checks
 
@@ -645,8 +678,8 @@ The same lint and tests run in CI on Linux, macOS and Windows for every push and
 Binaries are built by GitHub Actions (`.github/workflows/release.yml`). To publish a release, set the version in `Cargo.toml`, commit, then push a matching tag:
 
 ```
-git tag v0.7.0
-git push origin v0.7.0
+git tag v0.8.0
+git push origin v0.8.0
 ```
 
 The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, and attaches them to a GitHub Release with a `SHA256SUMS` file, then publishes the container image to `ghcr.io/cschweda/zoneblick`. Each archive holds the binary, this README, both license files and `THIRD-PARTY.md`. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
@@ -675,7 +708,7 @@ One binary, one config file, one SQLite file, on your own server.
 | `src/dnssec.rs` | DNSSEC record parsing, key tags and DS digests |
 | `src/store.rs` | The SQLite store: snapshots, record sets, finding lifecycle |
 | `src/diff.rs` | The diff engine: pure functions over two stored runs |
-| `src/discover.rs` | Finding names in certificate logs |
+| `src/discover.rs` | Finding names in certificate logs and by zone transfer |
 | `src/signatures.rs` | The hosting-service signatures for TKO-02 |
 | `THIRD-PARTY.md` | Where the signatures come from, and their licence |
 | `src/config.rs` | The `zoneblick.toml` configuration file |
@@ -696,7 +729,7 @@ Scan only zones you control.
 
 ## Privacy
 
-zoneblick sends no telemetry. The binary talks to DNS servers, to the alert destinations you configure, to a zone's own `mta-sts` host when that zone publishes an MTA-STS record, to your own hostnames that are aliases of a known hosting service (one page each, for TKO-02), and to crt.sh when you turn discovery on, and to nothing else; the web UI loads nothing from other sites. The project website, zoneblick.com, uses [Plausible](https://plausible.io) for privacy-friendly, cookie-free visit statistics.
+zoneblick sends no telemetry. The binary talks to DNS servers, to the alert destinations you configure, to a zone's own `mta-sts` host when that zone publishes an MTA-STS record, to your own hostnames that are aliases of a known hosting service (one page each, for TKO-02), and to crt.sh when you turn certificate-log discovery on, and to nothing else; the web UI loads nothing from other sites. The project website, zoneblick.com, uses [Plausible](https://plausible.io) for privacy-friendly, cookie-free visit statistics.
 
 ## License
 

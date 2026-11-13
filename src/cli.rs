@@ -55,6 +55,18 @@ pub enum Command {
         action: ZonesAction,
     },
 
+    /// List the stored findings, or mute one.
+    Findings {
+        #[command(subcommand)]
+        action: FindingsAction,
+    },
+
+    /// Write the stored findings, with their history, as JSON or CSV.
+    ///
+    /// The output lists what is wrong with your zones, so treat it as
+    /// sensitive.
+    Export(ExportArgs),
+
     /// Pin, show or clear a zone's baseline: the stored run that counts
     /// as correct. `zoneblick diff <zone> --baseline` compares against it.
     Baseline {
@@ -138,6 +150,80 @@ pub struct PruneArgs {
 pub enum ZonesAction {
     /// List the stored zones.
     List(ZonesListArgs),
+    /// Add a zone, with names to check, before its first run.
+    Add(ZonesEditArgs),
+    /// Delete a zone with all its runs, names and findings.
+    Remove(ZonesEditArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ZonesEditArgs {
+    /// The zone.
+    pub zone: String,
+
+    /// For `add`: a name in the zone to check, such as www. Repeat for more.
+    #[arg(long = "name", value_name = "NAME")]
+    pub names: Vec<String>,
+
+    /// The database file. `add` creates it when it does not exist.
+    #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
+    pub db: PathBuf,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FindingsAction {
+    /// List findings with their IDs, most severe first.
+    List(FindingsListArgs),
+    /// Mute a finding: keep recording it, but stop reporting and alerting.
+    Mute(FindingsMuteArgs),
+    /// Undo `mute`.
+    Unmute(FindingsMuteArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct FindingsListArgs {
+    /// Only this zone. Default: every zone.
+    pub zone: Option<String>,
+
+    /// Only findings in this state. Default: open and muted.
+    #[arg(long, value_parser = ["open", "resolved", "muted", "all"])]
+    pub state: Option<String>,
+
+    /// The database file.
+    #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
+    pub db: PathBuf,
+
+    /// Print one JSON document instead of text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FindingsMuteArgs {
+    /// The zone.
+    pub zone: String,
+
+    /// The finding's ID as `findings list` shows it, or the start of it.
+    pub id: String,
+
+    /// The database file.
+    #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
+    pub db: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct ExportArgs {
+    /// Only this zone. Default: every zone.
+    #[arg(long, value_name = "ZONE")]
+    pub zone: Option<String>,
+
+    /// The output format.
+    #[arg(long, value_parser = ["json", "csv"], default_value = "json")]
+    pub format: String,
+
+    /// The database file.
+    #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
+    pub db: PathBuf,
 }
 
 /// Where DNS answers come from, for `check` and `run`.
@@ -179,10 +265,12 @@ pub struct RunArgs {
     #[arg(long = "forget-name", value_name = "NAME")]
     pub forget_names: Vec<String>,
 
-    /// Look for more names of the zone and check those too. The one source
-    /// is `ct`: Certificate Transparency logs, read through crt.sh, which
-    /// is told the zone's name. Found names are remembered.
-    #[arg(long, value_name = "SOURCE", value_parser = ["ct"])]
+    /// Look for more names of the zone, and remember them. `ct` reads
+    /// Certificate Transparency logs through crt.sh, which is told the
+    /// zone's name; the names are checked in this run. `axfr` asks the
+    /// zone's nameservers for a zone transfer, which most refuse; the names
+    /// are checked from the next run on. Repeat for both.
+    #[arg(long, value_name = "SOURCE", value_parser = ["ct", "axfr"])]
     pub discover: Vec<String>,
 
     /// The database file. Created when it does not exist.
@@ -298,6 +386,8 @@ impl CliError {
                 ResolveError::NoServerReachable { .. } => "no_server_reachable",
             },
             CliError::Store(e) => match e {
+                StoreError::UnknownFinding { .. } => "unknown_finding",
+                StoreError::AmbiguousFinding { .. } => "ambiguous_finding",
                 StoreError::UnknownZone { .. } => "unknown_zone",
                 StoreError::UnknownRun { .. } => "unknown_run",
                 StoreError::NotEnoughRuns { .. } => "not_enough_runs",
@@ -455,7 +545,7 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     // reported and the run goes on with the names it has.
     let mut discovered: Vec<String> = Vec::new();
     let mut notes = String::new();
-    if !args.discover.is_empty() {
+    if args.discover.iter().any(|d| d == "ct") {
         match crate::discover::ct_names(&client, &zone).await {
             Ok(found) => {
                 let total = found.len();
@@ -475,6 +565,21 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     save_recording(&args.source, &client, &zone, started_at)?;
     let obs = observed?;
 
+    // A zone transfer, when asked. Refusal is the usual answer.
+    let mut transferred: Option<Vec<String>> = None;
+    if args.discover.iter().any(|d| d == "axfr") {
+        if client.is_live() {
+            match crate::discover::axfr_names(&zone, &crate::discover::servers_of(&obs)).await {
+                Ok(found) => transferred = Some(found),
+                Err(e) => notes.push_str(&format!("zoneblick: zone transfer not available: {e}\n")),
+            }
+        } else {
+            notes.push_str(
+                "zoneblick: a zone transfer cannot be replayed from a fixture; skipped\n",
+            );
+        }
+    }
+
     let findings = run_all(&obs);
     let queries = client.queries_sent();
     let meta = RunMeta {
@@ -485,6 +590,19 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     };
     let run_id = store.save_run(&obs, &findings, &meta)?;
     store.set_name_source(&zone, &discovered, "ct")?;
+    if let Some(found) = &transferred {
+        let added = store.add_names(&zone, found, "axfr", run_id)?;
+        notes.push_str(&format!(
+            "zoneblick: the zone transfer names {} hosts in {zone}, {added} of them new; new names are checked from the next run on\n",
+            found.len()
+        ));
+    }
+    let (findings, muted) = crate::runner::split_muted(&store, &zone, findings)?;
+    if muted > 0 {
+        notes.push_str(&format!(
+            "zoneblick: {muted} muted findings are not shown; see them with: zoneblick findings list {zone} --state muted\n"
+        ));
+    }
 
     // Compare with the previous stored run of the zone, when there is one.
     let diff: Option<DiffReport> = match store.pick_runs(&zone, None, Some(run_id)) {
@@ -571,6 +689,169 @@ fn try_diff(args: &DiffArgs, color: bool) -> Result<CommandOutput, CliError> {
             exit::CLEAN
         },
     })
+}
+
+/// Run `zoneblick zones add | remove`.
+pub fn zones_edit(action: &ZonesAction) -> CommandOutput {
+    let (args, adding) = match action {
+        ZonesAction::Add(a) => (a, true),
+        ZonesAction::Remove(a) => (a, false),
+        ZonesAction::List(_) => return CommandOutput::default(),
+    };
+    let result = (|| -> Result<String, CliError> {
+        let zone = normalise_zone(&args.zone)?;
+        if !adding {
+            let runs = open_existing(&args.db)?.remove_zone(&zone)?;
+            return Ok(format!("Removed {zone} and its {runs} runs.\n"));
+        }
+        let mut names = Vec::new();
+        for input in &args.names {
+            let name = name_in_zone(&zone, input)?;
+            if name != zone && !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        let store = Store::open(&args.db)?;
+        let new = store.add_zone(&zone, now_unix())?;
+        let added = store.add_names(&zone, &names, "seed", 0)?;
+        Ok(format!(
+            "{} {zone}, {added} names added. Check it with: zoneblick run {}\n",
+            if new { "Added" } else { "Already there:" },
+            zone.trim_end_matches('.')
+        ))
+    })();
+    match result {
+        Ok(stdout) => CommandOutput {
+            stdout,
+            ..Default::default()
+        },
+        Err(e) => failed(&args.zone, false, &e),
+    }
+}
+
+/// The start of a fingerprint, as shown to people.
+fn short_id(fingerprint: &str) -> &str {
+    &fingerprint[..fingerprint.len().min(10)]
+}
+
+/// Run `zoneblick findings list | mute | unmute`.
+pub fn findings(action: &FindingsAction) -> CommandOutput {
+    let (zone_arg, json) = match action {
+        FindingsAction::List(a) => (a.zone.clone().unwrap_or_default(), a.json),
+        FindingsAction::Mute(a) | FindingsAction::Unmute(a) => (a.zone.clone(), false),
+    };
+    let result = (|| -> Result<String, CliError> {
+        match action {
+            FindingsAction::List(args) => {
+                let zone = args.zone.as_deref().map(normalise_zone).transpose()?;
+                let store = open_existing(&args.db)?;
+                let state = args.state.as_deref();
+                let rows: Vec<_> = store
+                    .finding_rows(zone.as_deref(), state.filter(|s| *s != "all"))?
+                    .into_iter()
+                    .filter(|f| state.is_some() || f.state != "resolved")
+                    .collect();
+                if args.json {
+                    return Ok(json::render(&serde_json::json!({
+                        "schema_version": SCHEMA_VERSION,
+                        "findings": rows,
+                    })));
+                }
+                let mut out = String::new();
+                for f in &rows {
+                    out.push_str(&format!(
+                        "{}  {:<8}  {:<8}  {}  {}\n    {}\n",
+                        short_id(&f.fingerprint),
+                        f.state,
+                        f.severity.as_str(),
+                        f.check_id,
+                        f.name,
+                        f.summary
+                    ));
+                }
+                if rows.is_empty() {
+                    out.push_str("No findings.\n");
+                }
+                Ok(out)
+            }
+            FindingsAction::Mute(args) | FindingsAction::Unmute(args) => {
+                let zone = normalise_zone(&args.zone)?;
+                let muting = matches!(action, FindingsAction::Mute(_));
+                let row = open_existing(&args.db)?.set_muted(&zone, &args.id, muting)?;
+                Ok(format!(
+                    "{} {} {} is now {}.\n",
+                    short_id(&row.fingerprint),
+                    row.check_id,
+                    row.name,
+                    row.state
+                ))
+            }
+        }
+    })();
+    match result {
+        Ok(stdout) => CommandOutput {
+            stdout,
+            ..Default::default()
+        },
+        Err(e) => failed(&zone_arg, json, &e),
+    }
+}
+
+/// One CSV field. Text that a spreadsheet would read as a formula gets a
+/// leading apostrophe: findings quote data that other people publish in DNS.
+fn csv_field(text: &str) -> String {
+    let mut value = text.to_string();
+    if value.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        value.insert(0, '\'');
+    }
+    if value.contains([',', '"', '\n', '\r']) {
+        value = format!("\"{}\"", value.replace('"', "\"\""));
+    }
+    value
+}
+
+/// Run `zoneblick export`.
+pub fn export(args: &ExportArgs) -> CommandOutput {
+    let result = (|| -> Result<String, CliError> {
+        let zone = args.zone.as_deref().map(normalise_zone).transpose()?;
+        let store = open_existing(&args.db)?;
+        let rows = store.finding_rows(zone.as_deref(), None)?;
+        if args.format == "json" {
+            return Ok(json::render(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "zones": store.zones()?.into_iter()
+                    .filter(|z| zone.as_deref().is_none_or(|only| z.zone == only))
+                    .collect::<Vec<_>>(),
+                "findings": rows,
+            })));
+        }
+        let mut out = String::from(
+            "zone,state,severity,check_id,name,summary,first_seen_run,last_seen_run,id\n",
+        );
+        for f in &rows {
+            let fields = [
+                csv_field(&f.zone),
+                csv_field(&f.state),
+                csv_field(f.severity.as_str()),
+                csv_field(&f.check_id),
+                csv_field(&f.name),
+                csv_field(&f.summary),
+                f.first_seen_run.to_string(),
+                f.last_seen_run.to_string(),
+                csv_field(&f.fingerprint),
+            ];
+            out.push_str(&fields.join(","));
+            out.push('\n');
+        }
+        Ok(out)
+    })();
+    match result {
+        Ok(stdout) => CommandOutput {
+            stdout,
+            ..Default::default()
+        },
+        Err(e) => failed(args.zone.as_deref().unwrap_or(""), false, &e),
+    }
 }
 
 /// Run `zoneblick baseline pin | show | clear`.
