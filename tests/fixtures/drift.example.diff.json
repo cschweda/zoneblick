@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "zone": "drift.example.",
+  "from": {
+    "id": 1,
+    "started_at_unix": 1700000000
+  },
+  "to": {
+    "id": 2,
+    "started_at_unix": 1700003600
+  },
+  "changes": [
+    {
+      "name": "api.drift.example.",
+      "rtype": "CNAME",
+      "kind": "modified",
+      "added": [
+        "new-app.hosting.example."
+      ],
+      "removed": [
+        "app.hosting.example."
+      ],
+      "ttl_before": [
+        3600
+      ],
+      "ttl_after": [
+        3600
+      ],
+      "servers": [
+        {
+          "ns_name": "ns1.drift.example.",
+          "address": "198.51.100.1",
+          "before": [
+            "app.hosting.example."
+          ],
+          "after": [
+            "new-app.hosting.example."
+          ]
+        },
+        {
+          "ns_name": "ns2.drift.example.",
+          "address": "203.0.113.3",
+          "before": [
+            "app.hosting.example."
+          ],
+          "after": [
+            "new-app.hosting.example."
+          ]
+        }
+      ],
+      "all_servers": true
+    },
+    {
+      "name": "drift.example.",
+      "rtype": "TXT",
+      "kind": "removed",
+      "added": [],
+      "removed": [
+        "\"v=spf1 mx -all\""
+      ],
+      "ttl_before": [
+        3600
+      ],
+      "ttl_after": [],
+      "servers": [
+        {
+          "ns_name": "ns1.drift.example.",
+          "address": "198.51.100.1",
+          "before": [
+            "\"v=spf1 mx -all\""
+          ],
+          "after": []
+        },
+        {
+          "ns_name": "ns2.drift.example.",
+          "address": "203.0.113.3",
+          "before": [
+            "\"v=spf1 mx -all\""
+          ],
+          "after": []
+        }
+      ],
+      "all_servers": true
+    },
+    {
+      "name": "shop.drift.example.",
+      "rtype": "A",
+      "kind": "modified",
+      "added": [
+        "192.0.2.99"
+      ],
+      "removed": [],
+      "ttl_before": [
+        3600
+      ],
+      "ttl_after": [
+        3600
+      ],
+      "servers": [
+        {
+          "ns_name": "ns1.drift.example.",
+          "address": "198.51.100.1",
+          "before": [
+            "192.0.2.20"
+          ],
+          "after": [
+            "192.0.2.99"
+          ]
+        }
+      ],
+      "all_servers": false
+    },
+    {
+      "name": "staging.drift.example.",
+      "rtype": "A",
+      "kind": "added",
+      "added": [
+        "192.0.2.50"
+      ],
+      "removed": [],
+      "ttl_before": [],
+      "ttl_after": [
+        3600
+      ],
+      "servers": [
+        {
+          "ns_name": "ns1.drift.example.",
+          "address": "198.51.100.1",
+          "before": [],
+          "after": [
+            "192.0.2.50"
+          ]
+        },
+        {
+          "ns_name": "ns2.drift.example.",
+          "address": "203.0.113.3",
+          "before": [],
+          "after": [
+            "192.0.2.50"
+          ]
+        }
+      ],
+      "all_servers": true
+    }
+  ],
+  "soa_serial": {
+    "before": [
+      2026111301
+    ],
+    "after": [
+      2026111302
+    ]
+  },
+  "delegation": null,
+  "findings_opened": [
+    {
+      "severity": "warning",
+      "check_id": "CON-02",
+      "name": "shop.drift.example.",
+      "summary": "Nameservers serve 2 different versions of the A record set for shop.drift.example.",
+      "fingerprint": "23a68643ef83f74119c0effe7587ddd9"
+    }
+  ],
+  "findings_resolved": [],
+  "not_compared": [],
+  "summary": {
+    "added": 1,
+    "removed": 1,
+    "modified": 2,
+    "ttl": 0,
+    "findings_opened": 1,
+    "findings_resolved": 0
+  },
+  "changed": true
+}

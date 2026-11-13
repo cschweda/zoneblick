@@ -11,7 +11,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use hickory_proto::op::{Edns, Message, OpCode, Query, ResponseCode};
-use hickory_proto::rr::rdata::{A, AAAA, CNAME, NS, SOA};
+use hickory_proto::rr::rdata::{A, AAAA, CNAME, MX, NS, SOA, TXT};
 use hickory_proto::rr::{Name, RData, Record, RecordType};
 use zoneblick::observe::{QType, Transport, ZoneObservation};
 use zoneblick::resolver::{
@@ -48,6 +48,22 @@ pub fn addr(owner: &str, ip: &str) -> Record {
 
 pub fn cname(owner: &str, target: &str) -> Record {
     Record::from_rdata(name(owner), 3600, RData::CNAME(CNAME(name(target))))
+}
+
+pub fn mx(owner: &str, preference: u16, target: &str) -> Record {
+    Record::from_rdata(
+        name(owner),
+        3600,
+        RData::MX(MX::new(preference, name(target))),
+    )
+}
+
+pub fn txt(owner: &str, text: &str) -> Record {
+    Record::from_rdata(
+        name(owner),
+        3600,
+        RData::TXT(TXT::new(vec![text.to_string()])),
+    )
 }
 
 pub fn soa(owner: &str, serial: u32) -> Record {
@@ -237,11 +253,32 @@ impl World {
         }
     }
 
+    /// Everything a server says about one name: the given records, and
+    /// "no such data" for every other type a stored run asks about.
+    pub fn serve_name(&mut self, server: &str, zone: &str, owner: &str, records: &[Record]) {
+        for qtype in QType::SWEEP {
+            let matching: Vec<Record> = records
+                .iter()
+                .filter(|r| r.record_type() == record_type(qtype))
+                .cloned()
+                .collect();
+            if matching.is_empty() {
+                self.nodata(server, owner, qtype, zone);
+            } else {
+                self.answer(server, owner, qtype, &matching);
+            }
+        }
+    }
+
     pub fn fixture(&self, zone: &str) -> Fixture {
+        self.fixture_at(zone, STARTED_AT)
+    }
+
+    pub fn fixture_at(&self, zone: &str, started_at_unix: u64) -> Fixture {
         Fixture {
             version: Fixture::VERSION,
             zone: zone.to_string(),
-            started_at_unix: STARTED_AT,
+            started_at_unix,
             exchanges: self.exchanges.clone(),
         }
     }
@@ -307,5 +344,81 @@ pub fn broken_world() -> World {
         }
     }
     w.rcode(NS3, zone, &[QType::Soa, QType::Ns], ResponseCode::Refused);
+    w
+}
+
+pub const DRIFT_ZONE: &str = "drift.example.";
+/// The names `run` is asked to check in the drift worlds.
+pub const DRIFT_NAMES: [&str; 4] = ["www", "api", "shop", "staging"];
+
+/// `drift.example.` at two points in time, for diff tests.
+///
+/// Between `after = false` and `after = true`:
+///
+/// - `api` (CNAME) points at a different target, on both servers
+/// - `staging` (A) appears
+/// - the apex TXT record disappears
+/// - `shop` (A) changes on ns1 only, so the servers now disagree
+/// - `www` (A) and the apex MX do not change
+/// - the SOA serial moves on
+pub fn drift_world(after: bool) -> World {
+    let zone = DRIFT_ZONE;
+    let names = ["ns1.drift.example.", "ns2.drift.example."];
+    let servers = [NS1, NS3];
+    let mut w = World::new();
+    w.delegate_tld(zone, QType::Ns);
+    w.referral(
+        TLD_SERVER,
+        zone,
+        QType::Ns,
+        &[ns(zone, names[0]), ns(zone, names[1])],
+        &[addr(names[0], servers[0]), addr(names[1], servers[1])],
+    );
+    let serial = if after { 2026111302 } else { 2026111301 };
+    for server in servers {
+        w.serve_apex(server, zone, serial, &names);
+        w.serve_host(server, zone, names[0], &[servers[0]]);
+        w.serve_host(server, zone, names[1], &[servers[1]]);
+
+        let mut apex = vec![mx(zone, 10, "mail.drift.example.")];
+        if !after {
+            apex.push(txt(zone, "v=spf1 mx -all"));
+        }
+        w.serve_name(server, zone, zone, &apex);
+        w.serve_name(
+            server,
+            zone,
+            "www.drift.example.",
+            &[addr("www.drift.example.", "192.0.2.10")],
+        );
+        let api_target = if after {
+            "new-app.hosting.example."
+        } else {
+            "app.hosting.example."
+        };
+        w.serve_name(
+            server,
+            zone,
+            "api.drift.example.",
+            &[cname("api.drift.example.", api_target)],
+        );
+        let shop_ip = if after && server == NS1 {
+            "192.0.2.99"
+        } else {
+            "192.0.2.20"
+        };
+        w.serve_name(
+            server,
+            zone,
+            "shop.drift.example.",
+            &[addr("shop.drift.example.", shop_ip)],
+        );
+        let staging = if after {
+            vec![addr("staging.drift.example.", "192.0.2.50")]
+        } else {
+            vec![]
+        };
+        w.serve_name(server, zone, "staging.drift.example.", &staging);
+    }
     w
 }

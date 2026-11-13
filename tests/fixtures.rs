@@ -30,6 +30,14 @@ fn hand_built_fixtures_are_current() {
             broken_world().fixture("broken.example."),
         ),
         ("good.example.json", good_world().fixture("good.example.")),
+        (
+            "drift.example.before.json",
+            drift_world(false).fixture_at(DRIFT_ZONE, STARTED_AT),
+        ),
+        (
+            "drift.example.after.json",
+            drift_world(true).fixture_at(DRIFT_ZONE, STARTED_AT + 3600),
+        ),
     ];
     for (file, fixture) in worlds {
         let expected = serde_json::to_string_pretty(&fixture).unwrap() + "\n";

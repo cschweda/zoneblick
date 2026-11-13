@@ -3,9 +3,13 @@
 use std::fmt::Write;
 use std::net::IpAddr;
 
-use super::Report;
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::{Report, StoredRun, utc};
 use crate::checks::{Evidence, Finding, LameReason, ProbeSummary, ServerRef, Severity};
+use crate::diff::{ChangeKind, DiffReport, RecordChange};
 use crate::observe::{QType, ServerProbe, Transport};
+use crate::store::ZoneSummary;
 
 struct Style {
     color: bool,
@@ -39,8 +43,13 @@ impl Style {
     }
 }
 
-/// Render a report for a terminal. `color` turns ANSI colours on.
+/// Render a `check` report for a terminal. `color` turns ANSI colours on.
 pub fn render(report: &Report, color: bool) -> String {
+    render_as("check", report, color)
+}
+
+/// Render a report under the name of the command that produced it.
+pub fn render_as(command: &str, report: &Report, color: bool) -> String {
     let st = Style { color };
     let mut out = String::new();
     let w = &mut out;
@@ -48,11 +57,12 @@ pub fn render(report: &Report, color: bool) -> String {
     let _ = writeln!(
         w,
         "{}",
-        st.bold(&format!("zoneblick check {}", report.zone))
+        st.bold(&format!("zoneblick {command} {}", report.zone))
     );
     let _ = writeln!(w);
     delegation(w, &st, report);
     nameservers(w, &st, report);
+    records(w, &st, report);
     findings(w, &st, report);
 
     let s = report.summary;
@@ -308,4 +318,318 @@ fn evidence_lines(evidence: &Evidence) -> Vec<String> {
         }
         Evidence::EdnsProblem { problems, .. } => problems.clone(),
     }
+}
+
+/// What all servers together served for one name and type.
+type Pool<'a> = (BTreeSet<&'a str>, Option<u32>);
+
+/// The record sets a run collected: one line per name and type that exists.
+fn records(w: &mut String, st: &Style, report: &Report) {
+    if report.records.is_empty() {
+        return;
+    }
+    let mut pools: BTreeMap<(&str, QType), Pool<'_>> = BTreeMap::new();
+    for rec in &report.records {
+        let Some(answer) = rec.outcome.answer() else {
+            continue;
+        };
+        if !answer.authoritative || rec.qtype == QType::Soa {
+            continue;
+        }
+        let entry = pools.entry((&rec.name, rec.qtype)).or_default();
+        entry.0.extend(answer.rdata.iter().map(String::as_str));
+        entry.1 = entry.1.or(answer.ttl);
+    }
+    let names: BTreeSet<&str> = pools.keys().map(|k| k.0).collect();
+    let empty = pools.values().filter(|p| p.0.is_empty()).count();
+    let _ = writeln!(w, "{}", st.bold("Records"));
+    let width = names.iter().map(|n| n.len()).max().unwrap_or(0);
+    for ((name, qtype), (pool, ttl)) in &pools {
+        if pool.is_empty() {
+            continue;
+        }
+        let values: Vec<&str> = pool.iter().copied().collect();
+        let ttl = ttl.map(|t| format!("  ttl {t}")).unwrap_or_default();
+        let _ = writeln!(
+            w,
+            "  {name:<width$}  {:<5}  {}{}",
+            qtype.as_str(),
+            values.join(", "),
+            st.dim(&ttl)
+        );
+    }
+    let _ = writeln!(
+        w,
+        "  {}",
+        st.dim(&format!(
+            "{} names checked; {empty} name and type pairs have no records",
+            names.len()
+        ))
+    );
+    let _ = writeln!(w);
+}
+
+/// The lines `run` adds after the report: where the run was stored and what
+/// changed since the previous one.
+pub fn render_stored(run: &StoredRun, diff: Option<&DiffReport>, color: bool) -> String {
+    let st = Style { color };
+    let mut out = String::new();
+    let w = &mut out;
+    let _ = writeln!(w);
+    let _ = writeln!(
+        w,
+        "{} run #{} in {} ({} besides the apex, {} queries)",
+        st.bold("Stored:"),
+        run.id,
+        run.db,
+        match run.names.len() {
+            1 => "1 name".to_string(),
+            n => format!("{n} names"),
+        },
+        run.queries
+    );
+    match diff {
+        None => {
+            let _ = writeln!(
+                w,
+                "This is the first stored run of the zone. Later runs are compared with it."
+            );
+        }
+        Some(d) => {
+            let _ = writeln!(w);
+            let _ = writeln!(
+                w,
+                "{}",
+                st.bold(&format!(
+                    "Changes since run #{} ({})",
+                    d.from.id,
+                    utc(d.from.started_at_unix)
+                ))
+            );
+            diff_body(w, &st, d);
+        }
+    }
+    out
+}
+
+/// Render a diff for a terminal.
+pub fn render_diff(d: &DiffReport, color: bool) -> String {
+    let st = Style { color };
+    let mut out = String::new();
+    let w = &mut out;
+    let _ = writeln!(w, "{}", st.bold(&format!("zoneblick diff {}", d.zone)));
+    let _ = writeln!(
+        w,
+        "run #{} ({}) -> run #{} ({})",
+        d.from.id,
+        utc(d.from.started_at_unix),
+        d.to.id,
+        utc(d.to.started_at_unix)
+    );
+    let _ = writeln!(w);
+    diff_body(w, &st, d);
+    out
+}
+
+fn change_label(st: &Style, kind: ChangeKind) -> String {
+    let (text, severity) = match kind {
+        ChangeKind::Added => ("ADDED", Severity::Notice),
+        ChangeKind::Removed => ("REMOVED", Severity::Critical),
+        ChangeKind::Modified => ("MODIFIED", Severity::Warning),
+        ChangeKind::Ttl => ("TTL", Severity::Info),
+    };
+    st.severity(severity, &format!("{text:<8}"))
+}
+
+fn record_change(w: &mut String, st: &Style, c: &RecordChange) {
+    let _ = writeln!(
+        w,
+        "  {}  {} {}",
+        change_label(st, c.kind),
+        c.name,
+        c.rtype.as_str()
+    );
+    for value in &c.removed {
+        let _ = writeln!(
+            w,
+            "    {}",
+            st.severity(Severity::Critical, &format!("- {value}"))
+        );
+    }
+    for value in &c.added {
+        let _ = writeln!(w, "    {}", st.paint("1;32", &format!("+ {value}")));
+    }
+    if c.ttl_before != c.ttl_after && !c.ttl_before.is_empty() && !c.ttl_after.is_empty() {
+        let _ = writeln!(
+            w,
+            "    ttl {} -> {}",
+            list(&c.ttl_before),
+            list(&c.ttl_after)
+        );
+    }
+    if c.kind == ChangeKind::Ttl {
+        return;
+    }
+    if c.all_servers {
+        let _ = writeln!(w, "    {}", st.dim("on every nameserver"));
+        return;
+    }
+    for s in &c.servers {
+        let side = |v: &Option<Vec<String>>| match v {
+            None => "no answer".to_string(),
+            Some(v) => list(v),
+        };
+        let _ = writeln!(
+            w,
+            "    {}",
+            st.dim(&format!(
+                "{} ({}): {} -> {}",
+                s.ns_name,
+                s.address,
+                side(&s.before),
+                side(&s.after)
+            ))
+        );
+    }
+}
+
+fn diff_body(w: &mut String, st: &Style, d: &DiffReport) {
+    if !d.changed && d.soa_serial.is_none() {
+        let _ = writeln!(w, "  No changes.");
+    }
+    for c in &d.changes {
+        record_change(w, st, c);
+    }
+    if let Some(del) = &d.delegation {
+        let _ = writeln!(
+            w,
+            "  {}  delegation at the parent",
+            st.severity(Severity::Warning, "MODIFIED")
+        );
+        for ns in &del.ns_removed {
+            let _ = writeln!(
+                w,
+                "    {}",
+                st.severity(Severity::Critical, &format!("- NS {ns}"))
+            );
+        }
+        for ns in &del.ns_added {
+            let _ = writeln!(w, "    {}", st.paint("1;32", &format!("+ NS {ns}")));
+        }
+        for g in &del.glue_removed {
+            let _ = writeln!(
+                w,
+                "    {}",
+                st.severity(
+                    Severity::Critical,
+                    &format!("- glue {} {}", g.name, g.address)
+                )
+            );
+        }
+        for g in &del.glue_added {
+            let _ = writeln!(
+                w,
+                "    {}",
+                st.paint("1;32", &format!("+ glue {} {}", g.name, g.address))
+            );
+        }
+    }
+    if let Some(serial) = &d.soa_serial {
+        let _ = writeln!(
+            w,
+            "  {}",
+            st.dim(&format!(
+                "SOA serial {} -> {}",
+                list(&serial.before),
+                list(&serial.after)
+            ))
+        );
+    }
+    for f in &d.findings_opened {
+        let _ = writeln!(
+            w,
+            "  {}  {} {}  {}",
+            st.severity(f.severity, "OPENED  "),
+            f.check_id,
+            f.severity.as_str(),
+            f.summary
+        );
+    }
+    for f in &d.findings_resolved {
+        let _ = writeln!(
+            w,
+            "  {}  {} {}  {}",
+            st.paint("1;32", "RESOLVED"),
+            f.check_id,
+            f.severity.as_str(),
+            f.summary
+        );
+    }
+    let ignored = d
+        .not_compared
+        .iter()
+        .filter(|n| n.reason == "ignored")
+        .count();
+    let new_names: BTreeSet<&str> = d
+        .not_compared
+        .iter()
+        .filter(|n| n.reason != "ignored")
+        .map(|n| n.name.as_str())
+        .collect();
+    if ignored > 0 {
+        let _ = writeln!(
+            w,
+            "  {}",
+            st.dim(&format!("{ignored} changed record sets ignored by pattern"))
+        );
+    }
+    if !new_names.is_empty() {
+        let names: Vec<&str> = new_names.into_iter().collect();
+        let _ = writeln!(
+            w,
+            "  {}",
+            st.dim(&format!(
+                "not compared, checked in only one of the runs: {}",
+                names.join(", ")
+            ))
+        );
+    }
+    let s = d.summary;
+    let _ = writeln!(w);
+    let _ = writeln!(
+        w,
+        "{} {} added, {} removed, {} modified, {} TTL; findings: {} opened, {} resolved",
+        st.bold("Changes:"),
+        s.added,
+        s.removed,
+        s.modified,
+        s.ttl,
+        s.findings_opened,
+        s.findings_resolved
+    );
+}
+
+/// Render the list of stored zones for a terminal.
+pub fn render_zones(db: &str, zones: &[ZoneSummary], color: bool) -> String {
+    let st = Style { color };
+    let mut out = String::new();
+    let w = &mut out;
+    let _ = writeln!(w, "{}", st.bold(&format!("Zones in {db}")));
+    if zones.is_empty() {
+        let _ = writeln!(w, "  None yet. Store one with: zoneblick run <zone>");
+        return out;
+    }
+    let width = zones.iter().map(|z| z.zone.len()).max().unwrap_or(0);
+    for z in zones {
+        let last = match z.last_run {
+            Some(r) => format!("last run #{} at {}", r.id, utc(r.started_at_unix)),
+            None => "no runs".to_string(),
+        };
+        let _ = writeln!(
+            w,
+            "  {:<width$}  {} runs, {} names, {} open findings, {}",
+            z.zone, z.runs, z.names, z.open_findings, last
+        );
+    }
+    out
 }

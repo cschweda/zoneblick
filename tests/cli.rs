@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use serde_json::Value;
-use zoneblick::cli::{CheckArgs, check};
+use zoneblick::cli::{CheckArgs, SourceArgs, check};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -15,8 +15,10 @@ fn args(zone: &str, replay: &str, json: bool) -> CheckArgs {
     CheckArgs {
         zone: zone.to_string(),
         json,
-        record: None,
-        replay: Some(fixture(replay)),
+        source: SourceArgs {
+            record: None,
+            replay: Some(fixture(replay)),
+        },
     }
 }
 
@@ -101,21 +103,18 @@ async fn recorded_real_zone_replays() {
 #[tokio::test]
 async fn record_then_replay_gives_the_same_report() {
     let recorded = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("rerecorded.json");
-    let mut first_args = args("broken.example", "broken.example.json", true);
-    first_args.replay = None;
     // `record` and `replay` are exclusive on the command line; here the
     // recording is made from a replay to stay offline.
-    let first_args = CheckArgs {
-        replay: Some(fixture("broken.example.json")),
-        record: Some(recorded.clone()),
-        ..first_args
-    };
+    let mut first_args = args("broken.example", "broken.example.json", true);
+    first_args.source.record = Some(recorded.clone());
     let first = check(&first_args, false).await;
     let second_args = CheckArgs {
         zone: "broken.example".to_string(),
         json: true,
-        record: None,
-        replay: Some(recorded),
+        source: SourceArgs {
+            record: None,
+            replay: Some(recorded),
+        },
     };
     let second = check(&second_args, false).await;
     assert_eq!(first, second);
@@ -143,8 +142,7 @@ async fn live_check_of_example_com() {
     let live = CheckArgs {
         zone: "example.com".to_string(),
         json: true,
-        record: None,
-        replay: None,
+        source: SourceArgs::default(),
     };
     let out = check(&live, false).await;
     assert_ne!(out.exit_code, 3, "{}", out.stdout);

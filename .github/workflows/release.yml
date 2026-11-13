@@ -4,8 +4,9 @@
 # - A pull request that touches the build inputs, or a manual run, builds
 #   all targets as a dry run and publishes nothing.
 #
-# The crate has no C dependencies, so the Linux builds link statically
-# against musl with Rust's bundled linker and need no extra packages.
+# SQLite is compiled in from source (rusqlite's "bundled" feature), so every
+# build needs a C compiler. The Linux builds link statically against musl,
+# which needs the musl-tools package for its C compiler wrapper.
 # Linux and macOS archives are .tar.gz; the Windows archive is a .zip.
 
 name: release
@@ -79,6 +80,9 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
           rustup default stable
+      - name: Install the musl C compiler
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
       - name: Smoke test
@@ -91,6 +95,13 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then bin="$bin.exe"; fi
           "$bin" --version
           "$bin" check good.example --replay tests/fixtures/good.example.json
+          # Exercise the bundled SQLite too: store two runs and diff them.
+          db="$RUNNER_TEMP/smoke.sqlite"
+          "$bin" run drift.example --db "$db" --name www --name api --name shop --name staging \
+            --replay tests/fixtures/drift.example.before.json
+          "$bin" run drift.example --db "$db" --replay tests/fixtures/drift.example.after.json || [ $? -eq 1 ]
+          "$bin" diff drift.example --db "$db" || [ $? -eq 1 ]
+          "$bin" zones list --db "$db"
       - name: Package
         run: |
           version="${GITHUB_REF_NAME}"

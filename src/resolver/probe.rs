@@ -484,4 +484,31 @@ mod tests {
         assert!(normalise_zone("  ").is_err());
         assert!(normalise_zone("bad..name").is_err());
     }
+
+    #[test]
+    fn names_are_placed_in_the_zone() {
+        let zone = "example.com.";
+        assert_eq!(name_in_zone(zone, "www").unwrap(), "www.example.com.");
+        assert_eq!(
+            name_in_zone(zone, "WWW.Example.COM").unwrap(),
+            "www.example.com."
+        );
+        assert_eq!(
+            name_in_zone(zone, "a.b.example.com.").unwrap(),
+            "a.b.example.com."
+        );
+        assert_eq!(name_in_zone(zone, "_dmarc").unwrap(), "_dmarc.example.com.");
+        assert_eq!(name_in_zone(zone, "@").unwrap(), "example.com.");
+        assert_eq!(name_in_zone(zone, "example.com").unwrap(), "example.com.");
+        // A relative name that happens to look like another domain stays inside.
+        assert_eq!(
+            name_in_zone(zone, "www.other.org").unwrap(),
+            "www.other.org.example.com."
+        );
+        assert!(matches!(
+            name_in_zone(zone, "www.other.org."),
+            Err(ResolveError::NameOutsideZone { .. })
+        ));
+        assert!(name_in_zone(zone, " ").is_err());
+    }
 }

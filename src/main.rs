@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use anyhow::Context;
 use clap::Parser;
-use zoneblick::cli::{self, Cli, Command};
+use zoneblick::cli::{self, Cli, Command, ZonesAction};
 use zoneblick::output::exit;
 
 fn main() -> ExitCode {
@@ -37,6 +37,11 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
     let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let output = match cli.command {
         Command::Check(args) => runtime.block_on(cli::check(&args, color)),
+        Command::Run(args) => runtime.block_on(cli::run(&args, color)),
+        Command::Diff(args) => cli::diff(&args, color),
+        Command::Zones {
+            action: ZonesAction::List(args),
+        } => cli::zones_list(&args, color),
     };
     std::io::stdout()
         .write_all(output.stdout.as_bytes())

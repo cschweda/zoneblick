@@ -6,7 +6,11 @@ pub mod json;
 use serde::Serialize;
 
 use crate::checks::{Finding, Severity};
-use crate::observe::{NsHost, ReferralStep, ServerProbe, Vantage, ZoneObservation};
+use crate::diff::DiffReport;
+use crate::observe::{
+    NsHost, RecordObservation, ReferralStep, ServerProbe, Vantage, ZoneObservation,
+};
+use crate::store::ZoneSummary;
 
 /// Version of the JSON document. It changes only when a field is removed,
 /// renamed or changes meaning; new fields may be added without a bump.
@@ -66,9 +70,63 @@ pub struct Report {
     pub delegation_path: Vec<ReferralStep>,
     pub nameservers: Vec<NsHost>,
     pub probes: Vec<ServerProbe>,
+    /// Record sets per name, type and server. Present only for `run`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub records: Vec<RecordObservation>,
     pub findings: Vec<Finding>,
     pub summary: Summary,
     pub exit_code: u8,
+}
+
+/// Where a run was stored.
+#[derive(Debug, Clone, Serialize)]
+pub struct StoredRun {
+    pub id: i64,
+    /// The database file.
+    pub db: String,
+    /// The names checked besides the apex.
+    pub names: Vec<String>,
+    pub queries: usize,
+}
+
+/// The `run --json` document: the report, where it was stored, and what
+/// changed since the previous stored run of the zone.
+#[derive(Debug, Clone, Serialize)]
+pub struct RunDocument {
+    pub schema_version: u32,
+    pub run: StoredRun,
+    pub report: Report,
+    /// `null` for the first stored run of a zone.
+    pub diff: Option<DiffReport>,
+}
+
+/// The `zones list --json` document.
+#[derive(Debug, Clone, Serialize)]
+pub struct ZonesDocument {
+    pub schema_version: u32,
+    pub db: String,
+    pub zones: Vec<ZoneSummary>,
+}
+
+/// A Unix time as `2026-11-13 16:40 UTC`.
+pub fn utc(unix: u64) -> String {
+    let days = (unix / 86_400) as i64;
+    let secs = unix % 86_400;
+    // Civil date from a day count (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
+        secs / 3600,
+        secs % 3600 / 60
+    )
 }
 
 impl Report {
@@ -82,6 +140,7 @@ impl Report {
             delegation_path: obs.delegation_path,
             nameservers: obs.ns_hosts,
             probes: obs.probes,
+            records: obs.records,
             findings,
             summary,
             exit_code: summary.exit_code(),
@@ -116,5 +175,18 @@ impl FailureReport {
             },
             exit_code: exit::RUN_FAILED,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utc;
+
+    #[test]
+    fn formats_utc_times() {
+        assert_eq!(utc(0), "1970-01-01 00:00 UTC");
+        assert_eq!(utc(1_700_000_000), "2023-11-14 22:13 UTC");
+        assert_eq!(utc(951_782_400), "2000-02-29 00:00 UTC");
+        assert_eq!(utc(1_794_587_999), "2026-11-13 16:39 UTC");
     }
 }
