@@ -15,3 +15,4 @@ pub mod diff;
 pub mod observe;
 pub mod output;
 pub mod resolver;
+pub mod store;

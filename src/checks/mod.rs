@@ -31,6 +31,10 @@ impl Severity {
         Severity::Info,
     ];
 
+    pub fn parse(s: &str) -> Option<Severity> {
+        Severity::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Severity::Critical => "critical",
