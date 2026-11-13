@@ -11,10 +11,11 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 
-use crate::checks::{Finding, Severity};
+use crate::checks::{Evidence, Finding, Severity};
 use crate::diff::{RunData, RunRef, StoredFinding};
 use crate::observe::{
-    QType, RecordAnswer, RecordObservation, RecordOutcome, ReferralStep, Transport, ZoneObservation,
+    DnssecObservation, NsHost, QType, RecordAnswer, RecordObservation, RecordOutcome, ReferralStep,
+    ServerProbe, Transport, Vantage, ZoneObservation,
 };
 
 /// Version of the database layout, kept in SQLite's `user_version`.
@@ -138,6 +139,34 @@ pub struct ZoneSummary {
     pub runs: usize,
     pub last_run: Option<RunRef>,
     pub open_findings: usize,
+}
+
+/// The observation data of one stored run.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RunView {
+    pub run: RunRef,
+    pub vantage: Vantage,
+    pub delegation_path: Vec<ReferralStep>,
+    pub nameservers: Vec<NsHost>,
+    pub probes: Vec<ServerProbe>,
+    pub dnssec: Option<DnssecObservation>,
+    pub queries: i64,
+}
+
+/// A finding and where it is in its lifecycle.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FindingRow {
+    pub zone: String,
+    pub fingerprint: String,
+    pub check_id: String,
+    pub name: String,
+    pub severity: Severity,
+    pub summary: String,
+    pub evidence: Evidence,
+    pub first_seen_run: i64,
+    pub last_seen_run: i64,
+    /// `open` or `resolved`.
+    pub state: String,
 }
 
 /// What a run needs besides the observation itself.
@@ -571,6 +600,81 @@ impl Store {
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The observation data of the zone's latest run, for the API and UI.
+    pub fn latest_run_view(&self, zone: &str) -> Result<Option<RunView>, StoreError> {
+        let Some(run) = self.runs(zone)?.pop() else {
+            return Ok(None);
+        };
+        let mut stmt = self.conn.prepare(
+            "SELECT vantage_ipv4, vantage_ipv6, delegation_json, ns_hosts_json, probes_json,
+                    dnssec_json, queries
+             FROM runs WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query([run.id])?;
+        let Some(r) = rows.next()? else {
+            return Ok(None);
+        };
+        let delegation: String = r.get(2)?;
+        let hosts: String = r.get(3)?;
+        let probes: String = r.get(4)?;
+        let dnssec: Option<String> = r.get(5)?;
+        Ok(Some(RunView {
+            run,
+            vantage: Vantage {
+                ipv4: r.get(0)?,
+                ipv6: r.get(1)?,
+            },
+            delegation_path: serde_json::from_str(&delegation)?,
+            nameservers: serde_json::from_str(&hosts)?,
+            probes: serde_json::from_str(&probes)?,
+            dnssec: dnssec.as_deref().map(serde_json::from_str).transpose()?,
+            queries: r.get(6)?,
+        }))
+    }
+
+    /// Findings with their lifecycle, optionally for one zone or one state
+    /// (`open` or `resolved`), most severe first.
+    pub fn finding_rows(
+        &self,
+        zone: Option<&str>,
+        state: Option<&str>,
+    ) -> Result<Vec<FindingRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT z.name, f.fingerprint, f.check_id, f.name, f.severity, f.summary,
+                    f.evidence_json, f.first_seen_run, f.last_seen_run, f.state
+             FROM findings f JOIN zones z ON z.id = f.zone_id
+             WHERE (?1 IS NULL OR z.name = ?1) AND (?2 IS NULL OR f.state = ?2)",
+        )?;
+        let mut rows = stmt.query(params![zone, state])?;
+        let mut out = Vec::new();
+        while let Some(r) = rows.next()? {
+            let severity: String = r.get(4)?;
+            let evidence: String = r.get(6)?;
+            out.push(FindingRow {
+                zone: r.get(0)?,
+                fingerprint: r.get(1)?,
+                check_id: r.get(2)?,
+                name: r.get(3)?,
+                severity: Severity::parse(&severity)
+                    .ok_or_else(|| corrupt("severity", &severity))?,
+                summary: r.get(5)?,
+                evidence: serde_json::from_str(&evidence)?,
+                first_seen_run: r.get(7)?,
+                last_seen_run: r.get(8)?,
+                state: r.get(9)?,
+            });
+        }
+        out.sort_by(|a, b| {
+            (a.severity, &a.zone, &a.check_id, &a.name).cmp(&(
+                b.severity,
+                &b.zone,
+                &b.check_id,
+                &b.name,
+            ))
+        });
+        Ok(out)
     }
 
     /// The state of every finding of a zone, as (fingerprint, state).

@@ -10,12 +10,12 @@ pub mod security;
 
 use std::net::IpAddr;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::observe::{NsHost, QType, ResponseObs, ServerProbe, Transport, ZoneObservation};
 
 /// Severity levels from `DESIGN.md`, most severe first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Critical,
@@ -47,14 +47,14 @@ impl Severity {
 }
 
 /// One nameserver address, as named in evidence.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ServerRef {
     pub ns_name: String,
     pub address: IpAddr,
 }
 
 /// One query and a short description of what came back.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeSummary {
     pub qtype: QType,
     pub transport: Transport,
@@ -74,7 +74,7 @@ impl From<&ServerProbe> for ProbeSummary {
 }
 
 /// Why a listed nameserver counts as lame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LameReason {
     /// It answered, but not authoritatively for the zone.
@@ -86,14 +86,14 @@ pub enum LameReason {
 }
 
 /// A group of servers that agree on one value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Variant<T> {
     pub value: T,
     pub servers: Vec<ServerRef>,
 }
 
 /// The structured evidence behind a finding. The `kind` tag names the shape.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Evidence {
     NsSetMismatch {

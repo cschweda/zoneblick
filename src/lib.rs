@@ -19,4 +19,5 @@ pub mod observe;
 pub mod output;
 pub mod resolver;
 pub mod runner;
+pub mod serve;
 pub mod store;

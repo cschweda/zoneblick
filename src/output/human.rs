@@ -263,7 +263,7 @@ fn probe_lines(probes: &[ProbeSummary]) -> Vec<String> {
 }
 
 /// The evidence of a finding as plain lines.
-fn evidence_lines(evidence: &Evidence) -> Vec<String> {
+pub fn evidence_lines(evidence: &Evidence) -> Vec<String> {
     match evidence {
         Evidence::NsSetMismatch {
             parent,

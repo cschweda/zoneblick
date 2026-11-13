@@ -54,6 +54,30 @@ pub enum Command {
         #[command(subcommand)]
         action: ZonesAction,
     },
+
+    /// Run the daemon: check every zone in the config file on a schedule,
+    /// send alerts when something changes, and serve the API and web UI.
+    Serve(ServeArgs),
+
+    /// Print the hash of an API token, for `token_sha256` in the config file.
+    ///
+    /// Give the token as an argument, or leave it out to type it on standard
+    /// input. A good token is long and random, for example the output of
+    /// `openssl rand -hex 32`.
+    Token(TokenArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ServeArgs {
+    /// The configuration file.
+    #[arg(long, value_name = "FILE", default_value = "zoneblick.toml")]
+    pub config: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct TokenArgs {
+    /// The token to hash. Read from standard input when left out.
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -480,5 +504,55 @@ pub fn zones_list(args: &ZonesListArgs, color: bool) -> CommandOutput {
             }
         }
         Err(e) => failed("", args.json, &e),
+    }
+}
+
+/// Run `zoneblick serve` until interrupted.
+pub async fn serve(args: &ServeArgs) -> CommandOutput {
+    let result: Result<(), crate::serve::ServeError> = async {
+        let config = crate::config::Config::load(&args.config)?;
+        let factory = crate::serve::live_client_factory(&config);
+        let state = crate::serve::AppState::new(config, factory)?;
+        crate::serve::serve(state, async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await
+    }
+    .await;
+    match result {
+        Ok(()) => CommandOutput::default(),
+        Err(e) => CommandOutput {
+            stderr: format!("zoneblick: {e}\n"),
+            exit_code: exit::RUN_FAILED,
+            ..Default::default()
+        },
+    }
+}
+
+/// Run `zoneblick token`: print the config line for a token's hash.
+pub fn token(args: &TokenArgs) -> CommandOutput {
+    let token = match &args.token {
+        Some(t) => t.clone(),
+        None => {
+            let mut line = String::new();
+            if std::io::stdin().read_line(&mut line).is_err() {
+                line.clear();
+            }
+            line
+        }
+    };
+    let token = token.trim();
+    if token.len() < 16 {
+        return CommandOutput {
+            stderr:
+                "zoneblick: the token must be at least 16 characters; try `openssl rand -hex 32`\n"
+                    .to_string(),
+            exit_code: exit::RUN_FAILED,
+            ..Default::default()
+        };
+    }
+    CommandOutput {
+        stdout: format!("token_sha256 = \"{}\"\n", crate::serve::token_hash(token)),
+        ..Default::default()
     }
 }
