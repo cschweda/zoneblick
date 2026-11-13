@@ -290,6 +290,8 @@ impl World {
         self.answer(server, zone, QType::Ns, &records);
         // Unsigned unless a test adds keys.
         self.nodata(server, zone, QType::Dnskey, zone);
+        // No wildcard unless a test adds one.
+        self.nxdomain(server, &format!("*.{zone}"), QType::A, zone);
     }
 
     /// Address records for a host, as served by `server` from `zone`.
@@ -702,6 +704,45 @@ pub fn policy_world() -> World {
             &[cname("app.policy.example.", "app.gone-host.example.")],
         );
     }
+    policy_world_http(&mut w);
+    w
+}
+
+/// [`policy_world`], plus a wildcard that is an alias of someone else's
+/// service and a third nameserver in a domain that is not registered.
+pub fn exposed_world() -> World {
+    let zone = POLICY_ZONE;
+    let mut w = policy_world();
+    w.referral(
+        TLD_SERVER,
+        zone,
+        QType::Ns,
+        &[
+            ns(zone, "ns1.policy.example."),
+            ns(zone, "ns2.policy.example."),
+            ns(zone, "ns.gone-dns.example."),
+        ],
+        &[
+            addr("ns1.policy.example.", NS1),
+            addr("ns2.policy.example.", NS3),
+        ],
+    );
+    for qtype in [QType::A, QType::Aaaa] {
+        w.delegate_tld("ns.gone-dns.example.", qtype);
+        w.nxdomain(TLD_SERVER, "ns.gone-dns.example.", qtype, "example.");
+    }
+    for server in [NS1, NS3] {
+        w.answer(
+            server,
+            "*.policy.example.",
+            QType::A,
+            &[cname("*.policy.example.", "sites.host.example.")],
+        );
+    }
+    w
+}
+
+fn policy_world_http(w: &mut World) {
     w.http(
         "https://mta-sts.policy.example/.well-known/mta-sts.txt",
         200,
@@ -731,5 +772,4 @@ pub fn policy_world() -> World {
         w.delegate_tld(gone, qtype);
         w.nxdomain(TLD_SERVER, gone, qtype, "example.");
     }
-    w
 }

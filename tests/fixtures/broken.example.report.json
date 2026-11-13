@@ -481,7 +481,16 @@
     },
     "spf": null,
     "mta_sts": null,
-    "targets": []
+    "targets": [],
+    "wildcard": {
+      "name": "*.broken.example.",
+      "qtype": "A",
+      "status": "nxdomain",
+      "rdata": [],
+      "cname": null,
+      "enclosing": "broken.example.",
+      "error": null
+    }
   },
   "findings": [
     {

@@ -103,3 +103,38 @@ async fn a_run_also_follows_aliases() {
     assert!(!findings.iter().any(|f| f.check_id == "TKO-01"));
     assert_eq!(findings.len(), 5);
 }
+
+#[tokio::test]
+async fn a_wildcard_alias_and_an_unregistered_nameserver_domain() {
+    let obs = exposed_world().observe(POLICY_ZONE).await.unwrap();
+    let findings = run_all(&obs);
+    let found: Vec<_> = ids(&findings)
+        .into_iter()
+        .filter(|(id, ..)| matches!(*id, "DEL-06" | "TKO-05" | "TKO-03"))
+        .collect();
+    // The nameserver is DEL-06 only, not TKO-03 as well.
+    assert_eq!(
+        found,
+        [
+            ("DEL-06", Severity::Critical, "ns.gone-dns.example."),
+            ("TKO-05", Severity::Notice, "*.policy.example."),
+        ]
+    );
+    let del = findings.iter().find(|f| f.check_id == "DEL-06").unwrap();
+    assert!(
+        del.summary
+            .contains("gone-dns.example., which is not registered")
+    );
+    assert!(matches!(
+        &findings.iter().find(|f| f.check_id == "TKO-05").unwrap().evidence,
+        Evidence::WildcardAlias { target, .. } if target == "sites.host.example."
+    ));
+
+    // Without them, neither check fires.
+    let plain = run_all(&policy_world().observe(POLICY_ZONE).await.unwrap());
+    assert!(
+        !plain
+            .iter()
+            .any(|f| matches!(f.check_id.as_str(), "DEL-06" | "TKO-05"))
+    );
+}

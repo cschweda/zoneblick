@@ -205,6 +205,12 @@ pub enum Evidence {
         /// Set when the target's whole domain is not registered.
         unregistered_domain: Option<String>,
     },
+    WildcardAlias {
+        /// The wildcard record's name, `*.<zone>`.
+        wildcard: String,
+        /// The name outside the zone it is an alias of.
+        target: String,
+    },
 }
 
 /// One result of one check.
@@ -257,6 +263,7 @@ impl Finding {
             Evidence::MtaStsProblem { .. } => String::new(),
             Evidence::MailTargetProblem { target, .. } => target.clone(),
             Evidence::DanglingTarget { rtype, target, .. } => format!("{rtype}/{target}"),
+            Evidence::WildcardAlias { target, .. } => target.clone(),
         };
         format!("{}|{}|{}", self.check_id, self.name, detail)
     }
@@ -317,7 +324,7 @@ pub const CATALOG: &[CheckInfo] = &[
         "DEL-06",
         "NS hostname's own domain is unregistered or expired",
         Severity::Critical,
-        false,
+        true,
     ),
     check(
         "CON-01",
@@ -422,6 +429,12 @@ pub const CATALOG: &[CheckInfo] = &[
         Severity::Critical,
         true,
     ),
+    check(
+        "TKO-05",
+        "Wildcard record is an alias of a name outside the zone",
+        Severity::Notice,
+        true,
+    ),
 ];
 
 const fn check(
@@ -465,6 +478,7 @@ const CHECKS: &[Check] = &[
     policy::tko_01_dangling_cname,
     policy::tko_03_unregistered_target,
     policy::tko_04_spf_unregistered,
+    policy::tko_05_wildcard,
 ];
 
 /// Run every Phase 0 check. Findings come back in a stable order: by

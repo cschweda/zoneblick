@@ -179,6 +179,7 @@ pub(crate) async fn collect_policy(
     resolver: &Resolver,
     client: &Client,
     zone: &str,
+    unresolved_ns: &[String],
 ) -> PolicyObservation {
     let sub = |label: &str| {
         if zone == "." {
@@ -225,7 +226,21 @@ pub(crate) async fn collect_policy(
         targets.push(resolve_target(resolver, zone, "MX", target).await);
     }
 
+    // A nameserver hostname without an address: find out whether its
+    // domain still exists.
+    for name in unresolved_ns {
+        targets.push(resolve_target(resolver, zone, "NS", name).await);
+    }
+
+    // The wildcard itself, asked for by its literal name.
+    let wildcard = if zone == "." {
+        None
+    } else {
+        Some(resolver.lookup(&sub("*"), QType::A).await)
+    };
+
     PolicyObservation {
+        wildcard,
         apex_txt,
         dmarc,
         caa,

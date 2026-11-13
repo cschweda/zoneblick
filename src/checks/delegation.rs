@@ -251,13 +251,36 @@ pub fn del_05_ns_cname(obs: &ZoneObservation) -> Vec<Finding> {
         .collect()
 }
 
-/// DEL-06: the nameserver hostname's own domain is unregistered or expired.
+/// DEL-06: a nameserver hostname lies in a domain that is not registered.
+/// Whoever registers that domain can answer for this zone.
 ///
-/// Not implemented in Phase 0. Deciding whether a domain is registered needs
-/// registry data (RDAP or WHOIS), which is outside the DNS observations a
-/// check may read. This stub keeps the check ID reserved and returns nothing.
-pub fn del_06_ns_domain_registration(_obs: &ZoneObservation) -> Vec<Finding> {
-    Vec::new()
+/// "Not registered" is read from DNS: the name does not exist, and the
+/// server that says so belongs to a top-level domain.
+pub fn del_06_ns_domain_registration(obs: &ZoneObservation) -> Vec<Finding> {
+    obs.policy
+        .iter()
+        .flat_map(|p| &p.targets)
+        .filter(|t| t.rtype == "NS")
+        .filter_map(|t| {
+            let domain = t.lookup.unregistered_domain()?;
+            Some(Finding::new(
+                "DEL-06",
+                Severity::Critical,
+                &t.target,
+                format!(
+                    "Nameserver {} is in {domain}, which is not registered",
+                    t.target
+                ),
+                Evidence::DanglingTarget {
+                    owner: t.owner.clone(),
+                    rtype: "NS".to_string(),
+                    target: t.target.clone(),
+                    said_by: t.lookup.enclosing.clone(),
+                    unregistered_domain: Some(domain),
+                },
+            ))
+        })
+        .collect()
 }
 
 #[cfg(test)]

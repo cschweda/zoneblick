@@ -420,8 +420,13 @@ pub struct PolicyObservation {
     pub mx: Lookup,
     pub spf: Option<SpfObservation>,
     pub mta_sts: Option<MtaSts>,
-    /// Where each MX target and each collected CNAME leads.
+    /// Where each MX target and each collected CNAME leads, and each
+    /// nameserver hostname outside the zone that has no address (`NS`).
     pub targets: Vec<TargetResolution>,
+    /// The lookup of `*.<zone>`: what a name nobody created resolves to.
+    /// `None` in observations built before it was collected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wildcard: Option<Lookup>,
 }
 
 /// Everything recorded about one zone in one run.

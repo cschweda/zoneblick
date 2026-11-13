@@ -391,6 +391,9 @@ pub fn evidence_lines(evidence: &Evidence) -> Vec<String> {
             }
             lines
         }
+        Evidence::WildcardAlias { wildcard, target } => {
+            vec![format!("{wildcard}  CNAME  {target}")]
+        }
         Evidence::SignaturesDiffer { variants } => variants
             .iter()
             .flat_map(|v| {

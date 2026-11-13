@@ -1,5 +1,5 @@
 //! Mail and policy checks (`POL-01` to `POL-05`) and the takeover checks
-//! that need only DNS (`TKO-01`, `TKO-03`, `TKO-04`).
+//! that need only DNS (`TKO-01`, `TKO-03`, `TKO-04`, `TKO-05`).
 //!
 //! "Unregistered" here is decided from DNS alone: a name does not exist and
 //! the server that said so belongs to a top-level domain, so the domain
@@ -8,7 +8,9 @@
 //! (`TKO-01`) rather than unregistered.
 
 use super::{Evidence, Finding, Severity};
-use crate::observe::{Lookup, PolicyObservation, TargetResolution, ZoneObservation};
+use crate::observe::{
+    Lookup, PolicyObservation, TargetResolution, ZoneObservation, is_ancestor_or_equal,
+};
 use crate::resolver::policy::txt_value;
 
 /// SPF evaluation must stop after ten DNS lookups (RFC 7208, section 4.6.4).
@@ -299,6 +301,8 @@ pub fn tko_03_unregistered_target(obs: &ZoneObservation) -> Vec<Finding> {
     policy(obs)
         .iter()
         .flat_map(|p| &p.targets)
+        // A nameserver in an unregistered domain is DEL-06.
+        .filter(|t| t.rtype != "NS")
         .filter_map(|t| {
             let domain = t.lookup.unregistered_domain()?;
             Some(dangling(
@@ -341,6 +345,34 @@ pub fn tko_04_spf_unregistered(obs: &ZoneObservation) -> Vec<Finding> {
         .collect()
 }
 
+/// TKO-05: the zone's wildcard is an alias of a name outside the zone, so
+/// every name nobody created is served by someone else's service.
+pub fn tko_05_wildcard(obs: &ZoneObservation) -> Vec<Finding> {
+    let Some(lookup) = policy(obs).and_then(|p| p.wildcard.as_ref()) else {
+        return Vec::new();
+    };
+    let Some(target) = lookup
+        .cname
+        .as_ref()
+        .filter(|t| !is_ancestor_or_equal(&obs.zone, t))
+    else {
+        return Vec::new();
+    };
+    vec![Finding::new(
+        "TKO-05",
+        Severity::Notice,
+        &lookup.name,
+        format!(
+            "{} is an alias of {target}: every unlisted name leads outside the zone",
+            lookup.name
+        ),
+        Evidence::WildcardAlias {
+            wildcard: lookup.name.clone(),
+            target: target.clone(),
+        },
+    )]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,6 +412,7 @@ mod tests {
     fn sound() -> ZoneObservation {
         let mut obs = healthy();
         obs.policy = Some(PolicyObservation {
+            wildcard: None,
             apex_txt: lookup(ZONE, QType::Txt, "answer", &["\"v=spf1 mx -all\""]),
             dmarc: lookup(
                 "_dmarc.example.test.",

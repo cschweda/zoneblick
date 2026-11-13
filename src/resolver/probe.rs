@@ -134,7 +134,12 @@ pub async fn observe_zone(
 
     let parent = delegation.path.last().filter(|_| delegated);
     let dnssec = collect_dnssec(&client, &zone, parent, &responding_servers(&probes)).await;
-    let policy = collect_policy(&resolver, &client, &zone).await;
+    let unresolved_ns: Vec<String> = hosts
+        .values()
+        .filter(|h| h.resolved.is_empty() && !is_ancestor_or_equal(&zone, &h.name))
+        .map(|h| h.name.clone())
+        .collect();
+    let policy = collect_policy(&resolver, &client, &zone, &unresolved_ns).await;
 
     Ok(ZoneObservation {
         zone,
