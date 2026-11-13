@@ -92,6 +92,7 @@ impl CliError {
                 ResolveError::NotAZone { .. } => "not_a_zone",
                 ResolveError::ServersFailed { .. } => "servers_failed",
                 ResolveError::TooManyReferrals { .. } => "too_many_referrals",
+                ResolveError::NameOutsideZone { .. } => "name_outside_zone",
                 ResolveError::NoServerReachable { .. } => "no_server_reachable",
             },
             _ => "fixture_error",

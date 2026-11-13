@@ -11,9 +11,10 @@ use tokio::task::JoinSet;
 use super::ResolveError;
 use super::hints::ROOT_HINTS;
 use super::iterate::{Resolver, norm, parse_response, rcode_name};
-use super::transport::{Client, QuerySpec, RawOutcome};
+use super::transport::{Client, QuerySpec, RawOutcome, record_type};
 use crate::observe::{
-    NsHost, Outcome, QType, ResponseObs, ServerProbe, Soa, Transport, Vantage, ZoneObservation,
+    NsHost, Outcome, QType, RecordAnswer, RecordObservation, RecordOutcome, ResponseObs,
+    ServerProbe, Soa, Transport, Vantage, ZoneObservation, is_ancestor_or_equal,
 };
 
 /// The apex queries sent to every nameserver address.
@@ -136,7 +137,233 @@ pub async fn observe_zone(
         delegation_path: delegation.path,
         ns_hosts: hosts.into_values().collect(),
         probes,
+        records: Vec::new(),
     })
+}
+
+/// Turn a name given on the command line into a full name inside `zone`.
+///
+/// `www` becomes `www.<zone>`, `@` is the apex, and a name that already ends
+/// with the zone is kept. A name outside the zone is an error.
+pub fn name_in_zone(zone: &str, input: &str) -> Result<String, ResolveError> {
+    let trimmed = input.trim();
+    if trimmed == "@" {
+        return Ok(zone.to_string());
+    }
+    let bad = || ResolveError::InvalidName(input.to_string());
+    if trimmed.is_empty() {
+        return Err(bad());
+    }
+    let name = norm(&Name::from_utf8(trimmed).map_err(|_| bad())?);
+    if is_ancestor_or_equal(zone, &name) {
+        return Ok(name);
+    }
+    if trimmed.ends_with('.') {
+        // An absolute name that is not in the zone.
+        return Err(ResolveError::NameOutsideZone {
+            name,
+            zone: zone.to_string(),
+        });
+    }
+    let joined = if zone == "." {
+        name
+    } else {
+        format!("{name}{zone}")
+    };
+    Name::from_ascii(&joined).map_err(|_| bad())?;
+    Ok(joined)
+}
+
+/// Observe a zone as [`observe_zone`] does, then ask every responding
+/// nameserver address for the record sets of the apex and of each of `names`.
+///
+/// `names` must be full names inside the zone (see [`name_in_zone`]).
+pub async fn observe_zone_records(
+    client: Arc<Client>,
+    zone: &str,
+    started_at_unix: u64,
+    names: &[String],
+) -> Result<ZoneObservation, ResolveError> {
+    let mut obs = observe_zone(client.clone(), zone, started_at_unix).await?;
+    let zone = obs.zone.clone();
+
+    // Only servers that answered something are asked; a dead server is
+    // already reported and would only slow the run down.
+    let mut servers: Vec<(String, IpAddr)> = Vec::new();
+    for probe in &obs.probes {
+        if probe.outcome.response().is_some() && !servers.iter().any(|(_, a)| *a == probe.address) {
+            servers.push((probe.ns_name.clone(), probe.address));
+        }
+    }
+
+    let mut all_names: Vec<String> = vec![zone.clone()];
+    for name in names {
+        if !all_names.contains(name) {
+            all_names.push(name.clone());
+        }
+    }
+
+    let mut records: Vec<RecordObservation> = Vec::new();
+
+    // The apex SOA and NS sets come from the probes already made.
+    for (ns_name, address) in &servers {
+        for qtype in [QType::Soa, QType::Ns] {
+            let mut candidates: Vec<&ServerProbe> = obs
+                .probes
+                .iter()
+                .filter(|p| p.address == *address && p.qtype == qtype && p.edns)
+                .collect();
+            candidates.sort_by_key(|p| p.transport);
+            let Some((probe, r)) = candidates
+                .into_iter()
+                .find_map(|p| p.outcome.response().map(|r| (p, r)))
+            else {
+                continue;
+            };
+            let rdata = match qtype {
+                QType::Soa => r.soa.iter().map(soa_text).collect(),
+                _ => r.ns.clone(),
+            };
+            records.push(RecordObservation {
+                name: zone.clone(),
+                qtype,
+                ns_name: ns_name.clone(),
+                address: *address,
+                transport: probe.transport,
+                outcome: RecordOutcome::Answer(RecordAnswer {
+                    rcode: r.rcode.clone(),
+                    authoritative: r.authoritative,
+                    ttl: None,
+                    rdata,
+                }),
+            });
+        }
+    }
+
+    let mut tasks = JoinSet::new();
+    for name in &all_names {
+        for qtype in QType::SWEEP {
+            // A CNAME cannot exist at a zone apex.
+            if qtype == QType::Cname && *name == zone {
+                continue;
+            }
+            for (ns_name, address) in &servers {
+                let client = client.clone();
+                let (name, ns_name, address) = (name.clone(), ns_name.clone(), *address);
+                tasks
+                    .spawn(async move { ask_record(&client, name, qtype, ns_name, address).await });
+            }
+        }
+    }
+    while let Some(joined) = tasks.join_next().await {
+        records.push(joined.expect("record task does not panic"));
+    }
+    records.sort();
+    obs.records = records;
+    Ok(obs)
+}
+
+fn soa_text(soa: &Soa) -> String {
+    format!(
+        "{} {} {} {} {} {} {}",
+        soa.mname, soa.rname, soa.serial, soa.refresh, soa.retry, soa.expire, soa.minimum
+    )
+}
+
+/// Ask one server for one record set: UDP with EDNS, then TCP if truncated.
+async fn ask_record(
+    client: &Client,
+    name: String,
+    qtype: QType,
+    ns_name: String,
+    address: IpAddr,
+) -> RecordObservation {
+    let mut spec = QuerySpec {
+        server: address,
+        transport: Transport::Udp,
+        qname: name.clone(),
+        qtype,
+        edns: true,
+    };
+    let mut outcome = record_outcome(&spec, client.exchange(&spec).await);
+    if let Some(true) = outcome.as_ref().err().copied() {
+        spec.transport = Transport::Tcp;
+        outcome = record_outcome(&spec, client.exchange(&spec).await);
+    }
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        // Still truncated over TCP: nothing sensible to record.
+        Err(_) => RecordOutcome::Malformed {
+            message: "truncated".to_string(),
+        },
+    };
+    RecordObservation {
+        name,
+        qtype,
+        ns_name,
+        address,
+        transport: spec.transport,
+        outcome,
+    }
+}
+
+/// Reduce a raw outcome to a record outcome. `Err(true)` means the response
+/// was truncated and should be retried over TCP.
+fn record_outcome(spec: &QuerySpec, raw: RawOutcome) -> Result<RecordOutcome, bool> {
+    let wire = match raw {
+        RawOutcome::Response { wire } => wire,
+        RawOutcome::Timeout => return Ok(RecordOutcome::Timeout),
+        RawOutcome::NetError { message } => return Ok(RecordOutcome::NetError { message }),
+    };
+    let msg = match parse_response(spec, &wire) {
+        Ok(msg) => msg,
+        Err(message) => return Ok(RecordOutcome::Malformed { message }),
+    };
+    if msg.metadata.truncation {
+        return Err(true);
+    }
+    let wanted = record_type(spec.qtype);
+    let mut ttl: Option<u32> = None;
+    let mut rdata: Vec<String> = Vec::new();
+    for rec in &msg.answers {
+        if rec.record_type() != wanted || norm(&rec.name) != spec.qname {
+            continue;
+        }
+        ttl = Some(ttl.map_or(rec.ttl, |t| t.min(rec.ttl)));
+        rdata.push(rdata_text(&rec.data));
+    }
+    rdata.sort();
+    rdata.dedup();
+    Ok(RecordOutcome::Answer(RecordAnswer {
+        rcode: rcode_name(msg.metadata.response_code),
+        authoritative: msg.metadata.authoritative,
+        ttl,
+        rdata,
+    }))
+}
+
+/// Record data in a canonical text form: names lowercase and fully
+/// qualified, TXT strings quoted.
+fn rdata_text(data: &RData) -> String {
+    match data {
+        RData::A(a) => a.0.to_string(),
+        RData::AAAA(a) => a.0.to_string(),
+        RData::NS(n) => norm(&n.0),
+        RData::CNAME(c) => norm(&c.0),
+        RData::MX(mx) => format!("{} {}", mx.preference, norm(&mx.exchange)),
+        RData::TXT(txt) => txt
+            .txt_data
+            .iter()
+            .map(|chunk| {
+                let text = String::from_utf8_lossy(chunk)
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"");
+                format!("\"{text}\"")
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        other => other.to_string(),
+    }
 }
 
 fn new_host(name: &str) -> NsHost {

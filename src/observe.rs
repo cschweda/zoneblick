@@ -20,7 +20,7 @@ pub enum Transport {
     Tcp,
 }
 
-/// The record types Phase 0 asks for.
+/// The record types zoneblick asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum QType {
@@ -28,16 +28,50 @@ pub enum QType {
     Ns,
     A,
     Aaaa,
+    Cname,
+    Mx,
+    Txt,
+    Caa,
 }
 
 impl QType {
+    /// The types asked for every name in a stored run. SOA and NS are asked
+    /// at the apex only, by the nameserver probes.
+    pub const SWEEP: [QType; 6] = [
+        QType::A,
+        QType::Aaaa,
+        QType::Cname,
+        QType::Mx,
+        QType::Txt,
+        QType::Caa,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             QType::Soa => "SOA",
             QType::Ns => "NS",
             QType::A => "A",
             QType::Aaaa => "AAAA",
+            QType::Cname => "CNAME",
+            QType::Mx => "MX",
+            QType::Txt => "TXT",
+            QType::Caa => "CAA",
         }
+    }
+
+    pub fn parse(s: &str) -> Option<QType> {
+        [
+            QType::Soa,
+            QType::Ns,
+            QType::A,
+            QType::Aaaa,
+            QType::Cname,
+            QType::Mx,
+            QType::Txt,
+            QType::Caa,
+        ]
+        .into_iter()
+        .find(|t| t.as_str() == s)
     }
 }
 
@@ -193,6 +227,50 @@ pub struct ServerProbe {
     pub outcome: Outcome,
 }
 
+/// One server's answer for one name and type.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct RecordAnswer {
+    /// Response code mnemonic.
+    pub rcode: String,
+    /// The AA flag.
+    pub authoritative: bool,
+    /// The lowest TTL in the record set, when there are records.
+    pub ttl: Option<u32>,
+    /// The record data in canonical text form, sorted and unique. Names are
+    /// lowercase. Empty when the server has no such records.
+    pub rdata: Vec<String>,
+}
+
+/// The result of asking one server for one name and type.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RecordOutcome {
+    Answer(RecordAnswer),
+    Timeout,
+    NetError { message: String },
+    Malformed { message: String },
+}
+
+impl RecordOutcome {
+    pub fn answer(&self) -> Option<&RecordAnswer> {
+        match self {
+            RecordOutcome::Answer(a) => Some(a),
+            _ => None,
+        }
+    }
+}
+
+/// One record set as one nameserver address served it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct RecordObservation {
+    pub name: String,
+    pub qtype: QType,
+    pub ns_name: String,
+    pub address: IpAddr,
+    pub transport: Transport,
+    pub outcome: RecordOutcome,
+}
+
 /// Everything recorded about one zone in one run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZoneObservation {
@@ -206,6 +284,10 @@ pub struct ZoneObservation {
     pub ns_hosts: Vec<NsHost>,
     /// Every apex query sent to every nameserver address.
     pub probes: Vec<ServerProbe>,
+    /// Record sets per name, type and server. Filled in by `run`, which
+    /// stores a snapshot; empty for a plain `check`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub records: Vec<RecordObservation>,
 }
 
 impl ZoneObservation {

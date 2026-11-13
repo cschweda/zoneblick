@@ -71,6 +71,10 @@ fn record_type(qtype: QType) -> RecordType {
         QType::Ns => RecordType::NS,
         QType::A => RecordType::A,
         QType::Aaaa => RecordType::AAAA,
+        QType::Cname => RecordType::CNAME,
+        QType::Mx => RecordType::MX,
+        QType::Txt => RecordType::TXT,
+        QType::Caa => RecordType::CAA,
     }
 }
 

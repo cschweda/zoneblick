@@ -13,7 +13,7 @@ pub mod limiter;
 pub mod probe;
 pub mod transport;
 
-pub use probe::{normalise_zone, observe_zone};
+pub use probe::{name_in_zone, normalise_zone, observe_zone, observe_zone_records};
 pub use transport::{Client, Exchange, Fixture, NetConfig, QuerySpec, RawOutcome};
 
 /// Why a run could not produce an observation.
@@ -34,6 +34,8 @@ pub enum ResolveError {
     ServersFailed { zone: String, detail: String },
     #[error("gave up resolving {name}: too many referrals")]
     TooManyReferrals { name: String },
+    #[error("{name} is not inside the zone {zone}")]
+    NameOutsideZone { name: String, zone: String },
     #[error("no nameserver of {zone} answered any query")]
     NoServerReachable { zone: String },
 }
