@@ -98,6 +98,24 @@ pub struct Fixture {
     pub zone: String,
     pub started_at_unix: u64,
     pub exchanges: Vec<Exchange>,
+    /// HTTP fetches made during the run (the MTA-STS policy file).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub http: Vec<HttpExchange>,
+}
+
+/// What an HTTP GET returned.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HttpOutcome {
+    Response { status: u16, body: String },
+    Error { message: String },
+}
+
+/// One recorded HTTP GET.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HttpExchange {
+    pub url: String,
+    pub outcome: HttpOutcome,
 }
 
 impl Fixture {
@@ -114,7 +132,12 @@ pub struct Client {
     limiter: Limiter,
     recording: Option<Mutex<Vec<Exchange>>>,
     sent: AtomicUsize,
+    http_replay: HashMap<String, HttpOutcome>,
+    http_recording: Mutex<Vec<HttpExchange>>,
 }
+
+/// The most of an HTTP body that is read.
+const HTTP_BODY_LIMIT: usize = 64 * 1024;
 
 impl Client {
     /// A client that talks to the network.
@@ -124,6 +147,8 @@ impl Client {
             backend: Backend::Live(config),
             recording: None,
             sent: AtomicUsize::new(0),
+            http_replay: HashMap::new(),
+            http_recording: Mutex::new(Vec::new()),
         }
     }
 
@@ -139,6 +164,12 @@ impl Client {
             backend: Backend::Replay(map),
             recording: None,
             sent: AtomicUsize::new(0),
+            http_replay: fixture
+                .http
+                .iter()
+                .map(|e| (e.url.clone(), e.outcome.clone()))
+                .collect(),
+            http_recording: Mutex::new(Vec::new()),
         }
     }
 
@@ -154,6 +185,35 @@ impl Client {
             Some(rec) => std::mem::take(&mut *rec.lock().expect("recording lock")),
             None => Vec::new(),
         }
+    }
+
+    /// The HTTP fetches seen so far.
+    pub fn take_http_recording(&self) -> Vec<HttpExchange> {
+        std::mem::take(&mut *self.http_recording.lock().expect("recording lock"))
+    }
+
+    /// Fetch a URL over HTTPS. Redirects are not followed and at most 64 KB
+    /// of the body is kept. A replaying client answers from its fixture.
+    pub async fn http_get(&self, url: &str) -> HttpOutcome {
+        let outcome = match &self.backend {
+            Backend::Replay(_) => {
+                self.http_replay
+                    .get(url)
+                    .cloned()
+                    .unwrap_or(HttpOutcome::Error {
+                        message: "no recorded exchange for this URL".to_string(),
+                    })
+            }
+            Backend::Live(_) => live_http_get(url).await,
+        };
+        let mut rec = self.http_recording.lock().expect("recording lock");
+        if !rec.iter().any(|e| e.url == url) {
+            rec.push(HttpExchange {
+                url: url.to_string(),
+                outcome: outcome.clone(),
+            });
+        }
+        outcome
     }
 
     /// How many queries were asked of this client.
@@ -216,6 +276,45 @@ impl Client {
             }
         }
         RawOutcome::Timeout
+    }
+}
+
+async fn live_http_get(url: &str) -> HttpOutcome {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let error = |e: reqwest::Error| HttpOutcome::Error {
+        message: e.to_string(),
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent(concat!("zoneblick/", env!("CARGO_PKG_VERSION")))
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => return error(e),
+    };
+    let mut response = match client.get(url).send().await {
+        Ok(response) => response,
+        Err(e) => return error(e),
+    };
+    let status = response.status().as_u16();
+    let mut body: Vec<u8> = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                let room = HTTP_BODY_LIMIT.saturating_sub(body.len());
+                body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+                if body.len() >= HTTP_BODY_LIMIT {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(e) => return error(e),
+        }
+    }
+    HttpOutcome::Response {
+        status,
+        body: String::from_utf8_lossy(&body).into_owned(),
     }
 }
 
@@ -362,6 +461,7 @@ mod tests {
             version: Fixture::VERSION,
             zone: "example.com.".to_string(),
             started_at_unix: 1,
+            http: vec![],
             exchanges: vec![
                 Exchange {
                     query: spec(),
@@ -389,6 +489,7 @@ mod tests {
             version: Fixture::VERSION,
             zone: "example.com.".to_string(),
             started_at_unix: 1,
+            http: vec![],
             exchanges: vec![Exchange {
                 query: spec(),
                 outcome: RawOutcome::Timeout,

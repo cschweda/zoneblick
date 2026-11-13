@@ -19,7 +19,7 @@ use crate::observe::{
 };
 
 /// Version of the database layout, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Changes to the layout since version 1, in order. Entry `i` takes a
 /// database from version `i + 1` to `i + 2`. A new database is created at
@@ -27,6 +27,8 @@ const SCHEMA_VERSION: i64 = 2;
 const MIGRATIONS: &[&str] = &[
     // 2: each run keeps the DNSSEC data it observed.
     "ALTER TABLE runs ADD COLUMN dnssec_json TEXT;",
+    // 3: and the mail and policy data.
+    "ALTER TABLE runs ADD COLUMN policy_json TEXT;",
 ];
 
 const SCHEMA: &str = "
@@ -308,8 +310,8 @@ impl Store {
         tx.execute(
             "INSERT INTO runs (zone_id, started_at, finished_at, trigger, level, status, queries,
                                vantage_ipv4, vantage_ipv6, delegation_json, ns_hosts_json, probes_json,
-                               dnssec_json)
-             VALUES (?1, ?2, ?3, ?4, 'light', 'ok', ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                               dnssec_json, policy_json)
+             VALUES (?1, ?2, ?3, ?4, 'light', 'ok', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 zone_id,
                 started,
@@ -322,6 +324,7 @@ impl Store {
                 serde_json::to_string(&obs.ns_hosts)?,
                 serde_json::to_string(&obs.probes)?,
                 obs.dnssec.as_ref().map(serde_json::to_string).transpose()?,
+                obs.policy.as_ref().map(serde_json::to_string).transpose()?,
             ],
         )?;
         let run_id = tx.last_insert_rowid();

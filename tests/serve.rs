@@ -347,6 +347,7 @@ async fn a_failed_run_is_reported_not_stored() {
             zone: "drift.example.".to_string(),
             started_at_unix: 1,
             exchanges: vec![],
+            http: vec![],
         }))
     });
     let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), broken);

@@ -11,12 +11,15 @@
 pub mod hints;
 pub mod iterate;
 pub mod limiter;
+pub mod policy;
 pub mod probe;
 pub mod signed;
 pub mod transport;
 
 pub use probe::{name_in_zone, normalise_zone, observe_zone, observe_zone_records};
-pub use transport::{Client, Exchange, Fixture, NetConfig, QuerySpec, RawOutcome};
+pub use transport::{
+    Client, Exchange, Fixture, HttpExchange, HttpOutcome, NetConfig, QuerySpec, RawOutcome,
+};
 
 /// Why a run could not produce an observation.
 #[derive(Debug, thiserror::Error)]

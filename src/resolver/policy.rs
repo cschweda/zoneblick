@@ -1,0 +1,275 @@
+//! Collects mail and policy data for the POL and TKO checks: the apex TXT,
+//! MX and CAA records, the DMARC record, the SPF include chain, the MTA-STS
+//! policy file, and where mail exchangers and aliases lead.
+//!
+//! Lookups here go through the iterative resolver from the root, because
+//! SPF includes and alias targets usually live in other people's zones.
+
+use std::collections::{BTreeSet, VecDeque};
+
+use super::iterate::{Resolver, printable};
+use super::probe::normalise_zone;
+use super::transport::{Client, HttpOutcome};
+use crate::observe::{
+    Lookup, MtaSts, PolicyObservation, QType, RecordObservation, SpfLookup, SpfObservation,
+    TargetResolution,
+};
+
+/// SPF allows ten lookups; following a little past that shows by how much a
+/// record overshoots without querying without end.
+const MAX_SPF_LOOKUPS: usize = 30;
+const MAX_SPF_DEPTH: usize = 10;
+/// At most this many alias targets are resolved per run.
+const MAX_TARGETS: usize = 50;
+
+/// The text of a TXT record: its quoted strings joined, escapes undone.
+pub(crate) fn txt_value(rdata: &str) -> String {
+    let mut out = String::new();
+    let mut in_quotes = false;
+    let mut chars = rdata.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            '\\' if in_quotes => {
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            }
+            _ if in_quotes => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn is_spf(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower == "v=spf1" || lower.starts_with("v=spf1 ")
+}
+
+fn spf_records(lookup: &Lookup) -> Vec<String> {
+    lookup
+        .rdata
+        .iter()
+        .map(|r| txt_value(r))
+        .filter(|v| is_spf(v))
+        .collect()
+}
+
+/// Follow an SPF record through its includes and redirects, noting every
+/// DNS lookup a receiver would have to make.
+async fn follow_spf(resolver: &Resolver, zone: &str, record: &str) -> (Vec<SpfLookup>, bool) {
+    let mut lookups: Vec<SpfLookup> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::from([zone.to_string()]);
+    let mut queue: VecDeque<(String, String, usize)> =
+        VecDeque::from([(zone.to_string(), record.to_string(), 0)]);
+    while let Some((domain, record, depth)) = queue.pop_front() {
+        for term in record.split_whitespace().skip(1) {
+            if lookups.len() >= MAX_SPF_LOOKUPS {
+                return (lookups, true);
+            }
+            let term = term
+                .trim_start_matches(['+', '-', '~', '?'])
+                .to_ascii_lowercase();
+            let (mechanism, spec) = if let Some(d) = term.strip_prefix("include:") {
+                ("include", Some(d))
+            } else if let Some(d) = term.strip_prefix("redirect=") {
+                ("redirect", Some(d))
+            } else if let Some(d) = term.strip_prefix("exists:") {
+                ("exists", Some(d))
+            } else if term == "ptr" || term.starts_with("ptr:") {
+                ("ptr", term.strip_prefix("ptr:"))
+            } else if term == "a" || term.starts_with("a:") || term.starts_with("a/") {
+                ("a", term.strip_prefix("a:"))
+            } else if term == "mx" || term.starts_with("mx:") || term.starts_with("mx/") {
+                ("mx", term.strip_prefix("mx:"))
+            } else {
+                continue;
+            };
+            // Drop a CIDR suffix; a macro (`%{...}`) cannot be resolved here.
+            let spec = spec.map(|d| d.split('/').next().unwrap_or(d));
+            let target_name = match spec {
+                Some(d) if !d.contains('%') => normalise_zone(d).ok(),
+                Some(_) => None,
+                None => Some(domain.clone()),
+            };
+            let shown = target_name
+                .clone()
+                .unwrap_or_else(|| printable(spec.unwrap_or("")));
+            let mut target = None;
+            if matches!(mechanism, "include" | "redirect")
+                && let Some(name) = &target_name
+            {
+                let lookup = resolver.lookup(name, QType::Txt).await;
+                if depth < MAX_SPF_DEPTH
+                    && seen.insert(name.clone())
+                    && let Some(next) = spf_records(&lookup).into_iter().next()
+                {
+                    queue.push_back((name.clone(), next, depth + 1));
+                }
+                target = Some(lookup);
+            }
+            lookups.push(SpfLookup {
+                mechanism: mechanism.to_string(),
+                domain: shown,
+                depth,
+                target,
+            });
+        }
+    }
+    (lookups, false)
+}
+
+/// Resolve what a record points at.
+pub(crate) async fn resolve_target(
+    resolver: &Resolver,
+    owner: &str,
+    rtype: &str,
+    target: &str,
+) -> TargetResolution {
+    let lookup = resolver.lookup(target, QType::A).await;
+    let has_ipv6_only =
+        lookup.status == "nodata" && resolver.lookup(target, QType::Aaaa).await.status == "answer";
+    TargetResolution {
+        owner: owner.to_string(),
+        rtype: rtype.to_string(),
+        target: target.to_string(),
+        lookup,
+        has_ipv6_only,
+    }
+}
+
+async fn fetch_mta_sts(client: &Client, zone: &str, record: String) -> MtaSts {
+    let host = zone.trim_end_matches('.');
+    let policy_url = format!("https://mta-sts.{host}/.well-known/mta-sts.txt");
+    let mut out = MtaSts {
+        record,
+        policy_url: policy_url.clone(),
+        http_status: None,
+        error: None,
+        version: None,
+        mode: None,
+        max_age: None,
+        mx_patterns: Vec::new(),
+    };
+    match client.http_get(&policy_url).await {
+        HttpOutcome::Error { message } => out.error = Some(printable(&message)),
+        HttpOutcome::Response { status, body } => {
+            out.http_status = Some(status);
+            for line in body.lines() {
+                let Some((key, value)) = line.split_once(':') else {
+                    continue;
+                };
+                let value = printable(value.trim());
+                match key.trim().to_ascii_lowercase().as_str() {
+                    "version" => out.version = Some(value),
+                    "mode" => out.mode = Some(value.to_ascii_lowercase()),
+                    "max_age" => out.max_age = Some(value),
+                    "mx" => out.mx_patterns.push(value.to_ascii_lowercase()),
+                    _ => {}
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Collect the apex mail and policy data of a zone.
+pub(crate) async fn collect_policy(
+    resolver: &Resolver,
+    client: &Client,
+    zone: &str,
+) -> PolicyObservation {
+    let sub = |label: &str| {
+        if zone == "." {
+            format!("{label}.")
+        } else {
+            format!("{label}.{zone}")
+        }
+    };
+    let apex_txt = resolver.lookup(zone, QType::Txt).await;
+    let dmarc = resolver.lookup(&sub("_dmarc"), QType::Txt).await;
+    let caa = resolver.lookup(zone, QType::Caa).await;
+    let mx = resolver.lookup(zone, QType::Mx).await;
+
+    let records = spf_records(&apex_txt);
+    let spf = match records.first() {
+        None => None,
+        Some(first) => {
+            let (lookups, truncated) = follow_spf(resolver, zone, first).await;
+            Some(SpfObservation {
+                records,
+                lookups,
+                truncated,
+            })
+        }
+    };
+
+    let sts = resolver.lookup(&sub("_mta-sts"), QType::Txt).await;
+    let sts_record = sts
+        .rdata
+        .iter()
+        .map(|r| txt_value(r))
+        .find(|v| v.to_ascii_lowercase().starts_with("v=stsv1"));
+    let mta_sts = match sts_record {
+        Some(record) => Some(fetch_mta_sts(client, zone, record).await),
+        None => None,
+    };
+
+    let mut targets = Vec::new();
+    for entry in &mx.rdata {
+        // "10 mail.example.org."; "0 ." is a null MX: the zone takes no mail.
+        let Some(target) = entry.split_whitespace().nth(1).filter(|t| *t != ".") else {
+            continue;
+        };
+        targets.push(resolve_target(resolver, zone, "MX", target).await);
+    }
+
+    PolicyObservation {
+        apex_txt,
+        dmarc,
+        caa,
+        mx,
+        spf,
+        mta_sts,
+        targets,
+    }
+}
+
+/// Resolve the target of every CNAME a stored run collected.
+pub(crate) async fn cname_targets(
+    resolver: &Resolver,
+    records: &[RecordObservation],
+) -> Vec<TargetResolution> {
+    let mut pairs: BTreeSet<(String, String)> = BTreeSet::new();
+    for rec in records.iter().filter(|r| r.qtype == QType::Cname) {
+        if let Some(answer) = rec.outcome.answer().filter(|a| a.authoritative) {
+            for target in &answer.rdata {
+                pairs.insert((rec.name.clone(), target.clone()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (owner, target) in pairs.into_iter().take(MAX_TARGETS) {
+        out.push(resolve_target(resolver, &owner, "CNAME", &target).await);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn txt_values() {
+        assert_eq!(txt_value(r#""v=spf1 -all""#), "v=spf1 -all");
+        assert_eq!(
+            txt_value(r#""v=spf1 include:a.example " "-all""#),
+            "v=spf1 include:a.example -all"
+        );
+        assert_eq!(txt_value(r#""say \"hi\" \\ there""#), r#"say "hi" \ there"#);
+        assert!(
+            is_spf("v=spf1 -all") && is_spf("V=SPF1") && !is_spf("v=spf10 x") && !is_spf("spf")
+        );
+    }
+}

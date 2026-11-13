@@ -314,6 +314,116 @@ pub struct DnssecObservation {
     pub servers: Vec<ServerDnssec>,
 }
 
+/// The result of resolving one name and type from the root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Lookup {
+    pub name: String,
+    pub qtype: QType,
+    /// `answer`, `nodata`, `nxdomain` or `failed`.
+    pub status: String,
+    /// Record data in canonical text form, sorted.
+    pub rdata: Vec<String>,
+    /// The CNAME target, when the name is an alias.
+    pub cname: Option<String>,
+    /// For `nodata` and `nxdomain`: the zone whose server said so.
+    pub enclosing: Option<String>,
+    /// For `failed`: why.
+    pub error: Option<String>,
+}
+
+impl Lookup {
+    pub fn exists(&self) -> bool {
+        self.status == "answer"
+    }
+
+    /// The server answered, and there is nothing there.
+    pub fn is_empty_answer(&self) -> bool {
+        matches!(self.status.as_str(), "nodata" | "nxdomain")
+    }
+
+    /// The name does not exist, and the server that said so belongs to a
+    /// top-level domain: the domain itself is not delegated, which means it
+    /// is unregistered or has expired. Returns that domain.
+    pub fn unregistered_domain(&self) -> Option<String> {
+        if self.status != "nxdomain" {
+            return None;
+        }
+        let tld = self.enclosing.as_deref()?;
+        if tld == "." || tld.matches('.').count() != 1 {
+            return None;
+        }
+        let rest = self.name.strip_suffix(tld)?.trim_end_matches('.');
+        let label = rest.rsplit('.').next().filter(|l| !l.is_empty())?;
+        Some(format!("{label}.{tld}"))
+    }
+}
+
+/// One DNS lookup an SPF record causes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpfLookup {
+    /// `include`, `redirect`, `a`, `mx`, `exists` or `ptr`.
+    pub mechanism: String,
+    pub domain: String,
+    /// 0 for the zone's own record, 1 for a record it includes, and so on.
+    pub depth: usize,
+    /// For `include` and `redirect`: the lookup of the target's SPF record.
+    pub target: Option<Lookup>,
+}
+
+/// The zone's SPF setup, followed through its includes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpfObservation {
+    /// Every TXT record at the apex that starts with `v=spf1`.
+    pub records: Vec<String>,
+    /// The lookups evaluating the (first) record causes, in order.
+    pub lookups: Vec<SpfLookup>,
+    /// True when following includes was cut short.
+    pub truncated: bool,
+}
+
+/// The zone's MTA-STS record and the policy file it points at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MtaSts {
+    /// The `_mta-sts` TXT record.
+    pub record: String,
+    pub policy_url: String,
+    /// HTTP status of the policy fetch; `None` when the fetch failed.
+    pub http_status: Option<u16>,
+    pub error: Option<String>,
+    pub version: Option<String>,
+    pub mode: Option<String>,
+    pub max_age: Option<String>,
+    /// The `mx:` patterns in the policy.
+    pub mx_patterns: Vec<String>,
+}
+
+/// What a mail exchanger or alias target resolves to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetResolution {
+    /// The record that names the target.
+    pub owner: String,
+    /// `MX` or `CNAME`.
+    pub rtype: String,
+    pub target: String,
+    /// The address lookup of the target.
+    pub lookup: Lookup,
+    /// True when an AAAA lookup found addresses although A did not.
+    pub has_ipv6_only: bool,
+}
+
+/// Mail and policy records, and where mail and alias targets lead.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyObservation {
+    pub apex_txt: Lookup,
+    pub dmarc: Lookup,
+    pub caa: Lookup,
+    pub mx: Lookup,
+    pub spf: Option<SpfObservation>,
+    pub mta_sts: Option<MtaSts>,
+    /// Where each MX target and each collected CNAME leads.
+    pub targets: Vec<TargetResolution>,
+}
+
 /// Everything recorded about one zone in one run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZoneObservation {
@@ -335,6 +445,10 @@ pub struct ZoneObservation {
     /// signatures. `None` in observations built before it was collected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dnssec: Option<DnssecObservation>,
+    /// Mail and policy records and alias targets. `None` in observations
+    /// built before they were collected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<PolicyObservation>,
 }
 
 impl ZoneObservation {

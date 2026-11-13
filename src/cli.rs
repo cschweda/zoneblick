@@ -305,6 +305,7 @@ fn save_recording(
         zone: zone.to_string(),
         started_at_unix: started_at,
         exchanges: client.take_recording(),
+        http: client.take_http_recording(),
     };
     std::fs::write(path, json::render(&fixture)).map_err(|source| CliError::WriteFixture {
         path: path.clone(),

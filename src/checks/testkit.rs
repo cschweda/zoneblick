@@ -123,6 +123,7 @@ fn build(addresses: [&[&str]; 2], vantage: Vantage) -> ZoneObservation {
         probes,
         records: Vec::new(),
         dnssec: None,
+        policy: None,
     }
 }
 

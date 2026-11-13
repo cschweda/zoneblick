@@ -344,6 +344,52 @@ pub fn evidence_lines(evidence: &Evidence) -> Vec<String> {
         ],
         Evidence::SignedNotChained { dnskeys } => vec![format!("keys: {}", list(dnskeys))],
         Evidence::WeakAlgorithm { items } => items.clone(),
+        Evidence::SpfProblem {
+            records,
+            lookups,
+            chain,
+        } => {
+            let mut lines: Vec<String> = records.iter().map(|r| format!("record: {r}")).collect();
+            lines.push(format!("{lookups} DNS lookups:"));
+            lines.extend(chain.iter().map(|c| format!("  {c}")));
+            lines
+        }
+        Evidence::DmarcProblem { record, .. } => match record {
+            Some(r) => vec![format!("record: {r}")],
+            None => vec!["no TXT record starting with v=DMARC1".to_string()],
+        },
+        Evidence::NoCaa {} => vec!["no CAA record at the zone apex".to_string()],
+        Evidence::MtaStsProblem {
+            record,
+            policy_url,
+            problems,
+        } => {
+            let mut lines = vec![format!("record: {record}"), format!("policy: {policy_url}")];
+            lines.extend(problems.iter().cloned());
+            lines
+        }
+        Evidence::MailTargetProblem { cname, .. } => match cname {
+            Some(c) => vec![format!("CNAME target: {c}")],
+            None => vec!["no A or AAAA record".to_string()],
+        },
+        Evidence::DanglingTarget {
+            owner,
+            rtype,
+            target,
+            said_by,
+            unregistered_domain,
+        } => {
+            let mut lines = vec![format!("{owner}  {rtype}  {target}")];
+            if let Some(zone) = said_by {
+                lines.push(format!("the servers of {zone} say the name does not exist"));
+            }
+            if let Some(domain) = unregistered_domain {
+                lines.push(format!(
+                    "{domain} is not delegated: unregistered or expired"
+                ));
+            }
+            lines
+        }
         Evidence::SignaturesDiffer { variants } => variants
             .iter()
             .flat_map(|v| {

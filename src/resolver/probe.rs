@@ -11,6 +11,7 @@ use tokio::task::JoinSet;
 use super::ResolveError;
 use super::hints::ROOT_HINTS;
 use super::iterate::{Resolver, norm, parse_response, printable, rcode_name};
+use super::policy::{cname_targets, collect_policy};
 use super::signed::collect_dnssec;
 use super::transport::{Client, QuerySpec, RawOutcome, record_type};
 use crate::observe::{
@@ -133,6 +134,7 @@ pub async fn observe_zone(
 
     let parent = delegation.path.last().filter(|_| delegated);
     let dnssec = collect_dnssec(&client, &zone, parent, &responding_servers(&probes)).await;
+    let policy = collect_policy(&resolver, &client, &zone).await;
 
     Ok(ZoneObservation {
         zone,
@@ -143,6 +145,7 @@ pub async fn observe_zone(
         probes,
         records: Vec::new(),
         dnssec: Some(dnssec),
+        policy: Some(policy),
     })
 }
 
@@ -271,6 +274,14 @@ pub async fn observe_zone_records(
     }
     records.sort();
     obs.records = records;
+
+    // Where the collected aliases lead, for the takeover checks.
+    if let Some(policy) = &mut obs.policy {
+        let resolver = Resolver::new(client.clone(), obs.vantage);
+        policy
+            .targets
+            .extend(cname_targets(&resolver, &obs.records).await);
+    }
     Ok(obs)
 }
 
@@ -357,7 +368,7 @@ fn record_outcome(spec: &QuerySpec, raw: RawOutcome) -> Result<RecordOutcome, bo
 /// Record data in a canonical text form: names lowercase and fully
 /// qualified, TXT strings quoted, and nothing unprintable (see
 /// [`printable`]).
-fn rdata_text(data: &RData) -> String {
+pub(crate) fn rdata_text(data: &RData) -> String {
     printable(&rdata_raw_text(data))
 }
 

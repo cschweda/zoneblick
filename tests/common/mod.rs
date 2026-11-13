@@ -66,6 +66,14 @@ pub fn txt(owner: &str, text: &str) -> Record {
     )
 }
 
+/// A CAA record allowing one certificate authority to issue.
+pub fn caa(owner: &str, issuer: &str) -> Record {
+    let mut rdata = vec![0, 5];
+    rdata.extend(b"issue");
+    rdata.extend(issuer.bytes());
+    raw(owner, RecordType::CAA, rdata)
+}
+
 pub fn soa(owner: &str, serial: u32) -> Record {
     let mname = format!("ns1.{owner}");
     let rname = format!("hostmaster.{owner}");
@@ -99,6 +107,7 @@ fn record_type(qtype: QType) -> RecordType {
 #[derive(Default)]
 pub struct World {
     exchanges: Vec<Exchange>,
+    http: Vec<zoneblick::resolver::HttpExchange>,
 }
 
 impl World {
@@ -326,7 +335,37 @@ impl World {
             zone: zone.to_string(),
             started_at_unix,
             exchanges: self.exchanges.clone(),
+            http: self.http.clone(),
         }
+    }
+
+    /// Record what an HTTPS GET of `url` returns.
+    pub fn http(&mut self, url: &str, status: u16, body: &str) {
+        self.http.push(zoneblick::resolver::HttpExchange {
+            url: url.to_string(),
+            outcome: zoneblick::resolver::HttpOutcome::Response {
+                status,
+                body: body.to_string(),
+            },
+        });
+    }
+
+    /// Observe the zone as `zoneblick run` does, with extra names.
+    pub async fn observe_records(
+        &self,
+        zone: &str,
+        names: &[&str],
+    ) -> Result<ZoneObservation, ResolveError> {
+        let fixture = self.fixture(zone);
+        let client = Arc::new(Client::replay(&fixture));
+        let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        zoneblick::resolver::observe_zone_records(
+            client,
+            &fixture.zone,
+            fixture.started_at_unix,
+            &names,
+        )
+        .await
     }
 
     /// Run the real resolver and prober against this world.
@@ -429,7 +468,7 @@ pub fn drift_world(after: bool) -> World {
         w.serve_host(server, zone, names[0], &[servers[0]]);
         w.serve_host(server, zone, names[1], &[servers[1]]);
 
-        let mut apex = vec![mx(zone, 10, "mail.drift.example.")];
+        let mut apex = vec![mx(zone, 10, "mail.drift.example."), caa(zone, "ca.example")];
         if !after {
             apex.push(txt(zone, "v=spf1 mx -all"));
         }
@@ -590,6 +629,107 @@ pub fn signed_world(chain_ok: bool) -> World {
                 ));
             });
         }
+    }
+    w
+}
+
+pub const POLICY_ZONE: &str = "policy.example.";
+
+/// `policy.example.`, a zone whose DNS is healthy but whose mail and policy
+/// records are not:
+///
+/// - the SPF record includes `_spf.gone-esp.example`, a domain that is not
+///   registered (the TLD answers NXDOMAIN), next to a working include
+/// - the DMARC policy is `p=none`
+/// - there is no CAA record
+/// - the MTA-STS policy file does not list the zone's mail server
+/// - `app` is a CNAME into `gone-host.example`, also not registered
+pub fn policy_world() -> World {
+    let zone = POLICY_ZONE;
+    let names = ["ns1.policy.example.", "ns2.policy.example."];
+    let servers = [NS1, NS3];
+    let mut w = World::new();
+    w.delegate_tld(zone, QType::Ns);
+    w.no_ds(zone);
+    w.referral(
+        TLD_SERVER,
+        zone,
+        QType::Ns,
+        &[ns(zone, names[0]), ns(zone, names[1])],
+        &[addr(names[0], servers[0]), addr(names[1], servers[1])],
+    );
+    for server in servers {
+        w.serve_apex(server, zone, 2024111301, &names);
+        w.serve_host(server, zone, names[0], &[servers[0]]);
+        w.serve_host(server, zone, names[1], &[servers[1]]);
+        w.serve_name(
+            server,
+            zone,
+            zone,
+            &[
+                txt(
+                    zone,
+                    "v=spf1 mx include:_spf.esp.example include:_spf.gone-esp.example -all",
+                ),
+                mx(zone, 10, "mx.policy.example."),
+            ],
+        );
+        w.serve_name(
+            server,
+            zone,
+            "mx.policy.example.",
+            &[addr("mx.policy.example.", "192.0.2.25")],
+        );
+        w.serve_name(
+            server,
+            zone,
+            "_dmarc.policy.example.",
+            &[txt(
+                "_dmarc.policy.example.",
+                "v=DMARC1; p=none; rua=mailto:d@policy.example",
+            )],
+        );
+        w.serve_name(
+            server,
+            zone,
+            "_mta-sts.policy.example.",
+            &[txt("_mta-sts.policy.example.", "v=STSv1; id=20241113")],
+        );
+        w.serve_name(
+            server,
+            zone,
+            "app.policy.example.",
+            &[cname("app.policy.example.", "app.gone-host.example.")],
+        );
+    }
+    w.http(
+        "https://mta-sts.policy.example/.well-known/mta-sts.txt",
+        200,
+        "version: STSv1\nmode: enforce\nmx: mail.elsewhere.example\nmax_age: 86400\n",
+    );
+
+    // A working SPF include in another zone.
+    w.delegate_tld("_spf.esp.example.", QType::Txt);
+    w.referral(
+        TLD_SERVER,
+        "_spf.esp.example.",
+        QType::Txt,
+        &[ns("esp.example.", "ns.esp.example.")],
+        &[addr("ns.esp.example.", NS2)],
+    );
+    w.answer(
+        NS2,
+        "_spf.esp.example.",
+        QType::Txt,
+        &[txt("_spf.esp.example.", "v=spf1 ip4:192.0.2.0/24 -all")],
+    );
+    // Two domains the registry has never heard of.
+    for (gone, qtype) in [
+        ("_spf.gone-esp.example.", QType::Txt),
+        ("app.gone-host.example.", QType::A),
+    ] {
+        w.delegate_tld(gone, qtype);
+        w.nxdomain(TLD_SERVER, gone, qtype, "example.");
     }
     w
 }

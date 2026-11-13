@@ -19,7 +19,7 @@ use super::ResolveError;
 use super::hints::root_servers;
 use super::transport::{Client, QuerySpec, RawOutcome, record_type};
 use crate::observe::{
-    Glue, QType, ReferralStep, Transport, Vantage, is_ancestor_or_equal, parent_name,
+    Glue, Lookup, QType, ReferralStep, Transport, Vantage, is_ancestor_or_equal, parent_name,
 };
 
 /// Upper bound on referrals followed for one name.
@@ -106,7 +106,9 @@ enum Terminal {
     Answer(Message),
     /// A referral to the name that was asked about (only with `stop_at_cut`).
     Delegation,
-    NxDomain,
+    NxDomain {
+        enclosing: Option<String>,
+    },
     NoData {
         enclosing: Option<String>,
     },
@@ -203,7 +205,7 @@ impl Resolver {
                     undelegated_ns: Some(ns),
                 })
             }
-            Terminal::NxDomain => Err(ResolveError::ZoneNotFound {
+            Terminal::NxDomain { .. } => Err(ResolveError::ZoneNotFound {
                 zone: zone.to_string(),
             }),
             Terminal::NoData { enclosing } => Err(ResolveError::NotAZone {
@@ -247,7 +249,7 @@ impl Resolver {
                         }
                     }
                     Ok(Walk {
-                        terminal: Terminal::NxDomain,
+                        terminal: Terminal::NxDomain { .. },
                         ..
                     }) => {
                         res.error = Some("NXDOMAIN".to_string());
@@ -267,6 +269,73 @@ impl Resolver {
             }
             res
         })
+    }
+
+    /// Resolve one name and type from the root and say what was found.
+    /// A CNAME at the name is reported, and followed inside the same answer.
+    pub async fn lookup(&self, name: &str, qtype: QType) -> Lookup {
+        let mut out = Lookup {
+            name: name.to_string(),
+            qtype,
+            status: "failed".to_string(),
+            rdata: Vec::new(),
+            cname: None,
+            enclosing: None,
+            error: None,
+        };
+        match self.walk(name, qtype, false, 0).await {
+            Ok(Walk {
+                terminal: Terminal::Answer(msg),
+                ..
+            }) => {
+                let mut owner = name.to_string();
+                for _ in 0..8 {
+                    let next = msg.answers.iter().find_map(|rec| match &rec.data {
+                        RData::CNAME(c) if norm(&rec.name) == owner => Some(norm(&c.0)),
+                        _ => None,
+                    });
+                    match next {
+                        Some(next) if next != owner => {
+                            out.cname.get_or_insert(next.clone());
+                            owner = next;
+                        }
+                        _ => break,
+                    }
+                }
+                let wanted = record_type(qtype);
+                out.rdata = msg
+                    .answers
+                    .iter()
+                    .filter(|rec| rec.record_type() == wanted && norm(&rec.name) == owner)
+                    .map(|rec| super::probe::rdata_text(&rec.data))
+                    .collect();
+                out.rdata.sort();
+                out.rdata.dedup();
+                out.status = if out.rdata.is_empty() && out.cname.is_none() {
+                    "nodata"
+                } else {
+                    "answer"
+                }
+                .to_string();
+            }
+            Ok(Walk {
+                terminal: Terminal::NxDomain { enclosing },
+                ..
+            }) => {
+                out.status = "nxdomain".to_string();
+                out.enclosing = enclosing;
+            }
+            Ok(Walk {
+                terminal: Terminal::NoData { enclosing },
+                ..
+            }) => {
+                out.status = "nodata".to_string();
+                out.enclosing = enclosing;
+            }
+            Ok(_) => out.error = Some("unexpected referral".to_string()),
+            Err(e) => out.error = Some(e.to_string()),
+        }
+        out
     }
 
     /// Follow referrals for `qname` until something other than a referral
@@ -441,7 +510,9 @@ fn classify(msg: Message, zone: &str, qname: &str) -> Result<Reply, String> {
     let aa = msg.metadata.authoritative;
     match rcode {
         ResponseCode::NXDomain if aa => {
-            return Ok(Reply::Terminal(Terminal::NxDomain));
+            return Ok(Reply::Terminal(Terminal::NxDomain {
+                enclosing: soa_owner(&msg),
+            }));
         }
         ResponseCode::NoError => {}
         other => return Err(rcode_name(other)),

@@ -6,6 +6,7 @@
 
 pub mod consistency;
 pub mod delegation;
+pub mod policy;
 pub mod security;
 
 use std::net::IpAddr;
@@ -172,6 +173,38 @@ pub enum Evidence {
     SignaturesDiffer {
         variants: Vec<Variant<Vec<String>>>,
     },
+    SpfProblem {
+        records: Vec<String>,
+        /// How many DNS lookups evaluating the record takes.
+        lookups: usize,
+        /// The lookups in order, indented by include depth.
+        chain: Vec<String>,
+    },
+    DmarcProblem {
+        record: Option<String>,
+        policy: Option<String>,
+    },
+    NoCaa {},
+    MtaStsProblem {
+        record: String,
+        policy_url: String,
+        problems: Vec<String>,
+    },
+    MailTargetProblem {
+        target: String,
+        problem: String,
+        cname: Option<String>,
+    },
+    DanglingTarget {
+        owner: String,
+        /// `CNAME`, `MX`, or `SPF include` / `SPF redirect`.
+        rtype: String,
+        target: String,
+        /// The zone whose server said the target does not exist.
+        said_by: Option<String>,
+        /// Set when the target's whole domain is not registered.
+        unregistered_domain: Option<String>,
+    },
 }
 
 /// One result of one check.
@@ -218,6 +251,12 @@ impl Finding {
             Evidence::SignedNotChained { .. } => String::new(),
             Evidence::WeakAlgorithm { .. } => String::new(),
             Evidence::SignaturesDiffer { .. } => String::new(),
+            Evidence::SpfProblem { .. } => String::new(),
+            Evidence::DmarcProblem { .. } => String::new(),
+            Evidence::NoCaa {} => String::new(),
+            Evidence::MtaStsProblem { .. } => String::new(),
+            Evidence::MailTargetProblem { target, .. } => target.clone(),
+            Evidence::DanglingTarget { rtype, target, .. } => format!("{rtype}/{target}"),
         };
         format!("{}|{}|{}", self.check_id, self.name, detail)
     }
@@ -340,6 +379,49 @@ pub const CATALOG: &[CheckInfo] = &[
         Severity::Warning,
         true,
     ),
+    check(
+        "POL-01",
+        "SPF exceeds 10 DNS lookups, or multiple SPF records",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "POL-02",
+        "No DMARC record, or policy p=none",
+        Severity::Notice,
+        true,
+    ),
+    check("POL-03", "No CAA record", Severity::Notice, true),
+    check(
+        "POL-04",
+        "MTA-STS record and policy file disagree, or policy unreachable",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "POL-05",
+        "MX target is a CNAME or does not resolve",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "TKO-01",
+        "CNAME target does not resolve (NXDOMAIN)",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "TKO-03",
+        "CNAME or MX target's domain is not registered",
+        Severity::Critical,
+        true,
+    ),
+    check(
+        "TKO-04",
+        "SPF include or redirect names an unregistered domain",
+        Severity::Critical,
+        true,
+    ),
 ];
 
 const fn check(
@@ -375,6 +457,14 @@ const CHECKS: &[Check] = &[
     security::sec_03_signed_not_chained,
     security::sec_04_weak_algorithm,
     security::sec_05_signatures_differ,
+    policy::pol_01_spf,
+    policy::pol_02_dmarc,
+    policy::pol_03_caa,
+    policy::pol_04_mta_sts,
+    policy::pol_05_mx_target,
+    policy::tko_01_dangling_cname,
+    policy::tko_03_unregistered_target,
+    policy::tko_04_spf_unregistered,
 ];
 
 /// Run every Phase 0 check. Findings come back in a stable order: by
