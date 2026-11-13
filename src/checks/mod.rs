@@ -4,8 +4,8 @@
 //! [`ZoneObservation`] and returns findings, so every check can be tested
 //! offline against hand-built or replayed observations.
 
-pub mod con;
-pub mod del;
+pub mod consistency;
+pub mod delegation;
 
 use std::net::IpAddr;
 
@@ -267,17 +267,17 @@ const fn check(
 type Check = fn(&ZoneObservation) -> Vec<Finding>;
 
 const CHECKS: &[Check] = &[
-    del::del_01_parent_child_ns,
-    del::del_02_lame,
-    del::del_03_glue,
-    del::del_04_redundancy,
-    del::del_05_ns_cname,
-    del::del_06_ns_domain_registration,
-    con::con_01_soa_serial,
-    con::con_02_rrset,
-    con::con_03_tcp,
-    con::con_04_ipv6,
-    con::con_05_edns,
+    delegation::del_01_parent_child_ns,
+    delegation::del_02_lame,
+    delegation::del_03_glue,
+    delegation::del_04_redundancy,
+    delegation::del_05_ns_cname,
+    delegation::del_06_ns_domain_registration,
+    consistency::con_01_soa_serial,
+    consistency::con_02_rrset,
+    consistency::con_03_tcp,
+    consistency::con_04_ipv6,
+    consistency::con_05_edns,
 ];
 
 /// Run every Phase 0 check. Findings come back in a stable order: by
