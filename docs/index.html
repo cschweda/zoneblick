@@ -223,6 +223,21 @@ table.cmp{width:100%;min-width:760px;border-collapse:collapse;font-size:15px}
 .run{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
 .run.two{grid-template-columns:repeat(2,minmax(0,1fr))}
 .run.two .wide{grid-column:1/-1}
+/* Tabbed install box. Without JavaScript the tab bar is hidden and every
+   panel shows under its own heading. */
+.tabs{min-width:0}
+.tablist{display:none;border:1px solid var(--line);border-bottom:0}
+.js .tablist{display:flex}
+.tablist button{font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:none;border:0;border-right:1px solid var(--line);padding:0 20px;min-height:44px;cursor:pointer}
+.tablist button:hover{color:var(--text)}
+.tablist button[aria-selected="true"]{color:var(--text);background:var(--panel);box-shadow:inset 0 2px 0 var(--accent)}
+.tablist button:focus-visible{outline-offset:-3px}
+.panel pre{margin:0}
+.run .panel p{margin-top:14px}
+.ptitle{margin:22px 0 8px;font-family:var(--mono);font-size:12px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.panel:first-of-type .ptitle{margin-top:0}
+.js .ptitle{display:none}
+.js .panel:not(.on){display:none}
 .run article{border-top:1px solid var(--text);padding-top:18px;display:flex;flex-direction:column;gap:12px}
 .run h3{margin:0;font-size:20px;font-weight:700;letter-spacing:-.015em}
 .run p{margin:0;color:var(--muted);font-size:15px}
@@ -514,18 +529,55 @@ footer .grid{row-gap:24px}
         <h2>Run it on your own server.</h2>
         <p class="intro">One binary, one config file, one SQLite file. There is no hosted version and no account to create.</p>
         <h3 class="h3big" id="install">Install it.</h3>
-        <p class="h3sub">Download a ready-built binary, or build from source. The first release is not out yet; until it is, build from source.</p>
+        <p class="h3sub">Download a ready-built binary for Linux, macOS or Windows, or build from source.</p>
         <div class="run two">
           <article class="wide">
             <h3>Download a binary</h3>
-            <p>Every <a href="https://github.com/cschweda/zoneblick/releases">release</a> has binaries for Linux (x86_64 and ARM, statically linked) and macOS (Apple Silicon and Intel), with checksums. The macOS binaries are not signed by Apple: download with <span class="mono">curl</span>, as here, and macOS will run them. The <a href="https://github.com/cschweda/zoneblick#install">README</a> has the details.</p>
-<pre tabindex="0"><span class="c"># pick a release and your system</span>
-V=v0.1.0
-T=x86_64-unknown-linux-musl   <span class="c"># or aarch64-unknown-linux-musl, aarch64-apple-darwin, x86_64-apple-darwin</span>
+            <p>Release <a href="https://github.com/cschweda/zoneblick/releases/tag/v0.1.1">v0.1.1</a> has ready-built binaries for Linux, macOS and Windows. Pick your system, paste the commands into a terminal, and the last line runs your first check. Each release also has a <span class="mono">SHA256SUMS</span> file; the <a href="https://github.com/cschweda/zoneblick#install">README</a> shows how to verify a download.</p>
+            <div class="tabs">
+              <div class="tablist" role="tablist" aria-label="Operating system">
+                <button type="button" role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="true">Linux</button>
+                <button type="button" role="tab" id="tab-macos" aria-controls="panel-macos" aria-selected="false" tabindex="-1">macOS</button>
+                <button type="button" role="tab" id="tab-windows" aria-controls="panel-windows" aria-selected="false" tabindex="-1">Windows</button>
+              </div>
+              <div class="panel on" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux">
+                <h4 class="ptitle">Linux</h4>
+<pre tabindex="0">V=v0.1.1
+T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
 tar -xzf zoneblick-$V-$T.tar.gz
-sudo install zoneblick-$V-$T/zoneblick /usr/local/bin/</pre>
+sudo install zoneblick-$V-$T/zoneblick /usr/local/bin/
+
+zoneblick check example.org</pre>
+                <p>For x86_64 and 64-bit ARM, including Raspberry Pi; the second line picks the right one. The binaries are statically linked, so they run on any distribution with nothing else to install.</p>
+              </div>
+              <div class="panel" role="tabpanel" id="panel-macos" aria-labelledby="tab-macos">
+                <h4 class="ptitle">macOS</h4>
+<pre tabindex="0">V=v0.1.1
+A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
+T=$A-apple-darwin
+
+curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
+tar -xzf zoneblick-$V-$T.tar.gz
+sudo mkdir -p /usr/local/bin
+sudo install zoneblick-$V-$T/zoneblick /usr/local/bin/
+
+zoneblick check example.org</pre>
+                <p>For Apple Silicon and Intel; the second line picks the right one. The binaries are not signed by Apple. Downloaded with <span class="mono">curl</span>, as here, they run without a warning. If you download in a browser instead, macOS blocks the file until you run <span class="mono">xattr -d com.apple.quarantine</span> on it.</p>
+              </div>
+              <div class="panel" role="tabpanel" id="panel-windows" aria-labelledby="tab-windows">
+                <h4 class="ptitle">Windows (PowerShell)</h4>
+<pre tabindex="0">$V = "v0.1.1"
+$T = "x86_64-pc-windows-msvc"
+
+Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
+Expand-Archive zoneblick.zip -DestinationPath .
+
+&amp; ".\zoneblick-$V-$T\zoneblick.exe" check example.org</pre>
+                <p>Run these in PowerShell. The binary is for 64-bit Windows and also runs on ARM PCs through emulation. It is not signed. To run <span class="mono">zoneblick</span> from any folder, move <span class="mono">zoneblick.exe</span> to a folder on your PATH.</p>
+              </div>
+            </div>
           </article>
           <article class="wide">
             <h3>Build with cargo</h3>
@@ -581,7 +633,7 @@ zoneblick serve</pre>
   zoneblick serve</pre>
           </article>
         </div>
-        <p class="status"><b>Early days</b><span>zoneblick has no release yet. The one-shot <span class="mono">check</span> command works today when built from source, with the delegation and consistency checks. The daemon and Docker commands show the planned interface.</span></p>
+        <p class="status"><b>Early days</b><span>v0.1.1 is an early pre-release. The one-shot <span class="mono">check</span> command works today, with the delegation and consistency checks. The daemon and Docker commands show the planned interface.</span></p>
       </div>
     </div>
   </section>
@@ -607,6 +659,33 @@ zoneblick serve</pre>
   document.addEventListener("keydown",function(e){if(e.key==="Escape"&&btn.getAttribute("aria-expanded")==="true"){set(false);btn.focus()}});
   document.addEventListener("click",function(e){if(!e.target.closest("header"))set(false)});
   window.matchMedia("(min-width:861px)").addEventListener("change",function(e){if(e.matches)set(false)});
+})();
+(function(){
+  var list=document.querySelector(".tablist");
+  if(!list)return;
+  var tabs=Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+  function select(tab,focus){
+    tabs.forEach(function(t){
+      var on=t===tab;
+      t.setAttribute("aria-selected",on?"true":"false");
+      t.tabIndex=on?0:-1;
+      document.getElementById(t.getAttribute("aria-controls")).classList.toggle("on",on);
+    });
+    if(focus)tab.focus();
+  }
+  list.addEventListener("click",function(e){var t=e.target.closest('[role="tab"]');if(t)select(t,false)});
+  list.addEventListener("keydown",function(e){
+    var i=tabs.indexOf(document.activeElement),n=tabs.length,j=-1;
+    if(i<0)return;
+    if(e.key==="ArrowRight")j=(i+1)%n;
+    else if(e.key==="ArrowLeft")j=(i+n-1)%n;
+    else if(e.key==="Home")j=0;
+    else if(e.key==="End")j=n-1;
+    if(j>=0){e.preventDefault();select(tabs[j],true)}
+  });
+  // Start on the visitor's own system.
+  var ua=navigator.userAgent||"",os=/Windows/i.test(ua)?"windows":/Mac OS X|Macintosh/i.test(ua)?"macos":"linux";
+  select(document.getElementById("tab-"+os),false);
 })();
 </script>
 </body>

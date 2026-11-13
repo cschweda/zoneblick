@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** Phase 0. The one-shot `zoneblick check` command works; the daemon, history and web UI are not built yet. Nothing is released.
+**Status:** Phase 0. The one-shot `zoneblick check` command works; the daemon, history and web UI are not built yet. The current release, `v0.1.1`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -14,7 +14,7 @@ There are two ways to install zoneblick: download a binary, or build it from sou
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. If the page has no release yet, build from source instead.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.1.1`.
 
 | System | File name ends in |
 |---|---|
@@ -22,28 +22,64 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 | Linux, ARM 64-bit (Raspberry Pi, ARM servers) | `aarch64-unknown-linux-musl.tar.gz` |
 | macOS, Apple Silicon | `aarch64-apple-darwin.tar.gz` |
 | macOS, Intel | `x86_64-apple-darwin.tar.gz` |
+| Windows, 64-bit | `x86_64-pc-windows-msvc.zip` |
 
-The Linux binaries are statically linked, so they run on any distribution with no other packages. There is no Windows build.
+The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Download the file for your system, unpack it and put the binary on your `PATH`. Replace `v0.1.0` with the release you want:
+Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.1.1` to install another release.
+
+**Linux**
 
 ```
-V=v0.1.0
-T=x86_64-unknown-linux-musl
+V=v0.1.1
+T=$(uname -m)-unknown-linux-musl
+
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
 tar -xzf zoneblick-$V-$T.tar.gz
 sudo install zoneblick-$V-$T/zoneblick /usr/local/bin/
-zoneblick --version
+
+zoneblick check example.org
 ```
 
-Each release also has a `SHA256SUMS` file. To check a download against it:
+**macOS**
+
+```
+V=v0.1.1
+A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
+T=$A-apple-darwin
+
+curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
+tar -xzf zoneblick-$V-$T.tar.gz
+sudo mkdir -p /usr/local/bin
+sudo install zoneblick-$V-$T/zoneblick /usr/local/bin/
+
+zoneblick check example.org
+```
+
+**Windows (PowerShell)**
+
+```
+$V = "v0.1.1"
+$T = "x86_64-pc-windows-msvc"
+
+Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
+Expand-Archive zoneblick.zip -DestinationPath .
+
+& ".\zoneblick-$V-$T\zoneblick.exe" check example.org
+```
+
+On Windows the binary stays in the unpacked folder. To run `zoneblick` from any folder, move `zoneblick.exe` to a folder on your `PATH`. The Windows binary is not signed.
+
+Each release also has a `SHA256SUMS` file. To check a download against it, on Linux:
 
 ```
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/SHA256SUMS
-sha256sum --check --ignore-missing SHA256SUMS    # on macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS
 ```
 
-To update, repeat the steps with a newer release. To remove zoneblick, delete `/usr/local/bin/zoneblick`.
+On macOS the last line is `shasum -a 256 --check --ignore-missing SHA256SUMS`. On Windows, compare the output of `Get-FileHash zoneblick.zip` with the line for the zip in `SHA256SUMS`.
+
+To update, repeat the steps with a newer release. To remove zoneblick, delete the binary (`/usr/local/bin/zoneblick`, or the unpacked folder on Windows).
 
 #### macOS: "Apple could not verify" warning
 
@@ -228,11 +264,11 @@ cargo test -- --ignored    # the one test that uses the live network
 Binaries are built by GitHub Actions (`.github/workflows/release.yml`). To publish a release, set the version in `Cargo.toml`, commit, then push a matching tag:
 
 ```
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64) and macOS binaries (Apple Silicon and Intel), and attaches them to a GitHub Release with a `SHA256SUMS` file. Each archive holds the binary, this README and both license files. The macOS binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
+The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, and attaches them to a GitHub Release with a `SHA256SUMS` file. Each archive holds the binary, this README and both license files. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
 
 Tests never use the network. Checks are tested against hand-built observations, and the resolver against recorded DNS exchanges in `tests/fixtures/`, replayed through the same code path as a live run. The `broken.example` and `good.example` fixtures are generated from `tests/common/mod.rs`; `example.com.json` is a recording of a real run. After an intended change, regenerate the generated files with `ZONEBLICK_REGEN=1 cargo test`.
 
