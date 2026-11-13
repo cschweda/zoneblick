@@ -1,0 +1,384 @@
+//! Sends one DNS query to one server and returns the raw outcome.
+//!
+//! The [`Client`] has two backends. The live backend talks to the network,
+//! with timeouts, retries and the [`Limiter`]. The replay backend answers from
+//! a [`Fixture`]. Either can record its exchanges, so a real run can be saved
+//! to a fixture and replayed deterministically.
+//!
+//! Responses stay as wire bytes here. Parsing happens above this layer, so a
+//! replayed run exercises the same parsing code as a live one.
+
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use hickory_proto::op::{Edns, Message, Query};
+use hickory_proto::rr::{Name, RecordType};
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpStream, UdpSocket};
+
+use super::limiter::Limiter;
+use crate::observe::{QType, Transport};
+
+/// Network behaviour of the live backend. Defaults follow `DESIGN.md` where
+/// it gives a value (`max_qps_per_server = 5`); the rest are in `DECISIONS.md`.
+#[derive(Debug, Clone)]
+pub struct NetConfig {
+    /// Queries in flight at once, across all servers.
+    pub concurrency: usize,
+    /// Queries per second to any one server address.
+    pub qps_per_server: u32,
+    pub udp_timeout: Duration,
+    pub tcp_timeout: Duration,
+    /// Extra attempts after a timeout.
+    pub retries: u32,
+    /// Wait before the first retry; doubles for each retry after that.
+    pub backoff: Duration,
+    /// The UDP payload size advertised in EDNS queries.
+    pub edns_payload: u16,
+}
+
+impl Default for NetConfig {
+    fn default() -> Self {
+        Self {
+            concurrency: 16,
+            qps_per_server: 5,
+            udp_timeout: Duration::from_secs(3),
+            tcp_timeout: Duration::from_secs(5),
+            retries: 2,
+            backoff: Duration::from_millis(500),
+            edns_payload: 1232,
+        }
+    }
+}
+
+/// One query: which server, how, and what was asked.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct QuerySpec {
+    pub server: IpAddr,
+    pub transport: Transport,
+    /// Lowercase, fully qualified.
+    pub qname: String,
+    pub qtype: QType,
+    pub edns: bool,
+}
+
+/// What came back, before parsing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RawOutcome {
+    Response {
+        #[serde(with = "hex_bytes")]
+        wire: Vec<u8>,
+    },
+    Timeout,
+    NetError {
+        message: String,
+    },
+}
+
+/// One recorded query and its outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Exchange {
+    #[serde(flatten)]
+    pub query: QuerySpec,
+    pub outcome: RawOutcome,
+}
+
+/// A recorded run: every exchange, plus the start time so replays are stable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fixture {
+    pub version: u32,
+    pub zone: String,
+    pub started_at_unix: u64,
+    pub exchanges: Vec<Exchange>,
+}
+
+impl Fixture {
+    pub const VERSION: u32 = 1;
+}
+
+enum Backend {
+    Live(NetConfig),
+    Replay(HashMap<QuerySpec, RawOutcome>),
+}
+
+pub struct Client {
+    backend: Backend,
+    limiter: Limiter,
+    recording: Option<Mutex<Vec<Exchange>>>,
+    sent: AtomicUsize,
+}
+
+impl Client {
+    /// A client that talks to the network.
+    pub fn live(config: NetConfig) -> Self {
+        Self {
+            limiter: Limiter::new(config.concurrency, config.qps_per_server),
+            backend: Backend::Live(config),
+            recording: None,
+            sent: AtomicUsize::new(0),
+        }
+    }
+
+    /// A client that answers only from recorded exchanges.
+    pub fn replay(fixture: &Fixture) -> Self {
+        let map = fixture
+            .exchanges
+            .iter()
+            .map(|e| (e.query.clone(), e.outcome.clone()))
+            .collect();
+        Self {
+            limiter: Limiter::new(1, 1),
+            backend: Backend::Replay(map),
+            recording: None,
+            sent: AtomicUsize::new(0),
+        }
+    }
+
+    /// Keep a copy of every exchange, for [`Client::take_recording`].
+    pub fn with_recording(mut self) -> Self {
+        self.recording = Some(Mutex::new(Vec::new()));
+        self
+    }
+
+    /// The exchanges seen so far, in the order they completed.
+    pub fn take_recording(&self) -> Vec<Exchange> {
+        match &self.recording {
+            Some(rec) => std::mem::take(&mut *rec.lock().expect("recording lock")),
+            None => Vec::new(),
+        }
+    }
+
+    /// How many queries were asked of this client.
+    pub fn queries_sent(&self) -> usize {
+        self.sent.load(Ordering::Relaxed)
+    }
+
+    /// Send one query and wait for its outcome.
+    pub async fn exchange(&self, spec: &QuerySpec) -> RawOutcome {
+        self.sent.fetch_add(1, Ordering::Relaxed);
+        let outcome = match &self.backend {
+            Backend::Live(config) => self.exchange_live(config, spec).await,
+            Backend::Replay(map) => map.get(spec).cloned().unwrap_or(RawOutcome::NetError {
+                message: "no recorded exchange for this query".to_string(),
+            }),
+        };
+        if let Some(rec) = &self.recording {
+            let mut rec = rec.lock().expect("recording lock");
+            if !rec.iter().any(|e| &e.query == spec) {
+                rec.push(Exchange {
+                    query: spec.clone(),
+                    outcome: outcome.clone(),
+                });
+            }
+        }
+        outcome
+    }
+
+    async fn exchange_live(&self, config: &NetConfig, spec: &QuerySpec) -> RawOutcome {
+        let (id, wire) = match build_query(spec, config.edns_payload) {
+            Ok(q) => q,
+            Err(message) => return RawOutcome::NetError { message },
+        };
+        let timeout = match spec.transport {
+            Transport::Udp => config.udp_timeout,
+            Transport::Tcp => config.tcp_timeout,
+        };
+        let mut backoff = config.backoff;
+        for attempt in 0..=config.retries {
+            if attempt > 0 {
+                tokio::time::sleep(backoff).await;
+                backoff *= 2;
+            }
+            let _permit = self.limiter.acquire(spec.server).await;
+            let target = SocketAddr::new(spec.server, 53);
+            let sent = async {
+                match spec.transport {
+                    Transport::Udp => send_udp(target, id, &wire).await,
+                    Transport::Tcp => send_tcp(target, &wire).await,
+                }
+            };
+            match tokio::time::timeout(timeout, sent).await {
+                Ok(Ok(wire)) => return RawOutcome::Response { wire },
+                Ok(Err(e)) => {
+                    return RawOutcome::NetError {
+                        message: e.to_string(),
+                    };
+                }
+                Err(_) => continue,
+            }
+        }
+        RawOutcome::Timeout
+    }
+}
+
+/// Build the wire form of a query. Returns the message ID with it.
+fn build_query(spec: &QuerySpec, edns_payload: u16) -> Result<(u16, Vec<u8>), String> {
+    let name = Name::from_ascii(&spec.qname).map_err(|e| e.to_string())?;
+    // `Message::query` picks a random ID. Recursion is never requested.
+    let mut msg = Message::query();
+    msg.metadata.recursion_desired = false;
+    msg.add_query(Query::query(name, record_type(spec.qtype)));
+    if spec.edns {
+        let mut edns = Edns::new();
+        edns.set_version(0).set_max_payload(edns_payload);
+        msg.set_edns(edns);
+    }
+    let wire = msg.to_vec().map_err(|e| e.to_string())?;
+    Ok((msg.metadata.id, wire))
+}
+
+pub(crate) fn record_type(qtype: QType) -> RecordType {
+    match qtype {
+        QType::Soa => RecordType::SOA,
+        QType::Ns => RecordType::NS,
+        QType::A => RecordType::A,
+        QType::Aaaa => RecordType::AAAA,
+    }
+}
+
+async fn send_udp(target: SocketAddr, id: u16, query: &[u8]) -> std::io::Result<Vec<u8>> {
+    let local: SocketAddr = if target.is_ipv4() {
+        "0.0.0.0:0".parse().expect("valid address")
+    } else {
+        "[::]:0".parse().expect("valid address")
+    };
+    let socket = UdpSocket::bind(local).await?;
+    // A connected socket only accepts datagrams from the server we asked.
+    socket.connect(target).await?;
+    socket.send(query).await?;
+    let mut buf = vec![0u8; 65535];
+    loop {
+        let n = socket.recv(&mut buf).await?;
+        // Ignore anything that does not carry our message ID.
+        if n >= 2 && buf[..2] == id.to_be_bytes() {
+            buf.truncate(n);
+            return Ok(buf);
+        }
+    }
+}
+
+async fn send_tcp(target: SocketAddr, query: &[u8]) -> std::io::Result<Vec<u8>> {
+    let mut stream = TcpStream::connect(target).await?;
+    let len = u16::try_from(query.len())
+        .map_err(|_| std::io::Error::other("query too large for TCP framing"))?;
+    let mut framed = Vec::with_capacity(query.len() + 2);
+    framed.extend_from_slice(&len.to_be_bytes());
+    framed.extend_from_slice(query);
+    stream.write_all(&framed).await?;
+    let mut len_buf = [0u8; 2];
+    stream.read_exact(&mut len_buf).await?;
+    let mut buf = vec![0u8; u16::from_be_bytes(len_buf) as usize];
+    stream.read_exact(&mut buf).await?;
+    Ok(buf)
+}
+
+/// Wire bytes as a lowercase hex string in JSON.
+mod hex_bytes {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], s: S) -> Result<S::Ok, S::Error> {
+        let mut out = String::with_capacity(bytes.len() * 2);
+        for b in bytes {
+            out.push_str(&format!("{b:02x}"));
+        }
+        s.serialize_str(&out)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        let text = String::deserialize(d)?;
+        if text.len() % 2 != 0 || !text.is_ascii() {
+            return Err(D::Error::custom("hex string has odd length or non-ASCII"));
+        }
+        (0..text.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&text[i..i + 2], 16).map_err(D::Error::custom))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec() -> QuerySpec {
+        QuerySpec {
+            server: "192.0.2.53".parse().unwrap(),
+            transport: Transport::Udp,
+            qname: "example.com.".to_string(),
+            qtype: QType::Soa,
+            edns: true,
+        }
+    }
+
+    #[test]
+    fn query_has_edns_and_no_recursion() {
+        let (id, wire) = build_query(&spec(), 1232).unwrap();
+        let msg = Message::from_vec(&wire).unwrap();
+        assert_eq!(msg.metadata.id, id);
+        assert!(!msg.metadata.recursion_desired);
+        assert_eq!(msg.queries[0].query_type(), RecordType::SOA);
+        assert_eq!(msg.edns.as_ref().unwrap().max_payload(), 1232);
+
+        let mut plain = spec();
+        plain.edns = false;
+        let (_, wire) = build_query(&plain, 1232).unwrap();
+        assert!(Message::from_vec(&wire).unwrap().edns.is_none());
+    }
+
+    #[test]
+    fn fixture_round_trips_through_json() {
+        let fixture = Fixture {
+            version: Fixture::VERSION,
+            zone: "example.com.".to_string(),
+            started_at_unix: 1,
+            exchanges: vec![
+                Exchange {
+                    query: spec(),
+                    outcome: RawOutcome::Response {
+                        wire: vec![0x00, 0xab, 0xff],
+                    },
+                },
+                Exchange {
+                    query: QuerySpec {
+                        transport: Transport::Tcp,
+                        ..spec()
+                    },
+                    outcome: RawOutcome::Timeout,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&fixture).unwrap();
+        assert!(json.contains(r#""wire":"00abff""#));
+        assert_eq!(serde_json::from_str::<Fixture>(&json).unwrap(), fixture);
+    }
+
+    #[tokio::test]
+    async fn replay_answers_from_the_fixture_and_records() {
+        let fixture = Fixture {
+            version: Fixture::VERSION,
+            zone: "example.com.".to_string(),
+            started_at_unix: 1,
+            exchanges: vec![Exchange {
+                query: spec(),
+                outcome: RawOutcome::Timeout,
+            }],
+        };
+        let client = Client::replay(&fixture).with_recording();
+        assert_eq!(client.exchange(&spec()).await, RawOutcome::Timeout);
+        let missing = QuerySpec {
+            qtype: QType::Ns,
+            ..spec()
+        };
+        assert!(matches!(
+            client.exchange(&missing).await,
+            RawOutcome::NetError { .. }
+        ));
+        assert_eq!(client.queries_sent(), 2);
+        assert_eq!(client.take_recording().len(), 2);
+    }
+}
