@@ -8,6 +8,40 @@ A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver f
 - Demo with sample data: https://zoneblick.com/demo.html
 - Design document: [DESIGN.md](DESIGN.md)
 
+## What it looks like
+
+A check of a deliberately broken test zone. One nameserver refuses queries for the zone, and the other two serve different SOA serials:
+
+![Terminal output of zoneblick check for a broken zone: one critical finding, DEL-02, for a lame nameserver, and one warning, CON-01, for mismatched SOA serials](screenshots/check-findings.png)
+
+A healthy zone, checked live:
+
+![Terminal output of zoneblick check for example.com: the delegation path from the root, twelve nameserver addresses all answering over UDP and TCP, and no findings](screenshots/check-clean.png)
+
+The web interface is planned, not built. The [demo](https://zoneblick.com/demo.html) shows the intended design with invented sample data:
+
+![The planned zoneblick web interface, shown with sample data: a list of zones on the left and the findings for example.org on the right](screenshots/demo-ui.png)
+
+## Platforms
+
+zoneblick runs on Linux, macOS and Windows. The same tests run on all three in CI on every change.
+
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| Release binary | x86_64 and ARM 64-bit | Apple Silicon and Intel | 64-bit x86 (runs on ARM PCs through emulation) |
+| Archive | `.tar.gz` | `.tar.gz` | `.zip` |
+| Extra packages needed | None; the binary is statically linked | None | None |
+| Signed | Not applicable | No; see the [macOS note](#macos-apple-could-not-verify-warning) | No |
+| Install with | `curl`, `tar`, `sudo install` | `curl`, `tar`, `sudo install` | PowerShell |
+| Build from source | Yes | Yes | Yes |
+| Colour output | Yes | Yes | Yes, in Windows Terminal and PowerShell 7; the old console may show raw escape codes |
+
+On every platform:
+
+- Colour is used only when the output is a terminal. Set the `NO_COLOR` environment variable to turn it off.
+- zoneblick sends its own DNS queries to port 53 over UDP and TCP, so outbound DNS must be allowed. It does not use the system resolver.
+- IPv6 checks need working IPv6 on the machine. Without it, the IPv6 checks are skipped and the report says so.
+
 ## Install
 
 There are two ways to install zoneblick: download a binary, or build it from source.
@@ -104,7 +138,7 @@ You need a stable [Rust toolchain](https://rustup.rs), version 1.88 or later.
 cargo install --git https://github.com/cschweda/zoneblick
 ```
 
-This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`.
+This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
 
 To install from a local checkout instead:
 
@@ -259,6 +293,10 @@ cargo test                 # offline
 cargo test -- --ignored    # the one test that uses the live network
 ```
 
+Tests never use the network. Checks are tested against hand-built observations, and the resolver against recorded DNS exchanges in `tests/fixtures/`, replayed through the same code path as a live run. The `broken.example` and `good.example` fixtures are generated from `tests/common/mod.rs`; `example.com.json` is a recording of a real run. After an intended change, regenerate the generated files with `ZONEBLICK_REGEN=1 cargo test`.
+
+The same lint and tests run in CI on Linux, macOS and Windows for every push and pull request (`.github/workflows/ci.yml`).
+
 ### Releasing
 
 Binaries are built by GitHub Actions (`.github/workflows/release.yml`). To publish a release, set the version in `Cargo.toml`, commit, then push a matching tag:
@@ -269,8 +307,6 @@ git push origin v0.2.0
 ```
 
 The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, and attaches them to a GitHub Release with a `SHA256SUMS` file. Each archive holds the binary, this README and both license files. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
-
-Tests never use the network. Checks are tested against hand-built observations, and the resolver against recorded DNS exchanges in `tests/fixtures/`, replayed through the same code path as a live run. The `broken.example` and `good.example` fixtures are generated from `tests/common/mod.rs`; `example.com.json` is a recording of a real run. After an intended change, regenerate the generated files with `ZONEBLICK_REGEN=1 cargo test`.
 
 ## What it will do
 
@@ -295,6 +331,8 @@ One binary, one config file, one SQLite file, on your own server.
 | `src/output/` | Terminal and JSON rendering |
 | `src/cli.rs` | The `check` command |
 | `tests/` | Offline tests and DNS fixtures |
+| `screenshots/` | The images in this README |
+| `.github/workflows/ci.yml` | Lint and tests on Linux, macOS and Windows |
 | `docs/` | The project website, served by GitHub Pages |
 
 ## Responsible use
