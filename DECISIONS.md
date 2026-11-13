@@ -35,5 +35,7 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - `started_at_unix` is the only time-dependent field in the JSON; a replay takes it from the fixture.
 - With `--json`, a failed run prints a short JSON error document on stdout instead of text on stderr.
 - Names in observations and output are lowercase and fully qualified, with a trailing dot.
-- No license is declared in `Cargo.toml` until the license question in the design is settled.
+- The license is MIT or Apache-2.0, at the user's option, the usual Rust dual license (chosen by the author on 2026-11-13, settling open question 1 in the design).
+- Release binaries are built by GitHub Actions on a version tag: static musl builds for Linux x86_64 and aarch64, and macOS builds for both architectures, unsigned and not notarised; the install script, Docker image and crates.io wait for the packaging phase.
+- Releases below version 1.0 are published as GitHub pre-releases.
 - Rust edition 2024, which needs Rust 1.85; `hickory-proto` 0.26 needs 1.88.

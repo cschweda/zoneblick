@@ -3,6 +3,9 @@ name = "zoneblick"
 version = "0.0.1"
 edition = "2024"
 description = "A self-hosted DNS zone watchdog"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/cschweda/zoneblick"
+homepage = "https://zoneblick.com"
 publish = false
 
 [dependencies]
@@ -13,6 +16,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }
+
+[profile.release]
+strip = true
+lto = "thin"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

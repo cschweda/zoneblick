@@ -10,7 +10,59 @@ A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver f
 
 ## Install
 
-There are no release binaries yet, so you build zoneblick from source. You need a stable [Rust toolchain](https://rustup.rs), version 1.88 or later.
+There are two ways to install zoneblick: download a binary, or build it from source.
+
+### Download a binary
+
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. If the page has no release yet, build from source instead.
+
+| System | File name ends in |
+|---|---|
+| Linux, x86_64 (most servers and VPSs) | `x86_64-unknown-linux-musl.tar.gz` |
+| Linux, ARM 64-bit (Raspberry Pi, ARM servers) | `aarch64-unknown-linux-musl.tar.gz` |
+| macOS, Apple Silicon | `aarch64-apple-darwin.tar.gz` |
+| macOS, Intel | `x86_64-apple-darwin.tar.gz` |
+
+The Linux binaries are statically linked, so they run on any distribution with no other packages. There is no Windows build.
+
+Download the file for your system, unpack it and put the binary on your `PATH`. Replace `v0.1.0` with the release you want:
+
+```
+V=v0.1.0
+T=x86_64-unknown-linux-musl
+curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
+tar -xzf zoneblick-$V-$T.tar.gz
+sudo install zoneblick-$V-$T/zoneblick /usr/local/bin/
+zoneblick --version
+```
+
+Each release also has a `SHA256SUMS` file. To check a download against it:
+
+```
+curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS    # on macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
+```
+
+To update, repeat the steps with a newer release. To remove zoneblick, delete `/usr/local/bin/zoneblick`.
+
+#### macOS: "Apple could not verify" warning
+
+The macOS binaries are not signed or notarised by Apple, because that needs a paid Apple developer account. If you download the archive with a web browser, macOS marks it as quarantined and refuses to run the binary, with a message such as *"zoneblick" cannot be opened because Apple cannot verify that it is free of malware*.
+
+Either of these avoids it:
+
+- Download with `curl`, as in the commands above. Files fetched with `curl` are not quarantined.
+- Or remove the quarantine mark from a browser download after unpacking it:
+
+  ```
+  xattr -d com.apple.quarantine zoneblick-*/zoneblick
+  ```
+
+Check the download against `SHA256SUMS` first, since that is the only verification an unsigned binary has. Building from source avoids the question altogether.
+
+### Build from source
+
+You need a stable [Rust toolchain](https://rustup.rs), version 1.88 or later.
 
 ```
 cargo install --git https://github.com/cschweda/zoneblick
@@ -32,7 +84,7 @@ cargo install --path .
 | Install somewhere else | Add `--root /usr/local` (the binary goes in `/usr/local/bin`) |
 | Remove | `cargo uninstall zoneblick` |
 
-zoneblick is one binary with no config file and no data directory in this phase, so removing it leaves nothing behind. It is not on crates.io, and there is no install script or Docker image yet; those come with the packaging phase in the [design](DESIGN.md).
+zoneblick is one binary with no config file and no data directory in this phase, so removing it leaves nothing behind however you installed it. It is not on crates.io, and there is no install script or Docker image yet; those come with the packaging phase in the [design](DESIGN.md).
 
 ## Try it
 
@@ -171,6 +223,17 @@ cargo test                 # offline
 cargo test -- --ignored    # the one test that uses the live network
 ```
 
+### Releasing
+
+Binaries are built by GitHub Actions (`.github/workflows/release.yml`). To publish a release, set the version in `Cargo.toml`, commit, then push a matching tag:
+
+```
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64) and macOS binaries (Apple Silicon and Intel), and attaches them to a GitHub Release with a `SHA256SUMS` file. Each archive holds the binary, this README and both license files. The macOS binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
+
 Tests never use the network. Checks are tested against hand-built observations, and the resolver against recorded DNS exchanges in `tests/fixtures/`, replayed through the same code path as a live run. The `broken.example` and `good.example` fixtures are generated from `tests/common/mod.rs`; `example.com.json` is a recording of a real run. After an intended change, regenerate the generated files with `ZONEBLICK_REGEN=1 cargo test`.
 
 ## What it will do
@@ -187,6 +250,8 @@ One binary, one config file, one SQLite file, on your own server.
 |---|---|
 | `DESIGN.md` | High-level design |
 | `DECISIONS.md` | Decisions made during implementation, one line each |
+| `LICENSE-MIT`, `LICENSE-APACHE` | The two licenses |
+| `.github/workflows/release.yml` | Builds and publishes release binaries |
 | `KICKOFF.md` | Claude Code prompt for Phase 0 |
 | `src/observe.rs` | The recorded observations of a run (plain data) |
 | `src/resolver/` | Iterative resolver, per-server probing, transport, record and replay |
@@ -202,4 +267,11 @@ Scan only zones you control.
 
 ## License
 
-Not chosen yet.
+zoneblick is licensed under either of these, at your option:
+
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+This is the usual dual license for Rust projects. You may use, change and redistribute zoneblick under whichever of the two suits you.
+
+Unless you state otherwise, any contribution you intentionally submit for inclusion in zoneblick, as defined in the Apache-2.0 license, is dual licensed as above, without any additional terms or conditions.

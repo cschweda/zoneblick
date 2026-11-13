@@ -8,6 +8,7 @@ Key facts:
 
 - Author: Christopher Schweda
 - Language: Rust
+- License: MIT or Apache-2.0, at your option
 - Source code: https://github.com/cschweda/zoneblick
 - It queries authoritative nameservers itself, over UDP and TCP, IPv4 and IPv6. It never trusts a recursive resolver's cache.
 - It is meant for zones you control. It is not an offensive or scanning tool.
