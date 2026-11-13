@@ -24,15 +24,18 @@ pub struct RunOutcome {
 /// zone's previous stored run. `ignore` patterns apply to the diff only.
 pub fn store_observation(
     store: &mut Store,
-    obs: ZoneObservation,
+    mut obs: ZoneObservation,
     names: Vec<String>,
     queries: usize,
     finished_at_unix: u64,
     trigger: &str,
     ignore: &[String],
 ) -> Result<RunOutcome, StoreError> {
-    let findings = run_all(&obs);
     let zone = obs.zone.clone();
+    if let Some(deep) = &mut obs.deep {
+        deep.previous_dnskeys = store.latest_dnskeys(&zone)?;
+    }
+    let findings = run_all(&obs);
     let meta = RunMeta {
         names: &names,
         finished_at_unix,

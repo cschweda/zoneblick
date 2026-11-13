@@ -377,6 +377,187 @@ pub fn sec_07_nsec3_parameters(obs: &ZoneObservation) -> Vec<Finding> {
     )]
 }
 
+/// The labels of a name, last first, for comparing in DNSSEC's canonical
+/// order (RFC 4034, section 6.1).
+fn canonical(name: &str) -> Vec<Vec<u8>> {
+    name.trim_end_matches('.')
+        .split('.')
+        .filter(|l| !l.is_empty())
+        .rev()
+        .map(|label| {
+            // Undo the \DDD escapes, so labels compare as their bytes.
+            let bytes = label.as_bytes();
+            let mut out = Vec::new();
+            let mut i = 0;
+            while i < bytes.len() {
+                let escaped = (bytes[i] == b'\\' && i + 3 < bytes.len())
+                    .then(|| {
+                        std::str::from_utf8(&bytes[i + 1..i + 4])
+                            .ok()?
+                            .parse::<u8>()
+                            .ok()
+                    })
+                    .flatten();
+                match escaped {
+                    Some(b) => {
+                        out.push(b);
+                        i += 4;
+                    }
+                    None => {
+                        out.push(bytes[i].to_ascii_lowercase());
+                        i += 1;
+                    }
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// True when the NSEC record `owner` -> `next` proves that `name` does not
+/// exist: the name lies between the two, or is the owner itself (a server
+/// that answers "the name exists but has no such record").
+pub(crate) fn nsec_covers(owner: &str, next: &str, name: &str) -> bool {
+    let (o, n, q) = (canonical(owner), canonical(next), canonical(name));
+    if o == q {
+        return true;
+    }
+    if o < n {
+        o < q && q < n
+    } else {
+        // The last record of the chain wraps around to the apex.
+        q > o || q < n
+    }
+}
+
+/// SEC-06: a signed zone must prove that a name does not exist, with
+/// signed NSEC or NSEC3 records. Without the proof, validating resolvers
+/// reject the answer. NSEC3 proofs are checked for presence only.
+pub fn sec_06_denial(obs: &ZoneObservation) -> Vec<Finding> {
+    let (Some(d), Some(sec)) = (deep(obs), obs.dnssec.as_ref()) else {
+        return Vec::new();
+    };
+    let mut details = Vec::new();
+    for s in &d.servers {
+        let signed_here = sec
+            .servers
+            .iter()
+            .any(|x| x.address == s.address && x.dnskeys.as_ref().is_some_and(|k| !k.is_empty()));
+        let Some(denial) = s.denial.as_ref().filter(|x| signed_here && !x.answered) else {
+            continue;
+        };
+        let problem = if denial.nsec.is_empty() && denial.nsec3 == 0 {
+            "no NSEC or NSEC3 record came with the answer"
+        } else if !denial.signed {
+            "the NSEC or NSEC3 records came without a signature"
+        } else if denial.nsec3 == 0
+            && !denial
+                .nsec
+                .iter()
+                .any(|(owner, next)| nsec_covers(owner, next, &denial.qname))
+        {
+            "no NSEC record covers the name"
+        } else {
+            continue;
+        };
+        details.push(format!(
+            "{} ({}), asked for {}: {problem}",
+            s.ns_name, s.address, denial.qname
+        ));
+    }
+    if details.is_empty() {
+        return Vec::new();
+    }
+    vec![zone_finding(
+        "SEC-06",
+        Severity::Warning,
+        &obs.zone,
+        format!("{} does not prove that a missing name is missing", obs.zone),
+        details,
+    )]
+}
+
+/// SEC-08: the DNSKEY set changed since the previous stored run. That is
+/// a key rollover, and a warning when a key went away that the parent's DS
+/// set or a signature still depends on; otherwise it is only noted.
+pub fn sec_08_rollover(obs: &ZoneObservation) -> Vec<Finding> {
+    let (Some(d), Some(sec)) = (deep(obs), obs.dnssec.as_ref()) else {
+        return Vec::new();
+    };
+    let Some(previous) = &d.previous_dnskeys else {
+        return Vec::new();
+    };
+    type Key = (u16, u8);
+    let before: BTreeSet<Key> = previous.iter().map(|k| (k.key_tag, k.algorithm)).collect();
+    let now: BTreeSet<Key> = sec
+        .servers
+        .iter()
+        .filter_map(|s| s.dnskeys.as_ref())
+        .flatten()
+        .map(|k| (k.key_tag, k.algorithm))
+        .collect();
+    // No server gave a key set this time: nothing can be said.
+    if before == now || !sec.servers.iter().any(|s| s.dnskeys.is_some()) {
+        return Vec::new();
+    }
+    let show = |k: &Key| format!("key {} ({})", k.0, algorithm_name(k.1));
+    let mut details: Vec<String> = now
+        .difference(&before)
+        .map(|k| format!("added: {}", show(k)))
+        .chain(
+            before
+                .difference(&now)
+                .map(|k| format!("removed: {}", show(k))),
+        )
+        .collect();
+    let gone: BTreeSet<&Key> = before.difference(&now).collect();
+    let mut problems = BTreeSet::new();
+    for ds in sec
+        .parent_ds
+        .iter()
+        .filter_map(|p| p.records.as_ref())
+        .flatten()
+    {
+        if gone.contains(&(ds.key_tag, ds.algorithm)) {
+            problems.insert(format!(
+                "the parent's DS set still names the removed {}",
+                show(&(ds.key_tag, ds.algorithm))
+            ));
+        }
+    }
+    for s in &sec.servers {
+        for sig in s.dnskey_sigs.iter().chain(s.soa_sigs.iter().flatten()) {
+            if gone.contains(&(sig.key_tag, sig.algorithm)) {
+                problems.insert(format!(
+                    "{} ({}) still serves a {} signature made with the removed {}",
+                    s.ns_name,
+                    s.address,
+                    sig.type_covered,
+                    show(&(sig.key_tag, sig.algorithm))
+                ));
+            }
+        }
+    }
+    let (severity, summary) = if problems.is_empty() {
+        (
+            Severity::Info,
+            format!("The DNSKEY set of {} changed since the last run", obs.zone),
+        )
+    } else {
+        (
+            Severity::Warning,
+            format!(
+                "A key of {} was withdrawn while it is still needed",
+                obs.zone
+            ),
+        )
+    };
+    details.extend(problems);
+    vec![zone_finding(
+        "SEC-08", severity, &obs.zone, summary, details,
+    )]
+}
+
 /// SEC-09: the CDS or CDNSKEY records, which ask the parent to change the
 /// DS set, differ between servers or name a key the zone does not publish.
 pub fn sec_09_cds(obs: &ZoneObservation) -> Vec<Finding> {
@@ -556,6 +737,7 @@ mod tests {
                 nsec3param: Some(vec![]),
                 cds: Some(vec![]),
                 cdnskey: Some(vec![]),
+                denial: None,
             })
             .collect();
         obs.deep = Some(DeepObservation {
@@ -574,6 +756,7 @@ mod tests {
                 &["10 mx.example.test."],
             )),
             rname_address: None,
+            previous_dnskeys: None,
         });
         obs
     }
@@ -834,5 +1017,155 @@ mod tests {
         // An unsigned zone has nothing to complete.
         signed(&mut obs, &[], &[]);
         assert!(sec_10_algorithm_completeness(&obs).is_empty());
+    }
+
+    #[test]
+    fn nsec_records_cover_names_in_canonical_order() {
+        // b.example.test lies between a and d.
+        assert!(nsec_covers(
+            "a.example.test.",
+            "d.example.test.",
+            "b.example.test."
+        ));
+        assert!(!nsec_covers(
+            "a.example.test.",
+            "d.example.test.",
+            "e.example.test."
+        ));
+        // Order goes by labels from the right: z.a sorts before b.
+        assert!(nsec_covers(
+            "a.example.test.",
+            "b.example.test.",
+            "z.a.example.test."
+        ));
+        // The last record wraps around to the apex.
+        assert!(nsec_covers(
+            "x.example.test.",
+            "example.test.",
+            "zz.example.test."
+        ));
+        assert!(!nsec_covers(
+            "x.example.test.",
+            "example.test.",
+            "b.example.test."
+        ));
+        // A record at the name itself is the "exists, but no such type" form.
+        assert!(nsec_covers(
+            "b.example.test.",
+            "\\000.b.example.test.",
+            "B.example.test."
+        ));
+    }
+
+    #[test]
+    fn denial_of_existence() {
+        use crate::observe::Denial;
+        let qname = "zz--zoneblick-absent.example.test.";
+        let denial = |nsec: &[(&str, &str)], nsec3: usize, signed: bool| Denial {
+            qname: qname.to_string(),
+            rcode: "NXDOMAIN".to_string(),
+            answered: false,
+            nsec: nsec
+                .iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect(),
+            nsec3,
+            signed,
+        };
+        let mut obs = sound();
+        // An unsigned zone owes no proof.
+        d(&mut obs).servers[0].denial = Some(denial(&[], 0, false));
+        assert!(sec_06_denial(&obs).is_empty());
+
+        signed(&mut obs, &[key(100, 13)], &[13]);
+        let cases: [(Denial, Option<&str>); 6] = [
+            (denial(&[], 0, false), Some("no NSEC or NSEC3 record")),
+            (
+                denial(&[("www.example.test.", "example.test.")], 0, false),
+                Some("without a signature"),
+            ),
+            (
+                denial(&[("a.example.test.", "b.example.test.")], 0, true),
+                Some("no NSEC record covers"),
+            ),
+            (
+                denial(&[("www.example.test.", "example.test.")], 0, true),
+                None,
+            ),
+            (denial(&[], 2, true), None),
+            (
+                Denial {
+                    answered: true,
+                    ..denial(&[], 0, false)
+                },
+                None,
+            ),
+        ];
+        for (case, expected) in cases {
+            d(&mut obs).servers[0].denial = Some(case.clone());
+            let found = sec_06_denial(&obs);
+            match expected {
+                None => assert!(found.is_empty(), "{case:?}"),
+                Some(text) => {
+                    assert_eq!(found[0].severity, Severity::Warning);
+                    assert!(
+                        matches!(&found[0].evidence, Evidence::ZoneDetail { details } if details[0].contains(text)),
+                        "{case:?}: {:?}",
+                        found[0].evidence
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn key_rollover() {
+        let mut obs = sound();
+        signed(&mut obs, &[key(100, 13), key(200, 13)], &[13]);
+        // No earlier run, or the same keys as then: nothing.
+        assert!(sec_08_rollover(&obs).is_empty());
+        d(&mut obs).previous_dnskeys = Some(vec![key(100, 13), key(200, 13)]);
+        assert!(sec_08_rollover(&obs).is_empty());
+
+        // A new key appeared and an old one left cleanly: only noted.
+        d(&mut obs).previous_dnskeys = Some(vec![key(100, 13), key(300, 13)]);
+        let found = sec_08_rollover(&obs);
+        assert_eq!(found[0].severity, Severity::Info);
+        assert!(
+            matches!(&found[0].evidence, Evidence::ZoneDetail { details }
+            if details == &["added: key 200 (ECDSAP256SHA256)", "removed: key 300 (ECDSAP256SHA256)"]),
+            "{:?}",
+            found[0].evidence
+        );
+
+        // The removed key is still named by the DS set and still signs.
+        let sec = obs.dnssec.as_mut().unwrap();
+        sec.parent_ds = Some(crate::observe::ParentDs {
+            parent_zone: "test.".to_string(),
+            server_name: None,
+            server_address: ip("203.0.113.1"),
+            records: Some(vec![Ds {
+                key_tag: 300,
+                algorithm: 13,
+                digest_type: 2,
+                digest: "00".to_string(),
+            }]),
+            error: None,
+        });
+        sec.servers[0].soa_sigs = Some(vec![Rrsig {
+            key_tag: 300,
+            ..sig("SOA", 13)
+        }]);
+        let found = sec_08_rollover(&obs);
+        assert_eq!(found[0].severity, Severity::Warning);
+        assert!(
+            matches!(&found[0].evidence, Evidence::ZoneDetail { details } if details.len() == 4)
+        );
+
+        // Servers that gave no key set this time say nothing about a rollover.
+        for s in &mut obs.dnssec.as_mut().unwrap().servers {
+            s.dnskeys = None;
+        }
+        assert!(sec_08_rollover(&obs).is_empty());
     }
 }

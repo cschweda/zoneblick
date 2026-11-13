@@ -937,6 +937,37 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// The DNSKEY set seen in the zone's latest stored run, over all its
+    /// nameservers. `None` when there is no run, or it has no key data.
+    pub fn latest_dnskeys(
+        &self,
+        zone: &str,
+    ) -> Result<Option<Vec<crate::dnssec::Dnskey>>, StoreError> {
+        let json: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT r.dnssec_json FROM runs r JOIN zones z ON z.id = r.zone_id
+                 WHERE z.name = ?1 ORDER BY r.id DESC LIMIT 1",
+                [zone],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(Some(json)) = json else {
+            return Ok(None);
+        };
+        let sec: DnssecObservation = serde_json::from_str(&json)?;
+        if !sec.servers.iter().any(|s| s.dnskeys.is_some()) {
+            return Ok(None);
+        }
+        let keys: BTreeSet<crate::dnssec::Dnskey> = sec
+            .servers
+            .into_iter()
+            .filter_map(|s| s.dnskeys)
+            .flatten()
+            .collect();
+        Ok(Some(keys.into_iter().collect()))
+    }
+
     /// The observation data of the zone's latest run, for the API and UI.
     pub fn latest_run_view(&self, zone: &str) -> Result<Option<RunView>, StoreError> {
         let Some(run) = self.runs(zone)?.pop() else {
@@ -1503,11 +1534,13 @@ mod tests {
                     nsec3param: Some(vec![]),
                     cds: Some(vec![]),
                     cdnskey: Some(vec![]),
+                    denial: None,
                 }],
                 mname: None,
                 rname_domain: None,
                 rname_mx: None,
                 rname_address: None,
+                previous_dnskeys: None,
             });
             obs
         };

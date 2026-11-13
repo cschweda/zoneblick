@@ -237,6 +237,8 @@ fn type_name(code: u16) -> String {
         16 => "TXT".to_string(),
         28 => "AAAA".to_string(),
         43 => "DS".to_string(),
+        47 => "NSEC".to_string(),
+        50 => "NSEC3".to_string(),
         48 => "DNSKEY".to_string(),
         257 => "CAA".to_string(),
         n => format!("TYPE{n}"),

@@ -6,16 +6,17 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use hickory_proto::op::Message;
-use hickory_proto::rr::RecordType;
+use hickory_proto::rr::{RData, RecordType};
 use tokio::task::JoinSet;
 
-use super::iterate::{Resolver, printable, rcode_name};
+use super::iterate::{Resolver, norm, printable, rcode_name};
 use super::probe::responding_servers;
 use super::signed::{ask_signed, is_authoritative_answer, raw_rdata};
 use super::transport::{Client, QuerySpec, RawOutcome, mixed_case};
 use crate::dnssec::{hex, parse_dnskey, parse_ds};
 use crate::observe::{
-    DeepObservation, Nsec3Param, Probe, ProbeAnswer, QType, ServerDeep, Transport, ZoneObservation,
+    DeepObservation, Denial, Nsec3Param, Probe, ProbeAnswer, QType, ServerDeep, Transport,
+    ZoneObservation,
 };
 
 /// Send one probe query for the zone's SOA and return the raw answer.
@@ -168,6 +169,7 @@ async fn probe_server(
         parse_dnskey,
     )
     .await;
+    let denial = probe_denial(&client, address, &zone).await;
     ServerDeep {
         ns_name,
         address,
@@ -179,7 +181,86 @@ async fn probe_server(
         nsec3param,
         cds,
         cdnskey,
+        denial,
     }
+}
+
+/// A label nobody would create, for asking about a name that is not there.
+pub const ABSENT_LABEL: &str = "zz--zoneblick-absent";
+
+/// A name in uncompressed wire form, as text. Returns it with the number of
+/// bytes read.
+fn wire_name(bytes: &[u8]) -> Option<(String, usize)> {
+    let mut at = 0;
+    let mut out = String::new();
+    loop {
+        let len = *bytes.get(at)? as usize;
+        at += 1;
+        if len == 0 {
+            break;
+        }
+        if len > 63 {
+            return None;
+        }
+        let label = bytes.get(at..at + len)?;
+        // Anything but plain hostname characters is written as \DDD, so
+        // no control character reaches a terminal or a report.
+        for b in label {
+            let c = b.to_ascii_lowercase() as char;
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                out.push(c);
+            } else {
+                out.push_str(&format!("\\{b:03}"));
+            }
+        }
+        out.push('.');
+        at += len;
+    }
+    if out.is_empty() {
+        out.push('.');
+    }
+    Some((out, at))
+}
+
+/// Ask for a name that should not exist, with the DO bit, and note the
+/// proof that comes back.
+async fn probe_denial(client: &Client, server: IpAddr, zone: &str) -> Option<Denial> {
+    if zone == "." {
+        return None;
+    }
+    let qname = format!("{ABSENT_LABEL}.{zone}");
+    let msg = ask_signed(client, server, &qname, QType::A).await.ok()?;
+    if !msg.metadata.authoritative {
+        return None;
+    }
+    let raw = |rtype: RecordType| {
+        msg.authorities
+            .iter()
+            .filter(move |rec| rec.record_type() == rtype)
+            .filter_map(|rec| match &rec.data {
+                RData::Unknown { rdata, .. } => Some((norm(&rec.name), rdata.anything.as_slice())),
+                _ => None,
+            })
+    };
+    let mut nsec: Vec<(String, String)> = raw(RecordType::NSEC)
+        .filter_map(|(owner, rdata)| Some((owner, wire_name(rdata)?.0)))
+        .collect();
+    nsec.sort();
+    let signed = raw(RecordType::RRSIG)
+        .filter_map(|(_, rdata)| crate::dnssec::parse_rrsig(rdata))
+        .any(|sig| matches!(sig.type_covered.as_str(), "NSEC" | "NSEC3"));
+    Some(Denial {
+        qname,
+        rcode: rcode_name(msg.metadata.response_code),
+        answered: !msg.answers.is_empty(),
+        nsec,
+        nsec3: msg
+            .authorities
+            .iter()
+            .filter(|rec| rec.record_type() == RecordType::NSEC3)
+            .count(),
+        signed,
+    })
 }
 
 /// Split an SOA contact into mailbox and mail domain: the first label is
@@ -230,6 +311,7 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
         rname_domain: None,
         rname_mx: None,
         rname_address: None,
+        previous_dnskeys: None,
     };
     if let Some(soa) = soa {
         let mut lookup = resolver.lookup(&soa.mname, QType::A).await;
@@ -289,5 +371,13 @@ mod tests {
         assert_eq!(question_name(&wire).as_deref(), Some("WwW.oR."));
         assert_eq!(question_name(&[0u8; 13]).as_deref(), Some("."));
         assert_eq!(question_name(&[0u8; 5]), None);
+    }
+
+    #[test]
+    fn names_in_record_data_are_read_and_escaped() {
+        let bytes = [1, 0, 3, b'W', b'w', b'w', 2, b'o', b'r', 0, 9, 9];
+        assert_eq!(wire_name(&bytes), Some((r"\000.www.or.".to_string(), 10)));
+        assert_eq!(wire_name(&[0]), Some((".".to_string(), 1)));
+        assert_eq!(wire_name(&[5, b'a']), None);
     }
 }

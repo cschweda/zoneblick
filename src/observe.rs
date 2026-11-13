@@ -503,6 +503,21 @@ pub struct Nsec3Param {
     pub salt: String,
 }
 
+/// The answer to a signed query for a name that should not exist.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Denial {
+    pub qname: String,
+    pub rcode: String,
+    /// The name got an answer after all (a wildcard matches it).
+    pub answered: bool,
+    /// The NSEC records given as proof: owner and next name.
+    pub nsec: Vec<(String, String)>,
+    /// How many NSEC3 records were given as proof.
+    pub nsec3: usize,
+    /// A signature over an NSEC or NSEC3 record came with them.
+    pub signed: bool,
+}
+
 /// What the deep probes found at one nameserver address.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerDeep {
@@ -520,6 +535,9 @@ pub struct ServerDeep {
     pub nsec3param: Option<Vec<Nsec3Param>>,
     pub cds: Option<Vec<crate::dnssec::Ds>>,
     pub cdnskey: Option<Vec<crate::dnssec::Dnskey>>,
+    /// `None` when the server gave no authoritative answer.
+    #[serde(default)]
+    pub denial: Option<Denial>,
 }
 
 /// What a deep run collects on top of a light one.
@@ -532,6 +550,9 @@ pub struct DeepObservation {
     pub rname_domain: Option<String>,
     pub rname_mx: Option<Lookup>,
     pub rname_address: Option<Lookup>,
+    /// The DNSKEY set of the zone's previous stored run, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_dnskeys: Option<Vec<crate::dnssec::Dnskey>>,
 }
 
 /// Everything recorded about one zone in one run.

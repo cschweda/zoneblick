@@ -585,7 +585,10 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
         crate::resolver::add_deep(client.clone(), obs).await;
     }
     save_recording(&args.source, &client, &zone, started_at)?;
-    let obs = observed?;
+    let mut obs = observed?;
+    if let Some(deep) = &mut obs.deep {
+        deep.previous_dnskeys = store.latest_dnskeys(&zone)?;
+    }
 
     // A zone transfer, when asked. Refusal is the usual answer.
     let mut transferred: Option<Vec<String>> = None;

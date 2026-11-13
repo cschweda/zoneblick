@@ -163,3 +163,10 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - SOA-01 uses loose limits (see the README), not Zonemaster's stricter defaults, which would flag every zone at some large providers.
 - NET-02 treats documentation ranges as reserved, so test worlds on those ranges report it in deep runs.
 - The deep probe data is in `check --json` and `run --json` under `deep`; it is not stored in the database, only the run's level and the findings are.
+
+## Phase 7, continued (0.9.0)
+
+- Added SEC-06 and SEC-08. Still not built: NET-01 (needs ASN data) and signature verification (needs a cryptography library as a direct dependency).
+- SEC-06 asks each nameserver, with the DO bit, for `zz--zoneblick-absent.<zone>`. For a signed zone the answer must carry NSEC or NSEC3 records with a signature over them. NSEC records are checked for covering the name in canonical order, including the "name exists, no such type" form some providers answer with. NSEC3 proofs are not hashed and checked, and no signature is verified. A name that gets an answer (a wildcard) is skipped.
+- SEC-08 compares the DNSKEY set (key tag and algorithm) with the zone's previous stored run of either level; the previous set is put into the observation before the checks run, so the check itself stays a pure function. A clean change is an `info` finding; a removed key that the parent's DS set still names, or that still signs the DNSKEY set or SOA, is a warning. A plain `check` has no previous run, so it never reports SEC-08.
+- Names read out of record data are written with `\DDD` escapes for anything but hostname characters.

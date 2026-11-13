@@ -464,6 +464,16 @@ pub const CATALOG: &[CheckInfo] = &[
         true,
     ),
     deep_check(
+        "SEC-06",
+        "No valid proof that a missing name is missing",
+        Severity::Warning,
+    ),
+    deep_check(
+        "SEC-08",
+        "A key was withdrawn while the DS set or a signature still needs it",
+        Severity::Warning,
+    ),
+    deep_check(
         "SEC-07",
         "NSEC3 with extra iterations or a salt",
         Severity::Notice,
@@ -571,7 +581,9 @@ const CHECKS: &[Check] = &[
     policy::tko_03_unregistered_target,
     policy::tko_04_spf_unregistered,
     policy::tko_05_wildcard,
+    deep::sec_06_denial,
     deep::sec_07_nsec3_parameters,
+    deep::sec_08_rollover,
     deep::sec_09_cds,
     deep::sec_10_algorithm_completeness,
     deep::nsb_01_edns_compliance,

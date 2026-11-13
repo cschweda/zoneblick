@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs or by zone transfer, compare against a pinned baseline, mute findings you have accepted, export findings as JSON or CSV, and thin out old runs by itself. All 26 checks of the v1 design are built, and so are 11 of the 14 deep checks (`--deep`). The current release, `v0.8.0`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs or by zone transfer, compare against a pinned baseline, mute findings you have accepted, export findings as JSON or CSV, and thin out old runs by itself. All 26 checks of the v1 design are built, and so are 13 of the 14 deep checks (`--deep`). The current release, `v0.9.0`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -66,7 +66,7 @@ On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick`
 
 | Option | Effect |
 |---|---|
-| `--version v0.8.0` | Install that release instead of the newest |
+| `--version v0.9.0` | Install that release instead of the newest |
 | `--prefix DIR` | Install the binary to `DIR/bin` |
 | `--no-service` | Binary only; no user, config or service |
 
@@ -92,7 +92,7 @@ Then open `http://127.0.0.1:8053` and enter the token. The container listens on 
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.8.0`.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.9.0`.
 
 | System | File name ends in |
 |---|---|
@@ -104,12 +104,12 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.8.0` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.9.0` to install another release.
 
 **Linux**
 
 ```
-V=v0.8.0
+V=v0.9.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -122,7 +122,7 @@ zoneblick check example.org
 **macOS**
 
 ```
-V=v0.8.0
+V=v0.9.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -137,7 +137,7 @@ zoneblick check example.org
 **Windows (PowerShell)**
 
 ```
-$V = "v0.8.0"
+$V = "v0.9.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -554,11 +554,13 @@ These are the 26 checks of the v1 design, made on every run. If IPv6 does not wo
 
 ### Deep checks
 
-`zoneblick check <zone> --deep` and `zoneblick run <zone> --deep` add these. They cost a few more queries per nameserver: four unusual SOA queries, three for DNSSEC housekeeping records, and one zone-transfer attempt.
+`zoneblick check <zone> --deep` and `zoneblick run <zone> --deep` add these. They cost a few more queries per nameserver: four unusual SOA queries, three for DNSSEC housekeeping records, one for a name that does not exist, and one zone-transfer attempt.
 
 | ID | Check | Severity |
 |---|---|---|
+| SEC-06 | A signed zone gives no signed NSEC or NSEC3 proof for a name that does not exist, or its NSEC records do not cover the name | warning |
 | SEC-07 | NSEC3 with extra iterations or a salt (RFC 9276 says 0 and none) | notice |
+| SEC-08 | The DNSKEY set changed since the last stored run, and a removed key is still named by the parent's DS set or still signs | warning; `info` when the change is clean |
 | SEC-09 | CDS or CDNSKEY records differ between nameservers, or name a key that is not in the DNSKEY set | warning |
 | SEC-10 | An algorithm in the DS or DNSKEY set has no signature over the DNSKEY set or the SOA record | warning |
 | NSB-01 | A nameserver breaks the EDNS rules: no BADVERS for an unknown version, or an unknown option is not ignored | warning |
@@ -570,9 +572,11 @@ These are the 26 checks of the v1 design, made on every run. If IPv6 does not wo
 | SOA-02 | The primary named in the SOA record is not a listed nameserver, or has no address | notice |
 | SOA-03 | The contact address in the SOA record is at a domain that takes no mail | notice |
 
-Not built yet: SEC-06 (denial-of-existence proofs), SEC-08 (key rollover state) and NET-01 (all nameservers in one network, which needs network-ownership data).
+Not built yet: NET-01 (all nameservers in one network), which needs network-ownership data.
 
 - **Lifecycle.** A light run says nothing about these checks, so a deep finding stays open through light runs and is resolved only by a later deep run that no longer sees it.
+- **SEC-06** asks every nameserver for `zz--zoneblick-absent.<zone>`. NSEC proofs are checked for covering the name; NSEC3 proofs are only checked for being there and being signed, and no signature is verified.
+- **SEC-08** compares with the previous stored run, so it needs `run` or `serve`; a plain `check --deep` has nothing to compare with.
 - **SOA-01 limits** are loose, to catch mistakes and not tastes: refresh at least 20 minutes, retry at least 2 minutes and shorter than refresh, expire at least a week and longer than refresh, negative-caching TTL between a minute and a day.
 - **SOA-02** also fires for a hidden primary, which is a legitimate design. Mute it if that is yours.
 - **NSB-02** makes one transfer request per nameserver and reads only the first answer: it records whether the transfer was allowed and keeps none of the zone. Like the odd EDNS queries, it can look like probing to an intrusion detection system, which is one more reason to run deep checks only on your own zones.
@@ -641,7 +645,7 @@ Each finding has `check_id`, `severity`, `name`, `summary` (one line for people)
 | TKO-02 | `unclaimed_service` | `owner`, `target`, `service`, `url`, `status` |
 | TKO-05 | `wildcard_alias` | `wildcard`, `target` |
 | NSB-01 to NSB-04 | `server_behaviour` | `ns_name`, `address`, `details` (a list of lines) |
-| SEC-07, SEC-09, SEC-10, NET-02, SOA-01 to SOA-03 | `zone_detail` | `details` (a list of lines) |
+| SEC-06 to SEC-10, NET-02, SOA-01 to SOA-03 | `zone_detail` | `details` (a list of lines) |
 
 A full example is in [`tests/fixtures/broken.example.report.json`](tests/fixtures/broken.example.report.json); a test pins it byte for byte.
 
@@ -707,15 +711,15 @@ The same lint and tests run in CI on Linux, macOS and Windows for every push and
 Binaries are built by GitHub Actions (`.github/workflows/release.yml`). To publish a release, set the version in `Cargo.toml`, commit, then push a matching tag:
 
 ```
-git tag v0.9.0
-git push origin v0.9.0
+git tag v0.10.0
+git push origin v0.10.0
 ```
 
 The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, and attaches them to a GitHub Release with a `SHA256SUMS` file, then publishes the container image to `ghcr.io/cschweda/zoneblick`. Each archive holds the binary, this README, both license files and `THIRD-PARTY.md`. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
 
 ## What it will do
 
-- **Zone health:** delegation, nameserver consistency, DNSSEC. All three have checks now, with a deep level for nameserver behaviour, SOA values and DNSSEC details; signature verification and three of the deep checks are still to come.
+- **Zone health:** delegation, nameserver consistency, DNSSEC. All three have checks now, with a deep level for nameserver behaviour, SOA values and DNSSEC details; signature verification and one deep check are still to come.
 - **Exposure:** dangling records and subdomain-takeover risk. Dangling aliases, unregistered domains and aliases of unclaimed sites at known hosting services are detected now.
 - **Drift history:** every run stored and compared with the last, on a schedule, with alerts. All of this exists now, with pinned baselines, learned rotation and retention.
 
