@@ -8,13 +8,41 @@ A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver f
 - Demo with sample data: https://zoneblick.com/demo.html
 - Design document: [DESIGN.md](DESIGN.md)
 
+## Install
+
+There are no release binaries yet, so you build zoneblick from source. You need a stable [Rust toolchain](https://rustup.rs), version 1.88 or later.
+
+```
+cargo install --git https://github.com/cschweda/zoneblick
+```
+
+This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`.
+
+To install from a local checkout instead:
+
+```
+git clone https://github.com/cschweda/zoneblick
+cd zoneblick
+cargo install --path .
+```
+
+| To | Run |
+|---|---|
+| Update | The install command again, with `--force` |
+| Install somewhere else | Add `--root /usr/local` (the binary goes in `/usr/local/bin`) |
+| Remove | `cargo uninstall zoneblick` |
+
+zoneblick is one binary with no config file and no data directory in this phase, so removing it leaves nothing behind. It is not on crates.io, and there is no install script or Docker image yet; those come with the packaging phase in the [design](DESIGN.md).
+
 ## Try it
 
-You need a stable Rust toolchain (1.88 or later).
+Once installed:
 
 ```
-cargo run -- check example.com
+zoneblick check example.com
 ```
+
+Or, without installing, run it from a checkout with `cargo run -- check example.com`.
 
 `check` resolves the zone from the root servers, asks every authoritative nameserver directly over UDP and TCP, IPv4 and IPv6, and reports what is wrong. It needs no config file and no database, and it never uses your system resolver for zone data.
 
@@ -36,10 +64,10 @@ Findings
 Summary: 0 critical, 0 warning, 0 notice, 0 info
 ```
 
-To see findings without touching the network, replay the deliberately broken test zone:
+To see findings without touching the network, replay the deliberately broken test zone from a checkout of this repository:
 
 ```
-cargo run -- check broken.example --replay tests/fixtures/broken.example.json
+zoneblick check broken.example --replay tests/fixtures/broken.example.json
 ```
 
 ### Options

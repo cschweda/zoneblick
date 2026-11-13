@@ -213,6 +213,8 @@ table.cmp{width:100%;min-width:760px;border-collapse:collapse;font-size:15px}
 .limits strong{color:var(--text)}
 
 .run{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
+.run.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.run.two .wide{grid-column:1/-1}
 .run article{border-top:1px solid var(--text);padding-top:18px;display:flex;flex-direction:column;gap:12px}
 .run h3{margin:0;font-size:20px;font-weight:700;letter-spacing:-.015em}
 .run p{margin:0;color:var(--muted);font-size:15px}
@@ -236,7 +238,7 @@ footer .grid{row-gap:24px}
   .num,.body{grid-column:1/-1}.num{padding:0 0 14px}
   .checks,.checks.four{grid-template-columns:1fr 1fr}
   .checks article,.checks article+article{padding:20px 16px 8px 0;border-right:0;border-bottom:1px solid var(--line)}
-  .run{grid-template-columns:1fr}
+  .run,.run.two{grid-template-columns:minmax(0,1fr)}
   .gaps li{grid-template-columns:1fr;gap:8px}.gaps li.head{display:none}.gaps p span{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:6px 0 2px}
   .drift{grid-template-columns:1fr}.cad li{grid-template-columns:1fr;gap:6px}
   .steps li{grid-template-columns:48px minmax(0,1fr)}.steps p{grid-column:2}
@@ -256,6 +258,7 @@ footer .grid{row-gap:24px}
       <a class="opt" href="#checks">Checks</a>
       <a class="opt" href="#how">How it works</a>
       <a class="opt" href="#why">Compare</a>
+      <a class="opt" href="#install">Install</a>
       <a class="opt" href="#run">Run it</a>
       <a href="demo.html">Demo</a>
       <a href="https://github.com/cschweda/zoneblick">GitHub</a>
@@ -481,6 +484,37 @@ footer .grid{row-gap:24px}
       <div class="body">
         <h2>Run it on your own server.</h2>
         <p class="intro">One binary, one config file, one SQLite file. There is no hosted version and no account to create.</p>
+        <h3 class="h3big" id="install">Install it.</h3>
+        <p class="h3sub">There are no release binaries yet, so you build zoneblick from source. That needs a stable <a href="https://rustup.rs">Rust toolchain</a>, version 1.88 or later, and takes about a minute.</p>
+        <div class="run two">
+          <article class="wide">
+            <h3>With cargo</h3>
+            <p>Builds the latest source and puts the <span class="mono">zoneblick</span> binary in <span class="mono">~/.cargo/bin</span>, which rustup adds to your PATH.</p>
+<pre>cargo install --git https://github.com/cschweda/zoneblick
+zoneblick --version</pre>
+          </article>
+          <article>
+            <h3>From a clone</h3>
+            <p>The same result from a local checkout, if you want to read or change the code first.</p>
+<pre>git clone \
+  https://github.com/cschweda/zoneblick
+cd zoneblick
+cargo install --path .</pre>
+          </article>
+          <article>
+            <h3>Update or remove</h3>
+            <p>Run the install again with <span class="mono">--force</span> to update. It is one binary, so removing it leaves nothing behind.</p>
+<pre><span class="c"># update</span>
+cargo install --force --git \
+  https://github.com/cschweda/zoneblick
+
+<span class="c"># remove</span>
+cargo uninstall zoneblick</pre>
+          </article>
+        </div>
+
+        <h3 class="h3big">Use it.</h3>
+        <p class="h3sub">One command works today. The daemon and the Docker image are planned.</p>
         <div class="run">
           <article>
             <h3>Try a zone</h3>
@@ -507,7 +541,7 @@ zoneblick serve</pre>
   zoneblick serve</pre>
           </article>
         </div>
-        <p class="status"><b>In design</b><span>zoneblick is not released yet. The commands above show the planned interface. The first milestone is the one-shot <span class="mono">check</span> command.</span></p>
+        <p class="status"><b>Early days</b><span>zoneblick is not released yet. The one-shot <span class="mono">check</span> command works today when built from source. The daemon and Docker commands show the planned interface.</span></p>
       </div>
     </div>
   </section>
