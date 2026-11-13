@@ -114,3 +114,21 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - Packaging: `install.sh` (also served at zoneblick.com/install.sh) installs the newest release, pre-releases included, and verifies its checksum; as root on Linux with systemd it creates the user, config, data directory and service.
 - The container image is built from the release's static binaries on `distroless/static` (no compiler in the image build, no emulation), runs as an unprivileged user, and is published to `ghcr.io/cschweda/zoneblick`.
 - The project website uses Plausible analytics; the binary and its web UI send no telemetry.
+
+## Phase 5 (partly)
+
+- Built: POL-01 to POL-05, TKO-01, TKO-03 and TKO-04. Not built: TKO-02 (service signatures; the licensing choice in the design is still open between fetching at run time and the MIT-only set), TKO-05 (wildcards) and discovery from certificate logs.
+- Mail and policy lookups go through the iterative resolver from the root, because SPF includes and alias targets live in other zones; no recursive resolver is used.
+- "Unregistered" is decided from DNS alone: NXDOMAIN from a top-level domain's servers means the domain is not delegated. No registry (RDAP or WHOIS) lookup and no public-suffix list. Domains under two-level suffixes are therefore reported as dangling (TKO-01), not unregistered.
+- TKO-03 covers CNAME and MX targets; nameserver targets are left to DEL-02 and the DEL-06 stub.
+- A target that is unregistered is reported once, as TKO-03, not also as TKO-01 or POL-05.
+- TKO-01 and the CNAME part of TKO-03 use the CNAME records `run` collects, so they need `run` or `serve`; the apex-level checks also run in `check`.
+- SPF: every `include`, `redirect`, `a`, `mx`, `exists` and `ptr` counts as one lookup, includes are followed breadth-first to depth 10, and following stops after 30 lookups. When a zone has several SPF records the first is followed.
+- An SPF domain containing a macro is counted but not resolved.
+- POL-02 looks only at `_dmarc.<zone>`; it does not walk up to an organisational domain.
+- POL-03 looks only at the zone apex.
+- POL-04 fetches `https://mta-sts.<zone>/.well-known/mta-sts.txt` once, without following redirects, keeping at most 64 KB; this is the only HTTP request zoneblick makes for a check.
+- HTTP fetches are part of fixtures, so MTA-STS is recorded and replayed like DNS.
+- A lookup that failed (as opposed to "no such record") never produces a policy finding.
+- The database layout moved to version 3 (a `policy_json` column on runs).
+- The JSON report gained a `policy` field; `schema_version` stays 1.

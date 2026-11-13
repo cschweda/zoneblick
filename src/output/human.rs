@@ -63,6 +63,7 @@ pub fn render_as(command: &str, report: &Report, color: bool) -> String {
     delegation(w, &st, report);
     nameservers(w, &st, report);
     dnssec(w, &st, report);
+    mail_policy(w, &st, report);
     records(w, &st, report);
     findings(w, &st, report);
 
@@ -477,6 +478,70 @@ fn dnssec(w: &mut String, st: &Style, report: &Report) {
                 ))
             );
         }
+    }
+    let _ = writeln!(w);
+}
+
+/// A short summary of the zone's mail and policy records.
+fn mail_policy(w: &mut String, st: &Style, report: &Report) {
+    let Some(p) = &report.policy else {
+        return;
+    };
+    let known = [&p.apex_txt, &p.dmarc, &p.caa, &p.mx]
+        .iter()
+        .any(|l| l.status != "failed");
+    if !known {
+        return;
+    }
+    let state = |l: &crate::observe::Lookup, present: String| match l.status.as_str() {
+        "failed" => "could not be read".to_string(),
+        "answer" => present,
+        _ => "none".to_string(),
+    };
+    let _ = writeln!(w, "{}", st.bold("Mail and policy"));
+    let mx: Vec<&str> =
+        p.mx.rdata
+            .iter()
+            .map(|r| r.split_whitespace().nth(1).unwrap_or(r))
+            .collect();
+    let mx_text = if mx == ["."] {
+        "null MX (the zone takes no mail)".to_string()
+    } else {
+        mx.join(", ")
+    };
+    let _ = writeln!(w, "  MX:    {}", state(&p.mx, mx_text));
+    let spf = match &p.spf {
+        Some(s) => format!("{} DNS lookups", s.lookups.len()),
+        None => state(&p.apex_txt, "none".to_string()),
+    };
+    let _ = writeln!(w, "  SPF:   {spf}");
+    let dmarc = p
+        .dmarc
+        .rdata
+        .iter()
+        .map(|r| crate::resolver::policy::txt_value(r))
+        .find(|v| v.to_ascii_lowercase().starts_with("v=dmarc1"));
+    let dmarc_policy = dmarc
+        .as_deref()
+        .and_then(|text| {
+            text.split(';')
+                .filter_map(|part| part.trim().split_once('='))
+                .find(|(k, _)| k.trim().eq_ignore_ascii_case("p"))
+                .map(|(_, v)| format!("p={}", v.trim()))
+        })
+        .unwrap_or_else(|| "none".to_string());
+    let _ = writeln!(w, "  DMARC: {}", state(&p.dmarc, dmarc_policy));
+    let _ = writeln!(
+        w,
+        "  CAA:   {}",
+        state(&p.caa, format!("{} records", p.caa.rdata.len()))
+    );
+    if let Some(sts) = &p.mta_sts {
+        let _ = writeln!(
+            w,
+            "  MTA-STS: mode {}",
+            sts.mode.as_deref().unwrap_or("unknown")
+        );
     }
     let _ = writeln!(w);
 }

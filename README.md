@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency and DNSSEC. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. The mail-policy and takeover checks are not built yet. The current release, `v0.4.0`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. Takeover detection by service signature, discovery of names from certificate logs, and the deep checks are not built yet. The current release, `v0.5.0`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -14,9 +14,13 @@ A check of a deliberately broken test zone. One nameserver refuses queries for t
 
 ![Terminal output of zoneblick check for a broken, unsigned zone: one critical finding, DEL-02, for a lame nameserver, and one warning, CON-01, for mismatched SOA serials](screenshots/check-findings.png)
 
-A healthy, signed zone, checked live:
+A real, signed zone, checked live:
 
-![Terminal output of zoneblick check for example.com: the delegation path from the root, twelve nameserver addresses all answering over UDP and TCP, the DS record and DNSSEC keys, and no findings](screenshots/check-clean.png)
+![Terminal output of zoneblick check for example.com: the delegation path from the root, twelve nameserver addresses all answering over UDP and TCP, the DS record and DNSSEC keys, a mail and policy summary, and one notice for a missing CAA record](screenshots/check-clean.png)
+
+Mail-policy and takeover findings, in a test zone whose SPF record includes a domain nobody has registered:
+
+![Terminal output of zoneblick check for a test zone: a critical finding for an SPF include of an unregistered domain, a warning for an unusable MTA-STS policy, and notices for a DMARC policy of none and a missing CAA record](screenshots/check-policy.png)
 
 What changed between two stored runs of a zone:
 
@@ -62,7 +66,7 @@ On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick`
 
 | Option | Effect |
 |---|---|
-| `--version v0.4.0` | Install that release instead of the newest |
+| `--version v0.5.0` | Install that release instead of the newest |
 | `--prefix DIR` | Install the binary to `DIR/bin` |
 | `--no-service` | Binary only; no user, config or service |
 
@@ -88,7 +92,7 @@ Then open `http://127.0.0.1:8053` and enter the token. The container listens on 
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.4.0`.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.5.0`.
 
 | System | File name ends in |
 |---|---|
@@ -100,12 +104,12 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.4.0` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.5.0` to install another release.
 
 **Linux**
 
 ```
-V=v0.4.0
+V=v0.5.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -118,7 +122,7 @@ zoneblick check example.org
 **macOS**
 
 ```
-V=v0.4.0
+V=v0.5.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -133,7 +137,7 @@ zoneblick check example.org
 **Windows (PowerShell)**
 
 ```
-$V = "v0.4.0"
+$V = "v0.5.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -206,7 +210,7 @@ zoneblick check example.com
 
 Or, without installing, run it from a checkout with `cargo run -- check example.com`.
 
-`check` resolves the zone from the root servers, asks every authoritative nameserver directly over UDP and TCP, IPv4 and IPv6, reads the zone's DNSSEC keys and signatures, and reports what is wrong. It needs no config file and no database, and it never uses your system resolver for zone data.
+`check` resolves the zone from the root servers, asks every authoritative nameserver directly over UDP and TCP, IPv4 and IPv6, reads the zone's DNSSEC keys and signatures and its mail and policy records, and reports what is wrong. It needs no config file and no database, and it never uses your system resolver for zone data.
 
 ```
 zoneblick check example.com.
@@ -226,10 +230,19 @@ DNSSEC
   DNSKEY: key tag 34505 (ZSK, ECDSAP256SHA256)
   earliest signature expiry: 2026-11-14 18:16 UTC
 
-Findings
-  None. All checks passed.
+Mail and policy
+  MX:    null MX (the zone takes no mail)
+  SPF:   0 DNS lookups
+  DMARC: p=reject
+  CAA:   none
 
-Summary: 0 critical, 0 warning, 0 notice, 0 info
+Findings
+  NOTICE (1)
+    POL-03  example.com.
+      example.com. has no CAA record, so any certificate authority may issue certificates for it
+      no CAA record at the zone apex
+
+Summary: 0 critical, 0 warning, 1 notice, 0 info
 ```
 
 To see findings without touching the network, replay the deliberately broken test zone from a checkout of this repository:
@@ -452,14 +465,24 @@ For `diff`: `0` nothing changed, `1` something changed, `3` the command failed (
 | SEC-03 | The zone has DNSKEY records but the parent has no DS: signed but not chained | notice |
 | SEC-04 | A weak or deprecated algorithm or digest, such as RSA/SHA-1 or a SHA-1 DS | warning |
 | SEC-05 | Nameservers serve different keys, or only some sign the SOA | warning |
+| POL-01 | More than one SPF record, or an SPF record that needs more than ten DNS lookups | warning |
+| POL-02 | No DMARC record, or a DMARC policy of `p=none` | notice |
+| POL-03 | No CAA record | notice |
+| POL-04 | An MTA-STS record whose policy file cannot be fetched, is invalid, or does not cover the zone's mail servers | warning |
+| POL-05 | A mail server (MX target) is a CNAME or has no address | warning |
+| TKO-01 | A CNAME points at a name that does not exist | warning |
+| TKO-03 | A CNAME or MX points into a domain that is not registered | critical |
+| TKO-04 | The SPF record includes or redirects to a domain that is not registered | critical |
 
 DEL-06 (nameserver's domain unregistered or expired) needs registry data and is a stub. If IPv6 does not work on your machine, CON-04 is skipped and one `info` finding says so.
+
+**Takeover checks.** TKO-01 and the CNAME part of TKO-03 look at the CNAME records of the names you list, so they need `run` or `serve`; `check` covers the apex only. "Not registered" is decided from DNS alone: the name does not exist and the server that says so belongs to a top-level domain, which means the domain itself is not delegated. Domains under two-level suffixes such as `co.uk` are not recognised this way and are reported as TKO-01 instead. Not built yet: TKO-02 (a CNAME to a claimable service, matched by signature), TKO-05 (wildcards to third parties) and name discovery from certificate logs. zoneblick only reads DNS and one policy file; it never tries to claim anything.
 
 **The DNSSEC checks are beta.** They read the DS record at the parent, each nameserver's DNSKEY set, and the dates on the signatures over the DNSKEY and SOA records. They check that the DS matches a key (key tag, algorithm and SHA-256 or SHA-384 digest) but do not yet verify the signatures themselves, so a zone with a valid-looking chain and a corrupt signature is not caught. For SEC-02, "close to expiring" means within seven days, or within a quarter of the signature's own lifetime when that is shorter, so zones signed on the fly with one- or two-day signatures do not warn constantly. An unsigned zone produces no DNSSEC findings.
 
 ### Politeness
 
-At most 16 queries are in flight at once and no server address gets more than 5 queries per second. UDP queries time out after 3 seconds and TCP after 5; a timed-out query is retried twice, after 0.5 and 1 second. A check sends seven queries to each nameserver address (five probes and two for DNSSEC) and one to the parent for the DS record. A stored run adds six queries per name to each address that answered.
+At most 16 queries are in flight at once and no server address gets more than 5 queries per second. UDP queries time out after 3 seconds and TCP after 5; a timed-out query is retried twice, after 0.5 and 1 second. A check sends seven queries to each nameserver address (five probes and two for DNSSEC), one to the parent for the DS record, and a handful for the mail and policy records, including one per SPF include and one HTTPS request for an MTA-STS policy file when the zone publishes one. SPF includes are followed for at most 30 lookups. A stored run adds six queries per name to each address that answered.
 
 ## JSON output
 
@@ -475,6 +498,7 @@ At most 16 queries are in flight at once and no server address gets more than 5 
 | `nameservers` | One per NS hostname: `name`, `in_parent`, `in_child`, `glue`, `resolved`, `cname`, `resolve_error` |
 | `probes` | Every query to every nameserver address: `ns_name`, `address`, `qtype`, `transport`, `edns`, `outcome` |
 | `dnssec` | `parent_ds` (the DS records one parent server served, or an `error`) and `servers` (per address: `dnskeys`, `dnskey_sigs`, `soa_sigs`) |
+| `policy` | `apex_txt`, `dmarc`, `caa`, `mx` (each a lookup with `status`, `rdata`, `cname`, `enclosing`), `spf` (`records`, `lookups`), `mta_sts`, and `targets` (where MX and CNAME targets lead) |
 | `records` | Only from `run`: one entry per name, type and server, with `name`, `qtype`, `ns_name`, `address`, `transport` and `outcome` |
 | `findings` | See below |
 | `summary` | Counts: `critical`, `warning`, `notice`, `info` |
@@ -503,6 +527,12 @@ Each finding has `check_id`, `severity`, `name`, `summary` (one line for people)
 | SEC-03 | `signed_not_chained` | `dnskeys` |
 | SEC-04 | `weak_algorithm` | `items` |
 | SEC-05 | `signatures_differ` | `variants`: list of `value` and `servers` |
+| POL-01 | `spf_problem` | `records`, `lookups`, `chain` |
+| POL-02 | `dmarc_problem` | `record`, `policy` |
+| POL-03 | `no_caa` | none |
+| POL-04 | `mta_sts_problem` | `record`, `policy_url`, `problems` |
+| POL-05 | `mail_target_problem` | `target`, `problem`, `cname` |
+| TKO-01, TKO-03, TKO-04 | `dangling_target` | `owner`, `rtype`, `target`, `said_by`, `unregistered_domain` |
 
 A full example is in [`tests/fixtures/broken.example.report.json`](tests/fixtures/broken.example.report.json); a test pins it byte for byte.
 
@@ -559,7 +589,7 @@ cargo test                 # offline
 cargo test -- --ignored    # the one test that uses the live network
 ```
 
-Tests never use the network. Checks are tested against hand-built observations, and the resolver against recorded DNS exchanges in `tests/fixtures/`, replayed through the same code path as a live run. The `broken.example`, `good.example`, `drift.example` and `signed.example` test zones are generated from `tests/common/mod.rs`; `example.com.json` is a recording of a real run. After an intended change, regenerate the generated files with `ZONEBLICK_REGEN=1 cargo test`.
+Tests never use the network. Checks are tested against hand-built observations, and the resolver against recorded DNS exchanges in `tests/fixtures/`, replayed through the same code path as a live run. The `broken.example`, `good.example`, `drift.example`, `signed.example` and `policy.example` test zones are generated from `tests/common/mod.rs`; `example.com.json` is a recording of a real run. After an intended change, regenerate the generated files with `ZONEBLICK_REGEN=1 cargo test`.
 
 The same lint and tests run in CI on Linux, macOS and Windows for every push and pull request (`.github/workflows/ci.yml`).
 
@@ -568,8 +598,8 @@ The same lint and tests run in CI on Linux, macOS and Windows for every push and
 Binaries are built by GitHub Actions (`.github/workflows/release.yml`). To publish a release, set the version in `Cargo.toml`, commit, then push a matching tag:
 
 ```
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
 The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, and attaches them to a GitHub Release with a `SHA256SUMS` file, then publishes the container image to `ghcr.io/cschweda/zoneblick`. Each archive holds the binary, this README and both license files. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
@@ -577,7 +607,7 @@ The workflow checks that the tag matches the crate version, runs the lint and te
 ## What it will do
 
 - **Zone health:** delegation, nameserver consistency, DNSSEC. All three have checks now; the deeper DNSSEC checks and signature verification are still to come.
-- **Exposure:** dangling records and subdomain-takeover risk.
+- **Exposure:** dangling records and subdomain-takeover risk. Dangling aliases and unregistered domains are detected now; matching aliases against known claimable services is still to come.
 - **Drift history:** every run stored and compared with the last, on a schedule, with alerts. All of this exists now; learning which names are volatile and pinned baselines do not.
 
 One binary, one config file, one SQLite file, on your own server.
@@ -616,7 +646,7 @@ Scan only zones you control.
 
 ## Privacy
 
-zoneblick sends no telemetry. The binary talks to DNS servers, to the alert destinations you configure, and to nothing else; the web UI loads nothing from other sites. The project website, zoneblick.com, uses [Plausible](https://plausible.io) for privacy-friendly, cookie-free visit statistics.
+zoneblick sends no telemetry. The binary talks to DNS servers, to the alert destinations you configure, and to a zone's own `mta-sts` host when that zone publishes an MTA-STS record, and to nothing else; the web UI loads nothing from other sites. The project website, zoneblick.com, uses [Plausible](https://plausible.io) for privacy-friendly, cookie-free visit statistics.
 
 ## License
 

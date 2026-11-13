@@ -97,7 +97,7 @@ async fn a_run_also_follows_aliases() {
     assert!(
         takeover[0]
             .summary
-            .contains("gone-host.example. is not registered")
+            .contains("gone-host.example., which is not registered")
     );
     // Unregistered beats merely dangling: no TKO-01 for the same alias.
     assert!(!findings.iter().any(|f| f.check_id == "TKO-01"));

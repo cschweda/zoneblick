@@ -304,10 +304,7 @@ pub fn tko_03_unregistered_target(obs: &ZoneObservation) -> Vec<Finding> {
             Some(dangling(
                 "TKO-03",
                 Severity::Critical,
-                format!(
-                    "{} points at {}, but the domain {domain} is not registered",
-                    t.owner, t.target
-                ),
+                format!("{} points into {domain}, which is not registered", t.owner),
                 &t.owner,
                 &t.rtype,
                 &t.target,
@@ -332,8 +329,8 @@ pub fn tko_04_spf_unregistered(obs: &ZoneObservation) -> Vec<Finding> {
                 "TKO-04",
                 Severity::Critical,
                 format!(
-                    "The SPF record of {} uses {}, but the domain {domain} is not registered",
-                    obs.zone, l.domain
+                    "SPF {} of {}: the domain {domain} is not registered",
+                    l.mechanism, l.domain
                 ),
                 &obs.zone,
                 &format!("SPF {}", l.mechanism),
@@ -617,7 +614,7 @@ mod tests {
         assert!(
             findings[1]
                 .summary
-                .contains("gone-startup.example. is not registered")
+                .contains("gone-startup.example., which is not registered")
         );
         // Each has its own identity across runs.
         let keys: std::collections::BTreeSet<String> =
