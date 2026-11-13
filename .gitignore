@@ -1,0 +1,20 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# zoneblick runtime data
+/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+zoneblick.toml
+
+# macOS and editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Secrets
+.env
+.env.*
