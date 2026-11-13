@@ -15,7 +15,7 @@ async fn a_signed_zone_is_parsed_and_clean() {
     assert_eq!(parent.parent_zone, "example.");
     let ds = parent.records.as_ref().unwrap();
     assert_eq!(ds.len(), 1);
-    assert_eq!((ds[0].algorithm, ds[0].digest_type), (13, 2));
+    assert_eq!((ds[0].algorithm, ds[0].digest_type), (15, 2));
 
     assert_eq!(d.servers.len(), 2);
     for server in &d.servers {
@@ -29,6 +29,9 @@ async fn a_signed_zone_is_parsed_and_clean() {
         assert_eq!(soa_sigs.len(), 1);
         assert_eq!(soa_sigs[0].signer, SIGNED_ZONE);
         assert_eq!(soa_sigs[0].expiration as u64, STARTED_AT + 20 * 86_400);
+        // The test zone is really signed, and the signatures verify.
+        assert_eq!(server.dnskey_sig_status.as_deref(), Some("valid"));
+        assert_eq!(server.soa_sig_status.as_deref(), Some("valid"));
     }
     assert_eq!(run_all(&obs), []);
 }
@@ -90,4 +93,55 @@ async fn an_unsigned_zone_reports_no_dnssec_findings() {
             .all(|s| s.dnskeys.as_deref() == Some(&[][..]))
     );
     assert_eq!(run_all(&obs), []);
+}
+
+#[tokio::test]
+async fn a_signature_that_does_not_verify_is_critical() {
+    // The zone serves a different SOA serial than the one that was signed.
+    let mut world = signed_world(true);
+    for server in [NS1, NS3] {
+        for transport in [
+            zoneblick::observe::Transport::Udp,
+            zoneblick::observe::Transport::Tcp,
+        ] {
+            world.reply_signed(
+                server,
+                transport,
+                SIGNED_ZONE,
+                zoneblick::observe::QType::Soa,
+                |m| {
+                    m.metadata.authoritative = true;
+                    m.add_answer(soa(SIGNED_ZONE, 2024111399));
+                    m.add_answer(raw(
+                        SIGNED_ZONE,
+                        hickory_proto::rr::RecordType::RRSIG,
+                        rrsig_rdata(
+                            6,
+                            2,
+                            false,
+                            STARTED_AT - 86_400,
+                            STARTED_AT + 20 * 86_400,
+                            SIGNED_ZONE,
+                            &[soa_canonical(SIGNED_ZONE, 2024111301)],
+                        ),
+                    ));
+                },
+            );
+        }
+    }
+    let obs = world.observe(SIGNED_ZONE).await.unwrap();
+    for server in &obs.dnssec.as_ref().unwrap().servers {
+        assert_eq!(server.dnskey_sig_status.as_deref(), Some("valid"));
+        assert_eq!(server.soa_sig_status.as_deref(), Some("invalid"));
+    }
+    let findings = run_all(&obs);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(
+        (findings[0].check_id.as_str(), findings[0].severity),
+        ("SEC-11", Severity::Critical)
+    );
+    assert!(
+        matches!(&findings[0].evidence, Evidence::ZoneDetail { details }
+        if details.len() == 2 && details[0].contains("the SOA record"))
+    );
 }

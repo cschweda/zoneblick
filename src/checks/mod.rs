@@ -409,6 +409,12 @@ pub const CATALOG: &[CheckInfo] = &[
         true,
     ),
     check(
+        "SEC-11",
+        "A signature over the DNSKEY set or the SOA record does not verify",
+        Severity::Critical,
+        true,
+    ),
+    check(
         "POL-01",
         "SPF exceeds 10 DNS lookups, or multiple SPF records",
         Severity::Warning,
@@ -505,6 +511,11 @@ pub const CATALOG: &[CheckInfo] = &[
     ),
     deep_check("NSB-04", "Query name case not preserved", Severity::Notice),
     deep_check(
+        "NET-01",
+        "All nameservers are in one network (ASN)",
+        Severity::Notice,
+    ),
+    deep_check(
         "NET-02",
         "Nameserver address in private or reserved space",
         Severity::Warning,
@@ -571,6 +582,7 @@ const CHECKS: &[Check] = &[
     security::sec_03_signed_not_chained,
     security::sec_04_weak_algorithm,
     security::sec_05_signatures_differ,
+    security::sec_11_signature_invalid,
     policy::pol_01_spf,
     policy::pol_02_dmarc,
     policy::pol_03_caa,
@@ -590,6 +602,7 @@ const CHECKS: &[Check] = &[
     deep::nsb_02_open_transfer,
     deep::nsb_03_recursion,
     deep::nsb_04_case,
+    deep::net_01_one_network,
     deep::net_02_reserved_address,
     deep::soa_01_timers,
     deep::soa_02_mname,

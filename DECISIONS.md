@@ -170,3 +170,12 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - SEC-06 asks each nameserver, with the DO bit, for `zz--zoneblick-absent.<zone>`. For a signed zone the answer must carry NSEC or NSEC3 records with a signature over them. NSEC records are checked for covering the name in canonical order, including the "name exists, no such type" form some providers answer with. NSEC3 proofs are not hashed and checked, and no signature is verified. A name that gets an answer (a wildcard) is skipped.
 - SEC-08 compares the DNSKEY set (key tag and algorithm) with the zone's previous stored run of either level; the previous set is put into the observation before the checks run, so the check itself stays a pure function. A clean change is an `info` finding; a removed key that the parent's DS set still names, or that still signs the DNSKEY set or SOA, is a warning. A plain `check` has no previous run, so it never reports SEC-08.
 - Names read out of record data are written with `\DDD` escapes for anything but hostname characters.
+
+## Signature verification and NET-01 (0.10.0)
+
+- `ring` is now a direct dependency (approved 2026-11-13); it was already in the build through rustls.
+- SEC-11 (not in the design's catalog) reports a signature over the DNSKEY set or the SOA record that does not verify with a published key. It runs on every run and is critical, since validators treat such a zone as bogus. Verified: RSA with SHA-1, SHA-256 and SHA-512 (1024 bits and up), ECDSA P-256 and P-384, Ed25519. A signature whose algorithm is unknown or whose key is not published is "untried" and not reported. Verification happens when the answer is collected, where the raw records are; the check reads the stored verdict.
+- Checked live: ECDSA P-256 on example.com and example.org, RSA/SHA-256 on the root zone. Ed25519 and ECDSA are also tested with keys made in the tests; P-384, RSA/SHA-512 and RSA/SHA-1 have no test.
+- The offline test zones are now really signed (Ed25519 keys made from fixed seeds), so the signed fixtures verify.
+- NET-01 uses Team Cymru's IP-to-ASN service over DNS (approved 2026-11-13; the design's open question 5), one TXT lookup per nameserver address in deep runs, through zoneblick's own resolver. It reports only when every address has a known origin and all share an ASN.
+- All 14 deep checks of the design are now built.

@@ -14,6 +14,7 @@ use super::iterate::{norm, parse_response, rcode_name};
 use super::transport::{Client, QuerySpec, RawOutcome};
 use crate::dnssec::{Dnskey, Ds, Rrsig, parse_dnskey, parse_ds, parse_rrsig};
 use crate::observe::{DnssecObservation, ParentDs, QType, ReferralStep, ServerDnssec, Transport};
+use crate::verify::verify_rrset;
 
 /// One query with the DO bit set: UDP, then TCP if the answer is truncated.
 pub(crate) async fn ask_signed(
@@ -68,6 +69,35 @@ fn signatures(msg: &Message, owner: &str, covered: &str) -> Vec<Rrsig> {
     sigs
 }
 
+/// A name in uncompressed wire form, lower case, as signatures are made
+/// over it.
+fn canonical_name(name: &hickory_proto::rr::Name) -> Vec<u8> {
+    let mut out = Vec::new();
+    for label in name.iter() {
+        out.push(label.len() as u8);
+        out.extend(label.iter().map(u8::to_ascii_lowercase));
+    }
+    out.push(0);
+    out
+}
+
+/// The zone's SOA record data in canonical form, when the answer has it.
+fn soa_rdata(msg: &Message, owner: &str) -> Option<Vec<u8>> {
+    msg.answers.iter().find_map(|rec| match &rec.data {
+        RData::SOA(s) if norm(&rec.name) == owner => {
+            let mut out = canonical_name(&s.mname);
+            out.extend(canonical_name(&s.rname));
+            out.extend_from_slice(&s.serial.to_be_bytes());
+            out.extend_from_slice(&s.refresh.to_be_bytes());
+            out.extend_from_slice(&s.retry.to_be_bytes());
+            out.extend_from_slice(&s.expire.to_be_bytes());
+            out.extend_from_slice(&s.minimum.to_be_bytes());
+            Some(out)
+        }
+        _ => None,
+    })
+}
+
 pub(crate) fn is_authoritative_answer(msg: &Message) -> bool {
     msg.metadata.authoritative && rcode_name(msg.metadata.response_code) == "NOERROR"
 }
@@ -111,20 +141,39 @@ pub(crate) async fn collect_dnssec(
         let client = client.clone();
         let (zone, ns_name, address) = (zone.to_string(), ns_name.clone(), *address);
         tasks.spawn(async move {
+            let mut dnskey_sig_status = None;
             let (dnskeys, dnskey_sigs) =
                 match ask_signed(&client, address, &zone, QType::Dnskey).await {
                     Ok(msg) if is_authoritative_answer(&msg) => {
-                        let mut keys: Vec<Dnskey> = raw_rdata(&msg, &zone, RecordType::DNSKEY)
-                            .into_iter()
-                            .filter_map(parse_dnskey)
-                            .collect();
+                        let raw = raw_rdata(&msg, &zone, RecordType::DNSKEY);
+                        let mut keys: Vec<Dnskey> =
+                            raw.iter().copied().filter_map(parse_dnskey).collect();
                         keys.sort();
+                        let rrsigs = raw_rdata(&msg, &zone, RecordType::RRSIG);
+                        if !keys.is_empty() && !rrsigs.is_empty() {
+                            let set: Vec<Vec<u8>> = raw.iter().map(|r| r.to_vec()).collect();
+                            let verdict = verify_rrset(&zone, 48, &set, &rrsigs, &keys);
+                            dnskey_sig_status = Some(verdict.as_str().to_string());
+                        }
                         (Some(keys), signatures(&msg, &zone, "DNSKEY"))
                     }
                     _ => (None, Vec::new()),
                 };
+            let mut soa_sig_status = None;
             let soa_sigs = match ask_signed(&client, address, &zone, QType::Soa).await {
-                Ok(msg) if is_authoritative_answer(&msg) => Some(signatures(&msg, &zone, "SOA")),
+                Ok(msg) if is_authoritative_answer(&msg) => {
+                    let rrsigs = raw_rdata(&msg, &zone, RecordType::RRSIG);
+                    if let (Some(keys), Some(soa)) = (
+                        dnskeys
+                            .as_ref()
+                            .filter(|k| !k.is_empty() && !rrsigs.is_empty()),
+                        soa_rdata(&msg, &zone),
+                    ) {
+                        let verdict = verify_rrset(&zone, 6, &[soa], &rrsigs, keys);
+                        soa_sig_status = Some(verdict.as_str().to_string());
+                    }
+                    Some(signatures(&msg, &zone, "SOA"))
+                }
                 _ => None,
             };
             ServerDnssec {
@@ -133,6 +182,8 @@ pub(crate) async fn collect_dnssec(
                 dnskeys,
                 dnskey_sigs,
                 soa_sigs,
+                dnskey_sig_status,
+                soa_sig_status,
             }
         });
     }

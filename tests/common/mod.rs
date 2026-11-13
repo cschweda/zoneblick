@@ -567,10 +567,16 @@ pub fn raw(owner: &str, rtype: RecordType, rdata: Vec<u8>) -> Record {
     )
 }
 
-/// DNSKEY record data: an ECDSA P-256 key with made-up key bytes.
+fn signing_key(seed: u8) -> ring::signature::Ed25519KeyPair {
+    ring::signature::Ed25519KeyPair::from_seed_unchecked(&[seed; 32]).unwrap()
+}
+
+/// DNSKEY record data for the Ed25519 key made from `seed`. The same seed
+/// always gives the same key, so fixtures are stable.
 pub fn dnskey_rdata(seed: u8, ksk: bool) -> Vec<u8> {
-    let mut rdata = vec![0x01, if ksk { 0x01 } else { 0x00 }, 3, 13];
-    rdata.extend((0..64u8).map(|i| i.wrapping_mul(11).wrapping_add(seed)));
+    use ring::signature::KeyPair;
+    let mut rdata = vec![0x01, if ksk { 0x01 } else { 0x00 }, 3, 15];
+    rdata.extend(signing_key(seed).public_key().as_ref());
     rdata
 }
 
@@ -578,7 +584,7 @@ pub fn dnskey_rdata(seed: u8, ksk: bool) -> Vec<u8> {
 pub fn ds_rdata(owner: &str, key_rdata: &[u8]) -> Vec<u8> {
     let digest = zoneblick::dnssec::ds_digest(owner, key_rdata, 2).unwrap();
     let mut rdata = zoneblick::dnssec::key_tag(key_rdata).to_be_bytes().to_vec();
-    rdata.extend([13, 2]);
+    rdata.extend([15, 2]);
     rdata.extend(
         (0..digest.len())
             .step_by(2)
@@ -587,26 +593,44 @@ pub fn ds_rdata(owner: &str, key_rdata: &[u8]) -> Vec<u8> {
     rdata
 }
 
-/// RRSIG record data with a made-up signature.
+/// The record data of [`soa`]'s record, as a signature is made over it.
+pub fn soa_canonical(owner: &str, serial: u32) -> Vec<u8> {
+    let mut out = zoneblick::verify::name_wire(&format!("ns1.{owner}"));
+    out.extend(zoneblick::verify::name_wire(&format!("hostmaster.{owner}")));
+    for n in [serial, 7200, 3600, 1209600, 3600] {
+        out.extend(n.to_be_bytes());
+    }
+    out
+}
+
+/// RRSIG record data: a real signature by the key made from `seed`, over
+/// the record set `rdatas` of type `type_covered` at the apex of `signer`.
 pub fn rrsig_rdata(
     type_covered: u16,
-    key_tag: u16,
+    seed: u8,
+    ksk: bool,
     inception: u64,
     expiration: u64,
     signer: &str,
+    rdatas: &[Vec<u8>],
 ) -> Vec<u8> {
+    let key_tag = zoneblick::dnssec::key_tag(&dnskey_rdata(seed, ksk));
     let mut rdata = type_covered.to_be_bytes().to_vec();
-    rdata.extend([13, 2]);
+    rdata.extend([15, 2]);
     rdata.extend(3600u32.to_be_bytes());
     rdata.extend((expiration as u32).to_be_bytes());
     rdata.extend((inception as u32).to_be_bytes());
     rdata.extend(key_tag.to_be_bytes());
-    for label in signer.split('.').filter(|l| !l.is_empty()) {
-        rdata.push(label.len() as u8);
-        rdata.extend(label.bytes());
-    }
-    rdata.push(0);
-    rdata.extend([0x5a; 64]);
+    let signer_wire = zoneblick::verify::name_wire(signer);
+    rdata.extend(&signer_wire);
+    let message = zoneblick::verify::signed_data(
+        &rdata,
+        signer_wire.len(),
+        &signer_wire,
+        type_covered,
+        rdatas,
+    );
+    rdata.extend(signing_key(seed).sign(&message).as_ref());
     rdata
 }
 
@@ -628,10 +652,6 @@ pub fn signed_world(chain_ok: bool) -> World {
         dnskey_rdata(99, true)
     };
     let (inception, expiration) = (STARTED_AT - 10 * 86_400, STARTED_AT + 20 * 86_400);
-    let (ksk_tag, zsk_tag) = (
-        zoneblick::dnssec::key_tag(&ksk),
-        zoneblick::dnssec::key_tag(&zsk),
-    );
 
     let mut w = World::new();
     w.delegate_tld(zone, QType::Ns);
@@ -660,7 +680,15 @@ pub fn signed_world(chain_ok: bool) -> World {
                 m.add_answer(raw(
                     zone,
                     RecordType::RRSIG,
-                    rrsig_rdata(48, ksk_tag, inception, expiration, zone),
+                    rrsig_rdata(
+                        48,
+                        1,
+                        true,
+                        inception,
+                        expiration,
+                        zone,
+                        &[ksk.clone(), zsk.clone()],
+                    ),
                 ));
             });
             w.reply_signed(server, transport, zone, QType::Soa, |m| {
@@ -669,7 +697,15 @@ pub fn signed_world(chain_ok: bool) -> World {
                 m.add_answer(raw(
                     zone,
                     RecordType::RRSIG,
-                    rrsig_rdata(6, zsk_tag, inception, expiration, zone),
+                    rrsig_rdata(
+                        6,
+                        2,
+                        false,
+                        inception,
+                        expiration,
+                        zone,
+                        &[soa_canonical(zone, 2024111301)],
+                    ),
                 ));
             });
         }

@@ -23,3 +23,4 @@ pub mod runner;
 pub mod serve;
 pub mod signatures;
 pub mod store;
+pub mod verify;

@@ -158,6 +158,43 @@ pub fn nsb_04_case(obs: &ZoneObservation) -> Vec<Finding> {
         .collect()
 }
 
+/// NET-01: every nameserver address is announced by the same network, so
+/// one outage or one routing mistake there takes the whole zone down.
+pub fn net_01_one_network(obs: &ZoneObservation) -> Vec<Finding> {
+    let Some(d) = deep(obs) else {
+        return Vec::new();
+    };
+    // Nothing is said unless the network of every address is known.
+    if d.origins.len() < 2 || d.origins.iter().any(|o| o.asns.is_empty()) {
+        return Vec::new();
+    }
+    let mut common: BTreeSet<u32> = d.origins[0].asns.iter().copied().collect();
+    for origin in &d.origins[1..] {
+        common.retain(|asn| origin.asns.contains(asn));
+    }
+    let Some(asn) = common.first() else {
+        return Vec::new();
+    };
+    let details = d
+        .origins
+        .iter()
+        .map(|o| match &o.prefix {
+            Some(prefix) => format!("{} is in {prefix}, announced by AS{asn}", o.address),
+            None => format!("{} is announced by AS{asn}", o.address),
+        })
+        .collect();
+    vec![zone_finding(
+        "NET-01",
+        Severity::Notice,
+        &obs.zone,
+        format!(
+            "Every nameserver of {} is in one network, AS{asn}",
+            obs.zone
+        ),
+        details,
+    )]
+}
+
 /// Why an address cannot be reached from the public internet, if so.
 pub(crate) fn special_use(address: IpAddr) -> Option<&'static str> {
     match address {
@@ -757,6 +794,7 @@ mod tests {
             )),
             rname_address: None,
             previous_dnskeys: None,
+            origins: Vec::new(),
         });
         obs
     }
@@ -936,6 +974,8 @@ mod tests {
                 dnskeys: Some(keys.to_vec()),
                 dnskey_sigs: algorithms.iter().map(|a| sig("DNSKEY", *a)).collect(),
                 soa_sigs: Some(algorithms.iter().map(|a| sig("SOA", *a)).collect()),
+                dnskey_sig_status: None,
+                soa_sig_status: None,
             })
             .collect();
         obs.dnssec = Some(DnssecObservation {
@@ -1167,5 +1207,34 @@ mod tests {
             s.dnskeys = None;
         }
         assert!(sec_08_rollover(&obs).is_empty());
+    }
+
+    #[test]
+    fn one_network() {
+        use crate::observe::AddressOrigin;
+        let origin = |address: &str, asns: &[u32]| AddressOrigin {
+            address: ip(address),
+            asns: asns.to_vec(),
+            prefix: Some("9.9.9.0/24".to_string()),
+        };
+        let mut obs = sound();
+        // Two networks, or one address whose network is unknown: nothing.
+        d(&mut obs).origins = vec![
+            origin("9.9.9.9", &[19281]),
+            origin("149.112.112.112", &[42]),
+        ];
+        assert!(net_01_one_network(&obs).is_empty());
+        d(&mut obs).origins = vec![origin("9.9.9.9", &[19281]), origin("149.112.112.112", &[])];
+        assert!(net_01_one_network(&obs).is_empty());
+        d(&mut obs).origins = vec![origin("9.9.9.9", &[19281])];
+        assert!(net_01_one_network(&obs).is_empty());
+        // Every address in one network; a second origin on one of them does not help.
+        d(&mut obs).origins = vec![
+            origin("9.9.9.9", &[19281]),
+            origin("149.112.112.112", &[42, 19281]),
+        ];
+        let found = net_01_one_network(&obs);
+        assert_eq!(found[0].severity, Severity::Notice);
+        assert!(found[0].summary.contains("AS19281"));
     }
 }

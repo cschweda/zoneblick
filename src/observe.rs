@@ -338,6 +338,14 @@ pub struct ServerDnssec {
     /// Signatures over the SOA record; `None` when the server gave no
     /// authoritative SOA answer to the signed query.
     pub soa_sigs: Option<Vec<Rrsig>>,
+    /// Whether a signature over the DNSKEY set verifies with a published
+    /// key: `valid`, `invalid`, or `untried` when none could be tried.
+    /// `None` when there was nothing to verify.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dnskey_sig_status: Option<String>,
+    /// The same for the SOA record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soa_sig_status: Option<String>,
 }
 
 /// What was observed about the zone's DNSSEC setup.
@@ -540,6 +548,16 @@ pub struct ServerDeep {
     pub denial: Option<Denial>,
 }
 
+/// The network that announces a nameserver address.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddressOrigin {
+    pub address: IpAddr,
+    /// The autonomous system numbers announcing it; empty when unknown.
+    pub asns: Vec<u32>,
+    /// The announced prefix the address falls in.
+    pub prefix: Option<String>,
+}
+
 /// What a deep run collects on top of a light one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeepObservation {
@@ -553,6 +571,9 @@ pub struct DeepObservation {
     /// The DNSKEY set of the zone's previous stored run, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_dnskeys: Option<Vec<crate::dnssec::Dnskey>>,
+    /// Which network announces each nameserver address.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub origins: Vec<AddressOrigin>,
 }
 
 /// Everything recorded about one zone in one run.

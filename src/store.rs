@@ -1541,6 +1541,7 @@ mod tests {
                 rname_mx: None,
                 rname_address: None,
                 previous_dnskeys: None,
+                origins: Vec::new(),
             });
             obs
         };

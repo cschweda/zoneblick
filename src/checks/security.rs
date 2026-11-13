@@ -302,6 +302,39 @@ pub fn sec_05_signatures_differ(obs: &ZoneObservation) -> Vec<Finding> {
     )]
 }
 
+/// SEC-11: a signature over the DNSKEY set or the SOA record does not
+/// verify with the key it names. Validating resolvers treat the zone as
+/// bogus. Only the arithmetic is judged here; dates are `SEC-02`.
+pub fn sec_11_signature_invalid(obs: &ZoneObservation) -> Vec<Finding> {
+    let Some(sec) = obs.dnssec.as_ref() else {
+        return Vec::new();
+    };
+    let mut details = Vec::new();
+    for s in &sec.servers {
+        for (what, status) in [
+            ("the DNSKEY set", &s.dnskey_sig_status),
+            ("the SOA record", &s.soa_sig_status),
+        ] {
+            if status.as_deref() == Some("invalid") {
+                details.push(format!(
+                    "{} ({}): no signature over {what} verifies",
+                    s.ns_name, s.address
+                ));
+            }
+        }
+    }
+    if details.is_empty() {
+        return Vec::new();
+    }
+    vec![Finding::new(
+        "SEC-11",
+        Severity::Critical,
+        &obs.zone,
+        format!("A DNSSEC signature of {} does not verify", obs.zone),
+        Evidence::ZoneDetail { details },
+    )]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,6 +387,8 @@ mod tests {
                 dnskeys: Some(vec![ksk.clone(), zsk.clone()]),
                 dnskey_sigs: vec![sig("DNSKEY", ksk.key_tag, MONTH)],
                 soa_sigs: Some(vec![sig("SOA", zsk.key_tag, MONTH)]),
+                dnskey_sig_status: None,
+                soa_sig_status: None,
             })
             .collect();
         obs.dnssec = Some(DnssecObservation {

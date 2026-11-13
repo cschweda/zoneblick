@@ -15,8 +15,8 @@ use super::signed::{ask_signed, is_authoritative_answer, raw_rdata};
 use super::transport::{Client, QuerySpec, RawOutcome, mixed_case};
 use crate::dnssec::{hex, parse_dnskey, parse_ds};
 use crate::observe::{
-    DeepObservation, Denial, Nsec3Param, Probe, ProbeAnswer, QType, ServerDeep, Transport,
-    ZoneObservation,
+    AddressOrigin, DeepObservation, Denial, Nsec3Param, Probe, ProbeAnswer, QType, ServerDeep,
+    Transport, ZoneObservation,
 };
 
 /// Send one probe query for the zone's SOA and return the raw answer.
@@ -281,6 +281,46 @@ pub(crate) fn rname_domain(rname: &str) -> Option<String> {
     None
 }
 
+/// The name to ask Team Cymru's IP-to-ASN service about an address.
+pub fn origin_query_name(address: IpAddr) -> String {
+    match address {
+        IpAddr::V4(a) => {
+            let o = a.octets();
+            format!("{}.{}.{}.{}.origin.asn.cymru.com.", o[3], o[2], o[1], o[0])
+        }
+        IpAddr::V6(a) => {
+            let nibbles: Vec<String> = a
+                .octets()
+                .iter()
+                .rev()
+                .flat_map(|b| [b & 0x0f, b >> 4])
+                .map(|n| format!("{n:x}"))
+                .collect();
+            format!("{}.origin6.asn.cymru.com.", nibbles.join("."))
+        }
+    }
+}
+
+/// Read an answer such as `"15169 | 8.8.8.0/24 | US | arin | 1992-12-01"`.
+pub(crate) fn parse_origin(txt: &str) -> (Vec<u32>, Option<String>) {
+    let mut fields = txt.split('|').map(str::trim);
+    let asns = fields
+        .next()
+        .unwrap_or("")
+        .split_whitespace()
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    let prefix = fields
+        .next()
+        .filter(|p| {
+            !p.is_empty()
+                && p.chars()
+                    .all(|c| c.is_ascii_hexdigit() || ".:/".contains(c))
+        })
+        .map(str::to_string);
+    (asns, prefix)
+}
+
 /// Run the deep probes for an observed zone and attach the result.
 pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
     let mut tasks = JoinSet::new();
@@ -305,6 +345,25 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
         .filter(|r| r.is_authoritative_answer())
         .find_map(|r| r.soa.clone());
     let resolver = Resolver::new(client.clone(), obs.vantage);
+    // Which network announces each nameserver address, from Team Cymru.
+    let addresses: std::collections::BTreeSet<IpAddr> =
+        obs.ns_hosts.iter().flat_map(|h| h.addresses()).collect();
+    let mut origins = Vec::new();
+    for address in addresses {
+        let lookup = resolver
+            .lookup(&origin_query_name(address), QType::Txt)
+            .await;
+        let (asns, prefix) = lookup
+            .rdata
+            .first()
+            .map(|r| parse_origin(&super::policy::txt_value(r)))
+            .unwrap_or_default();
+        origins.push(AddressOrigin {
+            address,
+            asns,
+            prefix,
+        });
+    }
     let mut deep = DeepObservation {
         servers,
         mname: None,
@@ -312,6 +371,7 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
         rname_mx: None,
         rname_address: None,
         previous_dnskeys: None,
+        origins,
     };
     if let Some(soa) = soa {
         let mut lookup = resolver.lookup(&soa.mname, QType::A).await;
@@ -379,5 +439,27 @@ mod tests {
         assert_eq!(wire_name(&bytes), Some((r"\000.www.or.".to_string(), 10)));
         assert_eq!(wire_name(&[0]), Some((".".to_string(), 1)));
         assert_eq!(wire_name(&[5, b'a']), None);
+    }
+
+    #[test]
+    fn network_origin_names_and_answers() {
+        assert_eq!(
+            origin_query_name("8.8.4.1".parse().unwrap()),
+            "1.4.8.8.origin.asn.cymru.com."
+        );
+        assert_eq!(
+            origin_query_name("2001:db8::1".parse().unwrap()),
+            "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.origin6.asn.cymru.com."
+        );
+        assert_eq!(
+            parse_origin("15169 | 8.8.8.0/24 | US | arin | 1992-12-01"),
+            (vec![15169], Some("8.8.8.0/24".to_string()))
+        );
+        assert_eq!(
+            parse_origin("64496 64497 | 2001:db8::/32 | ZZ"),
+            (vec![64496, 64497], Some("2001:db8::/32".to_string()))
+        );
+        assert_eq!(parse_origin("nonsense"), (vec![], None));
+        assert_eq!(parse_origin("1 | <script>"), (vec![1], None));
     }
 }
