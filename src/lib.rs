@@ -10,5 +10,7 @@
 //! - [`cli`]: argument parsing and the `check` command
 
 pub mod checks;
+pub mod cli;
 pub mod observe;
+pub mod output;
 pub mod resolver;

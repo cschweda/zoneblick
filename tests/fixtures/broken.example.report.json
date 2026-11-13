@@ -1,0 +1,495 @@
+{
+  "schema_version": 1,
+  "zone": "broken.example.",
+  "started_at_unix": 1700000000,
+  "vantage": {
+    "ipv4": true,
+    "ipv6": false
+  },
+  "delegation_path": [
+    {
+      "from_zone": ".",
+      "to_zone": "example.",
+      "server_name": "a.root-servers.net.",
+      "server_address": "198.41.0.4",
+      "ns": [
+        "ns.nic.example."
+      ],
+      "glue": [
+        {
+          "name": "ns.nic.example.",
+          "address": "192.0.2.1"
+        }
+      ]
+    },
+    {
+      "from_zone": "example.",
+      "to_zone": "broken.example.",
+      "server_name": "ns.nic.example.",
+      "server_address": "192.0.2.1",
+      "ns": [
+        "ns1.broken.example.",
+        "ns2.broken.example.",
+        "ns3.broken.example."
+      ],
+      "glue": [
+        {
+          "name": "ns1.broken.example.",
+          "address": "198.51.100.1"
+        },
+        {
+          "name": "ns2.broken.example.",
+          "address": "198.51.100.2"
+        },
+        {
+          "name": "ns3.broken.example.",
+          "address": "203.0.113.3"
+        }
+      ]
+    }
+  ],
+  "nameservers": [
+    {
+      "name": "ns1.broken.example.",
+      "in_parent": true,
+      "in_child": true,
+      "glue": [
+        "198.51.100.1"
+      ],
+      "resolved": [
+        "198.51.100.1"
+      ],
+      "cname": null,
+      "resolve_error": null
+    },
+    {
+      "name": "ns2.broken.example.",
+      "in_parent": true,
+      "in_child": true,
+      "glue": [
+        "198.51.100.2"
+      ],
+      "resolved": [
+        "198.51.100.2"
+      ],
+      "cname": null,
+      "resolve_error": null
+    },
+    {
+      "name": "ns3.broken.example.",
+      "in_parent": true,
+      "in_child": true,
+      "glue": [
+        "203.0.113.3"
+      ],
+      "resolved": [
+        "203.0.113.3"
+      ],
+      "cname": null,
+      "resolve_error": null
+    }
+  ],
+  "probes": [
+    {
+      "ns_name": "ns1.broken.example.",
+      "address": "198.51.100.1",
+      "qtype": "SOA",
+      "transport": "udp",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "rcode": "NOERROR",
+        "authoritative": true,
+        "truncated": false,
+        "opt_present": false,
+        "size": 83,
+        "soa": {
+          "mname": "ns1.broken.example.",
+          "rname": "hostmaster.broken.example.",
+          "serial": 2024111301,
+          "refresh": 7200,
+          "retry": 3600,
+          "expire": 1209600,
+          "minimum": 3600
+        },
+        "ns": []
+      }
+    },
+    {
+      "ns_name": "ns1.broken.example.",
+      "address": "198.51.100.1",
+      "qtype": "SOA",
+      "transport": "udp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "NOERROR",
+        "authoritative": true,
+        "truncated": false,
+        "opt_present": true,
+        "size": 94,
+        "soa": {
+          "mname": "ns1.broken.example.",
+          "rname": "hostmaster.broken.example.",
+          "serial": 2024111301,
+          "refresh": 7200,
+          "retry": 3600,
+          "expire": 1209600,
+          "minimum": 3600
+        },
+        "ns": []
+      }
+    },
+    {
+      "ns_name": "ns1.broken.example.",
+      "address": "198.51.100.1",
+      "qtype": "SOA",
+      "transport": "tcp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "NOERROR",
+        "authoritative": true,
+        "truncated": false,
+        "opt_present": true,
+        "size": 94,
+        "soa": {
+          "mname": "ns1.broken.example.",
+          "rname": "hostmaster.broken.example.",
+          "serial": 2024111301,
+          "refresh": 7200,
+          "retry": 3600,
+          "expire": 1209600,
+          "minimum": 3600
+        },
+        "ns": []
+      }
+    },
+    {
+      "ns_name": "ns1.broken.example.",
+      "address": "198.51.100.1",
+      "qtype": "NS",
+      "transport": "udp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "NOERROR",
+        "authoritative": true,
+        "truncated": false,
+        "opt_present": true,
+        "size": 97,
+        "soa": null,
+        "ns": [
+          "ns1.broken.example.",
+          "ns2.broken.example.",
+          "ns3.broken.example."
+        ]
+      }
+    },
+    {
+      "ns_name": "ns1.broken.example.",
+      "address": "198.51.100.1",
+      "qtype": "NS",
+      "transport": "tcp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "NOERROR",
+        "authoritative": true,
+        "truncated": false,
+        "opt_present": true,
+        "size": 97,
+        "soa": null,
+        "ns": [
+          "ns1.broken.example.",
+          "ns2.broken.example.",
+          "ns3.broken.example."
+        ]
+      }
+    },
+    {
+      "ns_name": "ns2.broken.example.",
+      "address": "198.51.100.2",
+      "qtype": "SOA",
+      "transport": "udp",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "rcode": "NOERROR",
+        "authoritative": true,
+        "truncated": false,
+        "opt_present": false,
+        "size": 83,
+        "soa": {
+          "mname": "ns1.broken.example.",
+          "rname": "hostmaster.broken.example.",
+          "serial": 2024111302,
+          "refresh": 7200,
+          "retry": 3600,
+          "expire": 1209600,
+          "minimum": 3600
+        },
+        "ns": []
+      }
+    },
+    {
+      "ns_name": "ns2.broken.example.",
+      "address": "198.51.100.2",
+      "qtype": "SOA",
+      "transport": "udp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "NOERROR",
+        "authoritative": true,
+        "truncated": false,
+        "opt_present": true,
+        "size": 94,
+        "soa": {
+          "mname": "ns1.broken.example.",
+          "rname": "hostmaster.broken.example.",
+          "serial": 2024111302,
+          "refresh": 7200,
+          "retry": 3600,
+          "expire": 1209600,
+          "minimum": 3600
+        },
+        "ns": []
+      }
+    },
+    {
+      "ns_name": "ns2.broken.example.",
+      "address": "198.51.100.2",
+      "qtype": "SOA",
+      "transport": "tcp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "NOERROR",
+        "authoritative": true,
+        "truncated": false,
+        "opt_present": true,
+        "size": 94,
+        "soa": {
+          "mname": "ns1.broken.example.",
+          "rname": "hostmaster.broken.example.",
+          "serial": 2024111302,
+          "refresh": 7200,
+          "retry": 3600,
+          "expire": 1209600,
+          "minimum": 3600
+        },
+        "ns": []
+      }
+    },
+    {
+      "ns_name": "ns2.broken.example.",
+      "address": "198.51.100.2",
+      "qtype": "NS",
+      "transport": "udp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "NOERROR",
+        "authoritative": true,
+        "truncated": false,
+        "opt_present": true,
+        "size": 97,
+        "soa": null,
+        "ns": [
+          "ns1.broken.example.",
+          "ns2.broken.example.",
+          "ns3.broken.example."
+        ]
+      }
+    },
+    {
+      "ns_name": "ns2.broken.example.",
+      "address": "198.51.100.2",
+      "qtype": "NS",
+      "transport": "tcp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "NOERROR",
+        "authoritative": true,
+        "truncated": false,
+        "opt_present": true,
+        "size": 97,
+        "soa": null,
+        "ns": [
+          "ns1.broken.example.",
+          "ns2.broken.example.",
+          "ns3.broken.example."
+        ]
+      }
+    },
+    {
+      "ns_name": "ns3.broken.example.",
+      "address": "203.0.113.3",
+      "qtype": "SOA",
+      "transport": "udp",
+      "edns": false,
+      "outcome": {
+        "kind": "response",
+        "rcode": "REFUSED",
+        "authoritative": false,
+        "truncated": false,
+        "opt_present": false,
+        "size": 32,
+        "soa": null,
+        "ns": []
+      }
+    },
+    {
+      "ns_name": "ns3.broken.example.",
+      "address": "203.0.113.3",
+      "qtype": "SOA",
+      "transport": "udp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "REFUSED",
+        "authoritative": false,
+        "truncated": false,
+        "opt_present": true,
+        "size": 43,
+        "soa": null,
+        "ns": []
+      }
+    },
+    {
+      "ns_name": "ns3.broken.example.",
+      "address": "203.0.113.3",
+      "qtype": "SOA",
+      "transport": "tcp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "REFUSED",
+        "authoritative": false,
+        "truncated": false,
+        "opt_present": true,
+        "size": 43,
+        "soa": null,
+        "ns": []
+      }
+    },
+    {
+      "ns_name": "ns3.broken.example.",
+      "address": "203.0.113.3",
+      "qtype": "NS",
+      "transport": "udp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "REFUSED",
+        "authoritative": false,
+        "truncated": false,
+        "opt_present": true,
+        "size": 43,
+        "soa": null,
+        "ns": []
+      }
+    },
+    {
+      "ns_name": "ns3.broken.example.",
+      "address": "203.0.113.3",
+      "qtype": "NS",
+      "transport": "tcp",
+      "edns": true,
+      "outcome": {
+        "kind": "response",
+        "rcode": "REFUSED",
+        "authoritative": false,
+        "truncated": false,
+        "opt_present": true,
+        "size": 43,
+        "soa": null,
+        "ns": []
+      }
+    }
+  ],
+  "findings": [
+    {
+      "check_id": "DEL-02",
+      "severity": "critical",
+      "name": "ns3.broken.example.",
+      "summary": "Nameserver ns3.broken.example. (203.0.113.3) is not authoritative for broken.example.",
+      "evidence": {
+        "kind": "lame_server",
+        "ns_name": "ns3.broken.example.",
+        "address": "203.0.113.3",
+        "reason": "not_authoritative",
+        "probes": [
+          {
+            "qtype": "SOA",
+            "transport": "udp",
+            "edns": false,
+            "result": "REFUSED"
+          },
+          {
+            "qtype": "SOA",
+            "transport": "udp",
+            "edns": true,
+            "result": "REFUSED"
+          },
+          {
+            "qtype": "SOA",
+            "transport": "tcp",
+            "edns": true,
+            "result": "REFUSED"
+          },
+          {
+            "qtype": "NS",
+            "transport": "udp",
+            "edns": true,
+            "result": "REFUSED"
+          },
+          {
+            "qtype": "NS",
+            "transport": "tcp",
+            "edns": true,
+            "result": "REFUSED"
+          }
+        ]
+      }
+    },
+    {
+      "check_id": "CON-01",
+      "severity": "warning",
+      "name": "broken.example.",
+      "summary": "Nameservers serve different SOA serials: 2024111301, 2024111302",
+      "evidence": {
+        "kind": "serial_mismatch",
+        "serials": [
+          {
+            "value": 2024111301,
+            "servers": [
+              {
+                "ns_name": "ns1.broken.example.",
+                "address": "198.51.100.1"
+              }
+            ]
+          },
+          {
+            "value": 2024111302,
+            "servers": [
+              {
+                "ns_name": "ns2.broken.example.",
+                "address": "198.51.100.2"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "critical": 1,
+    "warning": 1,
+    "notice": 0,
+    "info": 0
+  },
+  "exit_code": 2
+}
