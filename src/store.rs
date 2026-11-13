@@ -1200,7 +1200,7 @@ mod tests {
             "192.0.2.11",
             "192.0.2.12",
             "192.0.2.10",
-            "192.0.2.13",
+            "192.0.2.11",
         ]
         .iter()
         .enumerate()
@@ -1213,14 +1213,14 @@ mod tests {
             let d = store.diff(ZONE, runs[step], runs[step + 1], &[]).unwrap();
             assert!(d.changed && !d.changes[0].rotation, "step {step}");
         }
-        // The fourth, to a neighbouring address, is rotation.
+        // The fourth, back to an address seen before, is rotation.
         let d = store.diff(ZONE, runs[3], runs[4], &[]).unwrap();
         assert!(!d.changed);
         assert!(d.changes[0].rotation);
         assert_eq!((d.summary.modified, d.summary.rotations), (0, 1));
 
-        // An address in a network never seen before still counts.
-        save(&mut store, &obs_with("203.0.113.9", 600));
+        // An address never seen before still counts, even a neighbouring one.
+        save(&mut store, &obs_with("192.0.2.13", 600));
         let runs = store.runs(ZONE).unwrap();
         let d = store.diff(ZONE, runs[4], runs[5], &[]).unwrap();
         assert!(d.changed && !d.changes[0].rotation);

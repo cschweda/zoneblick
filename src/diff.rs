@@ -303,22 +303,14 @@ impl Volatility {
     }
 
     /// True when a change to `key` is only rotation: the set is volatile
-    /// and every new address was seen before, or lies in the same /24
-    /// (IPv4) or /48 (IPv6) as one that was.
+    /// and every address now served was served in an earlier run. Nearness
+    /// does not count: an address that was never seen is a change, even in
+    /// the same network, because a neighbouring address can belong to
+    /// someone else.
     fn is_rotation(&self, key: &Key, added: &[String]) -> bool {
-        let Some(pool) = self.pools.get(key) else {
-            return false;
-        };
-        let prefix = |text: &str| -> Option<Vec<u8>> {
-            match text.parse::<IpAddr>().ok()? {
-                IpAddr::V4(a) => Some(a.octets()[..3].to_vec()),
-                IpAddr::V6(a) => Some(a.octets()[..6].to_vec()),
-            }
-        };
-        let known: BTreeSet<Vec<u8>> = pool.iter().filter_map(|a| prefix(a)).collect();
-        added
-            .iter()
-            .all(|a| pool.contains(a) || prefix(a).is_some_and(|p| known.contains(&p)))
+        self.pools
+            .get(key)
+            .is_some_and(|pool| added.iter().all(|a| pool.contains(a)))
     }
 }
 

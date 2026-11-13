@@ -128,7 +128,7 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 
 ## Drift, continued (0.6.0)
 
-- Volatility: an A or AAAA set that changed in each of three consecutive run-to-run steps is volatile. A later change is `rotation`, not counted and not alerted, when every new address was seen in the last ten runs or shares a /24 or /48 with one that was. This stands in for the design's "new ASN" test, since there is no ASN data. It is computed from stored runs at diff time; the `names.volatile` column is not used.
+- Volatility: an A or AAAA set that changed in each of three consecutive run-to-run steps is volatile. A later change is `rotation`, not counted and not alerted, only when every address was already served in one of the last ten runs. An unseen address always counts, even in the same network: a neighbouring address can belong to someone else, so treating nearness as rotation would let a redirect pass silently (raised by a security review of 0.6.0, which did match on /24 and /48; fixed in 0.6.1). The design's "new ASN" test is not built, since there is no ASN data. It is computed from stored runs at diff time; the `names.volatile` column is not used.
 - Baselines: one pinned run per zone (`baselines` table, layout 4). `diff --baseline` compares it with the latest run; alerts still compare with the previous run only.
 - Retention: the design's default (every run for 30 days, then the last run of each UTC day for a year). A zone's latest run and its baseline are never deleted; finding history is kept. `zoneblick prune` by hand, and the daemon after every round.
 - Not built from the design's CLI list: `zones add | remove` and `export`; AXFR and provider-API discovery; muting a finding.
