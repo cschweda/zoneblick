@@ -483,7 +483,7 @@ footer .grid{row-gap:24px}
       <div class="body">
         <h2>How a run works.</h2>
         <p class="intro">The same five steps on every schedule tick, or once from the command line.</p>
-        <p class="tier"><b>Working today</b><span>Steps 1 to 4 and the diff, from the command line with <span class="mono">run</span> and <span class="mono">diff</span>. Schedules and alerts are planned.</span></p>
+        <p class="tier"><b>Working today</b><span>All five steps: on a schedule with <span class="mono">serve</span>, or by hand with <span class="mono">run</span> and <span class="mono">diff</span>. Telling rotating CDN pools apart from real drift is partly done: rotation of one pool is recognised, learning volatile names is not built yet.</span></p>
         <ol class="steps">
           <li><span class="mono">1</span><b>Walk from the root</b><p>Follow referrals down to your zone and record the whole delegation path, glue included.</p></li>
           <li><span class="mono">2</span><b>Ask every server</b><p>Query each authoritative nameserver directly for each name and type, over UDP and TCP, IPv4 and IPv6.</p></li>
@@ -536,11 +536,16 @@ footer .grid{row-gap:24px}
         <h2>Run it on your own server.</h2>
         <p class="intro">One binary, one config file, one SQLite file. There is no hosted version and no account to create.</p>
         <h3 class="h3big" id="install">Install it.</h3>
-        <p class="h3sub">Download a ready-built binary for Linux, macOS or Windows, or build from source.</p>
+        <p class="h3sub">Use the install script, download a ready-built binary for Linux, macOS or Windows, run the Docker image, or build from source.</p>
         <div class="run two">
           <article class="wide">
+            <h3>Install script</h3>
+            <p>For Linux and macOS. It downloads the newest release, verifies its checksum and installs the binary. Run as root on a Linux server with systemd, it also sets up the daemon as a service with a starter config. <a href="https://github.com/cschweda/zoneblick/blob/main/install.sh">Read the script</a> first if you like.</p>
+<pre tabindex="0">curl -fsSL https://zoneblick.com/install.sh | sh</pre>
+          </article>
+          <article class="wide">
             <h3>Download a binary</h3>
-            <p>Release <a href="https://github.com/cschweda/zoneblick/releases/tag/v0.3.0">v0.3.0</a> has ready-built binaries for Linux, macOS and Windows. Pick your system, paste the commands into a terminal, and the last line runs your first check. Each release also has a <span class="mono">SHA256SUMS</span> file; the <a href="https://github.com/cschweda/zoneblick#install">README</a> shows how to verify a download.</p>
+            <p>Release <a href="https://github.com/cschweda/zoneblick/releases/tag/v0.4.0">v0.4.0</a> has ready-built binaries for Linux, macOS and Windows. Pick your system, paste the commands into a terminal, and the last line runs your first check. Each release also has a <span class="mono">SHA256SUMS</span> file; the <a href="https://github.com/cschweda/zoneblick#install">README</a> shows how to verify a download.</p>
             <div class="tabs">
               <div class="tablist" role="tablist" aria-label="Operating system">
                 <button type="button" role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="true">Linux</button>
@@ -549,7 +554,7 @@ footer .grid{row-gap:24px}
               </div>
               <div class="panel on" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux">
                 <h4 class="ptitle">Linux</h4>
-<pre tabindex="0">V=v0.3.0
+<pre tabindex="0">V=v0.4.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -561,7 +566,7 @@ zoneblick check example.org</pre>
               </div>
               <div class="panel" role="tabpanel" id="panel-macos" aria-labelledby="tab-macos">
                 <h4 class="ptitle">macOS</h4>
-<pre tabindex="0">V=v0.3.0
+<pre tabindex="0">V=v0.4.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -575,7 +580,7 @@ zoneblick check example.org</pre>
               </div>
               <div class="panel" role="tabpanel" id="panel-windows" aria-labelledby="tab-windows">
                 <h4 class="ptitle">Windows (PowerShell)</h4>
-<pre tabindex="0">$V = "v0.3.0"
+<pre tabindex="0">$V = "v0.4.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -613,7 +618,7 @@ cargo uninstall zoneblick</pre>
         </div>
 
         <h3 class="h3big">Use it.</h3>
-        <p class="h3sub">Checking a zone and tracking its changes work today. The daemon and the Docker image are planned.</p>
+        <p class="h3sub">Everything here works today: one-off checks, stored runs, and the daemon with its web UI and alerts.</p>
         <div class="run two">
           <article>
             <h3>Try a zone</h3>
@@ -628,7 +633,7 @@ zoneblick diff example.org</pre>
           </article>
           <article>
             <h3>Run the daemon</h3>
-            <p>Planned. Scheduler, web UI and alerts. Put it behind your reverse proxy.</p>
+            <p>Works today. Checks your zones on a schedule, alerts by webhook, ntfy or email, and serves the API and web UI on localhost. Put it behind your reverse proxy.</p>
 <pre tabindex="0"><span class="c"># /etc/zoneblick/zoneblick.toml</span>
 [[zone]]
 name  = "example.org"
@@ -638,15 +643,15 @@ zoneblick serve</pre>
           </article>
           <article>
             <h3>Or use Docker</h3>
-            <p>Planned. One image, one volume for data, one mounted config file.</p>
+            <p>Works today. One image for x86_64 and ARM, one volume for data, one mounted config file. The <a href="https://github.com/cschweda/zoneblick#docker">README</a> has a Compose file and the token setup.</p>
 <pre tabindex="0">docker run -d \
-  -v ./data:/data \
-  -v ./zoneblick.toml:/etc/zoneblick.toml \
+  -v zoneblick-data:/data \
+  -v ./zoneblick.toml:/etc/zoneblick.toml:ro \
   -p 127.0.0.1:8053:8053 \
-  zoneblick serve</pre>
+  ghcr.io/cschweda/zoneblick</pre>
           </article>
         </div>
-        <p class="status"><b>Early days</b><span>v0.3.0 is an early pre-release. Checking a zone, including DNSSEC, storing runs and <span class="mono">diff</span> work today. The daemon and Docker commands show the planned interface.</span></p>
+        <p class="status"><b>Early days</b><span>v0.4.0 is an early pre-release. Checks for delegation, consistency and DNSSEC, stored runs, the daemon, alerts and the web UI all work today. The mail-policy and takeover checks, and the deep checks, are still to come.</span></p>
       </div>
     </div>
   </section>

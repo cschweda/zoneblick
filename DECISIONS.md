@@ -91,3 +91,26 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - The database layout moved to version 2 (a `dnssec_json` column on runs); older databases are upgraded in place on open.
 - The JSON report gained a `dnssec` field; `schema_version` stays 1 because fields were only added.
 - The terminal output's clean message is now "All checks passed."
+
+## Phases 3, 4 and 6
+
+- Dependencies added with the author's agreement: `axum`, `toml`, `reqwest` and `lettre`. `rustls` is named directly as well, only to select the `ring` crypto provider, so no OpenSSL or aws-lc is needed and the static Linux builds still work.
+- The web UI is the existing demo page wired to the API and compiled into the binary, not the Nuxt 4 app in the design (agreed with the author). No Node build step and no `rust-embed`.
+- The UI gets its data from one endpoint, `GET /api/v1/ui`, shaped for the page.
+- The UI loads nothing from other sites (no web fonts) and is served with a restrictive Content-Security-Policy.
+- The config file is refused when it has unknown keys, so typos are reported.
+- The API token is stored only as a SHA-256 hash (`token_sha256`); `zoneblick token` prints the config line for a token the user supplies. zoneblick does not generate tokens.
+- A non-loopback `bind` without a token is refused at startup.
+- Without a token the API answers only requests whose Host header is a loopback name, which blocks DNS rebinding.
+- Requests that change something must send JSON and must not carry a cross-site Origin or Sec-Fetch-Site header.
+- `GET /health` needs no token and returns only status and version.
+- The daemon checks every zone at startup and then once per interval, one zone at a time.
+- A zone's names in the daemon are its `seeds` plus any names remembered from `zoneblick run`.
+- The `ignore` patterns of a zone apply to the daemon's change reports, alerts and the API's diff.
+- An alert is sent when findings open or resolve, records change or the delegation changes; on a zone's first run every finding counts as new; `info` findings never alert.
+- A failed run is logged and shown in the UI, not stored, and does not alert.
+- Email alerts are built with `lettre` over STARTTLS by default; they have not been tested against a real mail server.
+- The `discover` and `deep` config keys from the design are accepted and ignored for now.
+- Packaging: `install.sh` (also served at zoneblick.com/install.sh) installs the newest release, pre-releases included, and verifies its checksum; as root on Linux with systemd it creates the user, config, data directory and service.
+- The container image is built from the release's static binaries on `distroless/static` (no compiler in the image build, no emulation), runs as an unprivileged user, and is published to `ghcr.io/cschweda/zoneblick`.
+- The project website uses Plausible analytics; the binary and its web UI send no telemetry.

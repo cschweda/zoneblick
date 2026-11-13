@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** Phase 2. `zoneblick check` checks a zone once: delegation, nameserver consistency and DNSSEC. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed between runs. The daemon, alerts and web UI are not built yet. The current release, `v0.3.0`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency and DNSSEC. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. The mail-policy and takeover checks are not built yet. The current release, `v0.4.0`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -22,9 +22,9 @@ What changed between two stored runs of a zone:
 
 ![Terminal output of zoneblick diff: a CNAME target modified on every nameserver, a TXT record removed, an A record changed on one nameserver only, an A record added, and a new consistency finding opened](screenshots/diff.png)
 
-The web interface is planned, not built. The [demo](https://zoneblick.com/demo.html) shows the intended design with invented sample data:
+The web UI that `zoneblick serve` provides. This picture is of the [demo](https://zoneblick.com/demo.html), which is the same interface filled with invented sample data, including checks that are not built yet:
 
-![The planned zoneblick web interface, shown with sample data: a list of zones on the left and the findings for example.org on the right](screenshots/demo-ui.png)
+![The zoneblick web interface, shown with sample data: a list of zones on the left and the findings for example.org on the right](screenshots/demo-ui.png)
 
 ## Platforms
 
@@ -48,11 +48,47 @@ On every platform:
 
 ## Install
 
-There are two ways to install zoneblick: download a binary, or build it from source.
+There are four ways to install zoneblick: the install script, a binary download, Docker, or building from source.
+
+### Install script (Linux and macOS)
+
+```
+curl -fsSL https://zoneblick.com/install.sh | sh
+```
+
+The script downloads the newest release for your system, verifies its SHA-256 checksum, and installs the binary to `/usr/local/bin`. Read it first if you like: it is [`install.sh`](install.sh) in this repository.
+
+On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick` system user, a starter config at `/etc/zoneblick/zoneblick.toml`, a data directory at `/var/lib/zoneblick`, and a `zoneblick` service, which it starts. Add your zones to the config and run `systemctl restart zoneblick`. An existing config is never overwritten.
+
+| Option | Effect |
+|---|---|
+| `--version v0.4.0` | Install that release instead of the newest |
+| `--prefix DIR` | Install the binary to `DIR/bin` |
+| `--no-service` | Binary only; no user, config or service |
+
+Pass options after `sh -s --`, for example `curl -fsSL https://zoneblick.com/install.sh | sh -s -- --no-service`.
+
+### Docker
+
+Each release is published as a multi-architecture image (x86_64 and ARM 64-bit) at `ghcr.io/cschweda/zoneblick`.
+
+```
+curl -fsSLO https://raw.githubusercontent.com/cschweda/zoneblick/main/compose.yaml
+curl -fsSL https://raw.githubusercontent.com/cschweda/zoneblick/main/packaging/zoneblick.docker.toml -o zoneblick.toml
+
+# choose a token and put its hash in zoneblick.toml as token_sha256
+TOKEN=$(openssl rand -hex 32); echo "your token: $TOKEN"
+docker run --rm ghcr.io/cschweda/zoneblick:latest token "$TOKEN"
+
+# edit zoneblick.toml: paste the hash, list your zones
+docker compose up -d
+```
+
+Then open `http://127.0.0.1:8053` and enter the token. The container listens on all its interfaces, so a token is required; `compose.yaml` publishes the port on the host's localhost only. Data lives in the `zoneblick-data` volume. The image contains only the static binary and CA certificates and runs as an unprivileged user.
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.3.0`.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.4.0`.
 
 | System | File name ends in |
 |---|---|
@@ -64,12 +100,12 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.3.0` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.4.0` to install another release.
 
 **Linux**
 
 ```
-V=v0.3.0
+V=v0.4.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -82,7 +118,7 @@ zoneblick check example.org
 **macOS**
 
 ```
-V=v0.3.0
+V=v0.4.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -97,7 +133,7 @@ zoneblick check example.org
 **Windows (PowerShell)**
 
 ```
-$V = "v0.3.0"
+$V = "v0.4.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -158,7 +194,7 @@ cargo install --path .
 | Install somewhere else | Add `--root /usr/local` (the binary goes in `/usr/local/bin`) |
 | Remove | `cargo uninstall zoneblick` |
 
-zoneblick is one binary with no config file and no data directory in this phase, so removing it leaves nothing behind however you installed it. It is not on crates.io, and there is no install script or Docker image yet; those come with the packaging phase in the [design](DESIGN.md).
+zoneblick is one binary. `check`, `run` and `diff` need no config file; only `run` and `serve` write anything, to the database file. It is not on crates.io.
 
 ## Try it
 
@@ -269,6 +305,96 @@ Findings have a lifecycle too: a finding seen in a run is open, and one that is 
 
 Learning which names are volatile, and comparing against a pinned baseline, are designed but not built yet.
 
+## Run it as a daemon
+
+`zoneblick serve` checks every zone in a config file on a schedule, stores each run, alerts you when something changes, and serves an API and a web UI.
+
+```
+zoneblick serve --config zoneblick.toml
+```
+
+It checks all zones at startup and then once per interval. Stop it with Ctrl-C. The [install script](#install-script-linux-and-macos) sets this up as a systemd service; [`packaging/zoneblick.service`](packaging/zoneblick.service) is the unit for manual installs.
+
+### Configuration
+
+```toml
+[server]
+bind = "127.0.0.1:8053"           # where the API and web UI listen
+data_dir = "/var/lib/zoneblick"    # holds zoneblick.sqlite
+# token_sha256 = "..."             # required unless bind is localhost
+
+[schedule]
+every = "1h"                       # 45s, 30m, 1h, 2d
+max_qps_per_server = 5
+
+[[zone]]
+name = "example.org"
+seeds = ["www", "api", "mail"]     # names to check besides the apex
+ignore = ["_acme-challenge.*"]     # left out of change reports and alerts
+
+[alerts.webhook]
+url = "https://example.org/hooks/zoneblick"
+
+[alerts.ntfy]
+url = "https://ntfy.sh/your-topic"
+# token = "..."
+
+[alerts.email]
+to = "ops@example.org"
+from = "zoneblick@example.org"
+smtp_host = "smtp.example.org"
+# smtp_port = 587
+# tls = "starttls"                 # or "tls", or "none"
+# username = "zoneblick"
+# password_file = "/etc/zoneblick/smtp-password"
+```
+
+Every section is optional. Unknown keys are refused, so a typo is reported instead of ignored. The `discover` key on a zone and `deep` under `[schedule]` are accepted for the design's later phases and do nothing yet.
+
+### The API token
+
+The API and UI need no token while `bind` is a localhost address; then zoneblick only answers requests addressed to `localhost`, `127.0.0.1` or `[::1]`. To listen on any other address you must set a token. Pick a long random one and store only its hash:
+
+```
+TOKEN=$(openssl rand -hex 32); echo "$TOKEN"
+zoneblick token "$TOKEN"        # prints: token_sha256 = "..."
+```
+
+Put the printed line under `[server]`. Clients send the token as `Authorization: Bearer <token>`; the web UI asks for it once per browser session. For access from other machines, keep `bind` on localhost and put a reverse proxy with TLS in front.
+
+### Alerts
+
+An alert is sent when something changes state: a finding opens or resolves, records change, or the delegation changes. A finding that stays open does not alert again. On the first run of a zone, every finding counts as new.
+
+| Sink | What is sent |
+|---|---|
+| Webhook | An HTTP POST with JSON: `zone`, `run`, `severity`, `title`, `text`, `findings_opened`, `findings_resolved`, `changes` |
+| ntfy | The text, with the title and a priority taken from the severity |
+| Email | A plain-text message over SMTP |
+
+Email has been tested only as far as building the message; it has not been tried against a real mail server yet.
+
+### The web UI
+
+Open the `bind` address in a browser. The page lists your zones with their open findings, a nameserver table, the delegation path, and a history of runs with what changed in each. "Run checks now" starts a run of every zone. The page is a single file compiled into the binary; it loads nothing from other sites.
+
+### The API
+
+JSON under `/api/v1`. All routes except `health` need the token when one is set.
+
+| Route | Returns |
+|---|---|
+| `GET /health` | `status` and `version`; needs no token |
+| `GET /zones` | The stored zones with run and finding counts, and any run errors |
+| `GET /zones/{zone}` | One zone: names, runs, the latest run's observations, and its findings |
+| `GET /runs?zone=` | The stored runs of a zone |
+| `GET /findings?zone=&state=` | Findings with their lifecycle; `state` is `open` or `resolved` |
+| `GET /diff?zone=&from=&to=` | The same document as `diff --json` |
+| `POST /runs` | Starts a run in the background; body `{}` for all zones or `{"zone": "example.org"}` |
+| `GET /ui` | Everything the web UI shows, in one document |
+
+Errors are JSON too: `{"error": {"kind": "...", "message": "..."}}` with a matching HTTP status. Requests that change something must send JSON and must not come from another website.
+
 ## Command reference
 
 | Command | What it does | Stores anything |
@@ -277,6 +403,8 @@ Learning which names are volatile, and comparing against a pinned baseline, are 
 | `zoneblick run <zone>` | Checks the zone and its names, stores the run, shows changes since the last run | Yes |
 | `zoneblick diff <zone>` | Compares two stored runs | No |
 | `zoneblick zones list` | Lists the stored zones | No |
+| `zoneblick serve` | Runs the daemon: schedule, alerts, API and web UI | Yes |
+| `zoneblick token` | Prints the hash of an API token for the config file | No |
 
 ### Options
 
@@ -288,6 +416,7 @@ Learning which names are volatile, and comparing against a pinned baseline, are 
 | `--forget-name NAME` | `run` | Stop checking a remembered name; repeatable |
 | `--from RUN`, `--to RUN` | `diff` | The runs to compare. Default: the latest and the one before it |
 | `--ignore PATTERN` | `diff` | Leave out matching names; repeatable |
+| `--config FILE` | `serve` | The configuration file. Default: `zoneblick.toml` |
 | `--record FILE` | `check`, `run` | Save every DNS exchange of the run to a fixture file |
 | `--replay FILE` | `check`, `run` | Answer from a fixture file instead of the network |
 
@@ -439,17 +568,17 @@ The same lint and tests run in CI on Linux, macOS and Windows for every push and
 Binaries are built by GitHub Actions (`.github/workflows/release.yml`). To publish a release, set the version in `Cargo.toml`, commit, then push a matching tag:
 
 ```
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
-The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, and attaches them to a GitHub Release with a `SHA256SUMS` file. Each archive holds the binary, this README and both license files. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
+The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, and attaches them to a GitHub Release with a `SHA256SUMS` file, then publishes the container image to `ghcr.io/cschweda/zoneblick`. Each archive holds the binary, this README and both license files. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
 
 ## What it will do
 
 - **Zone health:** delegation, nameserver consistency, DNSSEC. All three have checks now; the deeper DNSSEC checks and signature verification are still to come.
 - **Exposure:** dangling records and subdomain-takeover risk.
-- **Drift history:** every run stored and compared with the last. The store and the diff exist now; scheduled runs and alerts do not.
+- **Drift history:** every run stored and compared with the last, on a schedule, with alerts. All of this exists now; learning which names are volatile and pinned baselines do not.
 
 One binary, one config file, one SQLite file, on your own server.
 
@@ -469,6 +598,12 @@ One binary, one config file, one SQLite file, on your own server.
 | `src/dnssec.rs` | DNSSEC record parsing, key tags and DS digests |
 | `src/store.rs` | The SQLite store: snapshots, record sets, finding lifecycle |
 | `src/diff.rs` | The diff engine: pure functions over two stored runs |
+| `src/config.rs` | The `zoneblick.toml` configuration file |
+| `src/serve.rs` | The daemon: scheduler, API and UI data |
+| `src/alerts.rs` | Composing and sending alerts |
+| `src/runner.rs` | The store-and-compare step shared by `run` and `serve` |
+| `src/ui/index.html` | The web UI, compiled into the binary |
+| `install.sh`, `compose.yaml`, `packaging/` | Install script, Docker Compose file, systemd unit and image recipe |
 | `src/cli.rs` | The commands |
 | `tests/` | Offline tests and DNS fixtures |
 | `screenshots/` | The images in this README |
@@ -478,6 +613,10 @@ One binary, one config file, one SQLite file, on your own server.
 ## Responsible use
 
 Scan only zones you control.
+
+## Privacy
+
+zoneblick sends no telemetry. The binary talks to DNS servers, to the alert destinations you configure, and to nothing else; the web UI loads nothing from other sites. The project website, zoneblick.com, uses [Plausible](https://plausible.io) for privacy-friendly, cookie-free visit statistics.
 
 ## License
 

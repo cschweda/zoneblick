@@ -99,7 +99,7 @@ It is not a hosted service. You run your own instance; anyone else can run their
 | DNSSEC | `hickory-proto` DNSSEC types + `ring` | Validation logic is custom; see Risks |
 | HTTP | `axum` | API and static asset serving |
 | Storage | SQLite (`rusqlite`, bundled) | One file, no external DB |
-| Web UI | Nuxt 4 + Nuxt UI v4, `nuxt generate` (static SPA), pnpm | Built once, embedded in the binary with `rust-embed` |
+| Web UI | Nuxt 4 + Nuxt UI v4, `nuxt generate` (static SPA), pnpm | Built once, embedded in the binary with `rust-embed`. **As built (2026-11-13):** a single plain HTML and JavaScript page, the demo design wired to the API, compiled in with no build step; a Nuxt rewrite stays possible |
 | Config | TOML | Single `zoneblick.toml` |
 
 ### Where the default stack fits and where it does not
