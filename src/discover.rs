@@ -127,6 +127,42 @@ pub async fn axfr_names(zone: &str, servers: &[IpAddr]) -> Result<Vec<String>, S
     Err(last)
 }
 
+/// Whether a server starts a zone transfer for us. Only the first message
+/// is read; nothing of the zone is kept.
+pub async fn axfr_allowed(zone: &str, address: IpAddr) -> bool {
+    let attempt = async {
+        let name = Name::from_ascii(zone).ok()?;
+        let mut query = Message::query();
+        query.metadata.recursion_desired = false;
+        query.add_query(Query::query(name, RecordType::AXFR));
+        let wire = query.to_vec().ok()?;
+        let mut stream = TcpStream::connect(SocketAddr::new(address, 53))
+            .await
+            .ok()?;
+        stream
+            .write_all(&(wire.len() as u16).to_be_bytes())
+            .await
+            .ok()?;
+        stream.write_all(&wire).await.ok()?;
+        let mut len = [0u8; 2];
+        stream.read_exact(&mut len).await.ok()?;
+        let mut buf = vec![0u8; u16::from_be_bytes(len) as usize];
+        stream.read_exact(&mut buf).await.ok()?;
+        let msg = Message::from_vec(&buf).ok()?;
+        Some(
+            msg.metadata.response_code == ResponseCode::NoError
+                && msg
+                    .answers
+                    .first()
+                    .is_some_and(|rec| rec.record_type() == RecordType::SOA),
+        )
+    };
+    matches!(
+        tokio::time::timeout(Duration::from_secs(8), attempt).await,
+        Ok(Some(true))
+    )
+}
+
 /// One zone transfer from one server.
 pub async fn axfr_from(zone: &str, addr: SocketAddr) -> Result<Vec<String>, String> {
     let name = Name::from_ascii(zone).map_err(|e| e.to_string())?;

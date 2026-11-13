@@ -481,6 +481,7 @@ impl Resolver {
             qtype,
             edns: true,
             dnssec: false,
+            probe: Default::default(),
         };
         let mut msg = self.send(&spec).await?;
         if msg.metadata.response_code == ResponseCode::FormErr {

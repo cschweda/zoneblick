@@ -5,6 +5,7 @@
 //! offline against hand-built or replayed observations.
 
 pub mod consistency;
+pub mod deep;
 pub mod delegation;
 pub mod policy;
 pub mod security;
@@ -213,6 +214,14 @@ pub enum Evidence {
         url: String,
         status: Option<u16>,
     },
+    ServerBehaviour {
+        ns_name: String,
+        address: IpAddr,
+        details: Vec<String>,
+    },
+    ZoneDetail {
+        details: Vec<String>,
+    },
     WildcardAlias {
         /// The wildcard record's name, `*.<zone>`.
         wildcard: String,
@@ -272,6 +281,8 @@ impl Finding {
             Evidence::MailTargetProblem { target, .. } => target.clone(),
             Evidence::DanglingTarget { rtype, target, .. } => format!("{rtype}/{target}"),
             Evidence::WildcardAlias { target, .. } => target.clone(),
+            Evidence::ServerBehaviour { address, .. } => address.to_string(),
+            Evidence::ZoneDetail { .. } => String::new(),
             Evidence::UnclaimedService { service, .. } => service.clone(),
         };
         format!("{}|{}|{}", self.check_id, self.name, detail)
@@ -300,6 +311,8 @@ pub struct CheckInfo {
     pub title: &'static str,
     pub severity: Severity,
     pub implemented: bool,
+    /// True for the checks that only a deep run makes.
+    pub deep: bool,
 }
 
 /// The implemented part of the check catalog in `DESIGN.md`.
@@ -450,7 +463,69 @@ pub const CATALOG: &[CheckInfo] = &[
         Severity::Notice,
         true,
     ),
+    deep_check(
+        "SEC-07",
+        "NSEC3 with extra iterations or a salt",
+        Severity::Notice,
+    ),
+    deep_check(
+        "SEC-09",
+        "CDS or CDNSKEY records inconsistent, or not matching the DNSKEY set",
+        Severity::Warning,
+    ),
+    deep_check(
+        "SEC-10",
+        "An announced algorithm has no signatures over some record sets",
+        Severity::Warning,
+    ),
+    deep_check(
+        "NSB-01",
+        "Server does not follow the EDNS rules",
+        Severity::Warning,
+    ),
+    deep_check(
+        "NSB-02",
+        "Zone transfer allowed to anyone",
+        Severity::Warning,
+    ),
+    deep_check(
+        "NSB-03",
+        "Recursion offered by an authoritative server",
+        Severity::Warning,
+    ),
+    deep_check("NSB-04", "Query name case not preserved", Severity::Notice),
+    deep_check(
+        "NET-02",
+        "Nameserver address in private or reserved space",
+        Severity::Warning,
+    ),
+    deep_check("SOA-01", "SOA timers outside sane ranges", Severity::Notice),
+    deep_check(
+        "SOA-02",
+        "SOA primary is not a listed nameserver, or has no address",
+        Severity::Notice,
+    ),
+    deep_check(
+        "SOA-03",
+        "SOA contact is at a domain that takes no mail",
+        Severity::Notice,
+    ),
 ];
+
+const fn deep_check(id: &'static str, title: &'static str, severity: Severity) -> CheckInfo {
+    CheckInfo {
+        id,
+        title,
+        severity,
+        implemented: true,
+        deep: true,
+    }
+}
+
+/// True for a check that only a deep run makes.
+pub fn is_deep(check_id: &str) -> bool {
+    CATALOG.iter().any(|c| c.deep && c.id == check_id)
+}
 
 const fn check(
     id: &'static str,
@@ -463,6 +538,7 @@ const fn check(
         title,
         severity,
         implemented,
+        deep: false,
     }
 }
 
@@ -495,6 +571,17 @@ const CHECKS: &[Check] = &[
     policy::tko_03_unregistered_target,
     policy::tko_04_spf_unregistered,
     policy::tko_05_wildcard,
+    deep::sec_07_nsec3_parameters,
+    deep::sec_09_cds,
+    deep::sec_10_algorithm_completeness,
+    deep::nsb_01_edns_compliance,
+    deep::nsb_02_open_transfer,
+    deep::nsb_03_recursion,
+    deep::nsb_04_case,
+    deep::net_02_reserved_address,
+    deep::soa_01_timers,
+    deep::soa_02_mname,
+    deep::soa_03_rname,
 ];
 
 /// Run every Phase 0 check. Findings come back in a stable order: by

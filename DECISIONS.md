@@ -152,3 +152,14 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 ## Release pipeline
 
 - Every GitHub Action in the workflows is pinned to a full commit SHA, with the version in a comment, because the release job can publish releases and container images; Dependabot proposes updates monthly.
+
+## Phase 7: deep checks (0.8.0, partly)
+
+- Built: SEC-07, SEC-09, SEC-10, NSB-01 to NSB-04, NET-02, SOA-01 to SOA-03. Not built: SEC-06 (denial proofs), SEC-08 (rollover state, which needs history inside a check), NET-01 (needs ASN data; the design's open question 5), and signature verification.
+- A deep run is a light run plus the deep probes (`--deep`, or `[schedule] deep = "24h"`). Unlike the design, the daemon makes no deep runs unless `deep` is set: an upgrade should not start sending zone-transfer requests and odd EDNS queries by itself.
+- The deep probes per responding nameserver: an SOA query with EDNS version 1, one with an unknown EDNS option (code 65001), one with RD set, one with the name in mixed case; NSEC3PARAM, CDS and CDNSKEY queries; one AXFR attempt of which only the first message is read. The AXFR attempt is live-only (not recorded or replayed).
+- `QuerySpec` gained a `probe` field, left out of fixtures when plain, so existing fixtures still replay.
+- Deep check IDs are flagged in the catalog. A light run carries a zone's open deep findings forward (their last-seen run moves on), so only a deep run resolves them and no diff reports them as resolved in between.
+- SOA-01 uses loose limits (see the README), not Zonemaster's stricter defaults, which would flag every zone at some large providers.
+- NET-02 treats documentation ranges as reserved, so test worlds on those ranges report it in deep runs.
+- The deep probe data is in `check --json` and `run --json` under `deep`; it is not stored in the database, only the run's level and the findings are.

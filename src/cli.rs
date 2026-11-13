@@ -243,6 +243,12 @@ pub struct CheckArgs {
     /// The zone to check, for example example.org. Check only zones you control.
     pub zone: String,
 
+    /// Also make the deep checks: a few unusual queries per nameserver and
+    /// one zone-transfer attempt, for the checks on nameserver behaviour,
+    /// SOA values and DNSSEC details.
+    #[arg(long)]
+    pub deep: bool,
+
     /// Print one JSON document instead of text.
     #[arg(long)]
     pub json: bool,
@@ -272,6 +278,12 @@ pub struct RunArgs {
     /// are checked from the next run on. Repeat for both.
     #[arg(long, value_name = "SOURCE", value_parser = ["ct", "axfr"])]
     pub discover: Vec<String>,
+
+    /// Also make the deep checks: a few unusual queries per nameserver and
+    /// one zone-transfer attempt, for the checks on nameserver behaviour,
+    /// SOA values and DNSSEC details.
+    #[arg(long)]
+    pub deep: bool,
 
     /// The database file. Created when it does not exist.
     #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
@@ -495,7 +507,12 @@ pub async fn check(args: &CheckArgs, color: bool) -> CommandOutput {
 async fn try_check(args: &CheckArgs, color: bool) -> Result<CommandOutput, CliError> {
     let zone = normalise_zone(&args.zone)?;
     let (client, started_at, _) = make_client(&args.source, &zone)?;
-    let observed = observe_zone(client.clone(), &zone, started_at).await;
+    let mut observed = observe_zone(client.clone(), &zone, started_at).await;
+    if args.deep
+        && let Ok(obs) = &mut observed
+    {
+        crate::resolver::add_deep(client.clone(), obs).await;
+    }
     save_recording(&args.source, &client, &zone, started_at)?;
 
     let obs = observed?;
@@ -561,7 +578,12 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     }
     names.sort();
 
-    let observed = observe_zone_records(client.clone(), &zone, started_at, &names).await;
+    let mut observed = observe_zone_records(client.clone(), &zone, started_at, &names).await;
+    if args.deep
+        && let Ok(obs) = &mut observed
+    {
+        crate::resolver::add_deep(client.clone(), obs).await;
+    }
     save_recording(&args.source, &client, &zone, started_at)?;
     let obs = observed?;
 

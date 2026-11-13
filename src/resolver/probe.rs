@@ -151,11 +151,12 @@ pub async fn observe_zone(
         records: Vec::new(),
         dnssec: Some(dnssec),
         policy: Some(policy),
+        deep: None,
     })
 }
 
 /// The nameserver addresses that answered at least one probe, in order.
-fn responding_servers(probes: &[ServerProbe]) -> Vec<(String, IpAddr)> {
+pub(crate) fn responding_servers(probes: &[ServerProbe]) -> Vec<(String, IpAddr)> {
     let mut servers: Vec<(String, IpAddr)> = Vec::new();
     for probe in probes {
         if probe.outcome.response().is_some() && !servers.iter().any(|(_, a)| *a == probe.address) {
@@ -313,6 +314,7 @@ async fn ask_record(
         qtype,
         edns: true,
         dnssec: false,
+        probe: Default::default(),
     };
     let mut outcome = record_outcome(&spec, client.exchange(&spec).await);
     if let Some(true) = outcome.as_ref().err().copied() {
@@ -425,6 +427,7 @@ async fn detect_vantage(client: &Client) -> Vantage {
                 qtype: QType::Ns,
                 edns: true,
                 dnssec: false,
+                probe: Default::default(),
             };
             if matches!(client.exchange(&spec).await, RawOutcome::Response { .. }) {
                 *slot = true;
@@ -454,6 +457,7 @@ async fn probe_one(
         qtype,
         edns,
         dnssec: false,
+        probe: Default::default(),
     };
     let outcome = match client.exchange(&spec).await {
         RawOutcome::Response { wire } => observe_response(&spec, &wire),

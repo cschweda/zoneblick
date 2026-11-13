@@ -445,7 +445,8 @@ footer .grid{row-gap:24px}
 
         <h3 class="h3big">Deep checks, once a day.</h3>
         <p class="h3sub">Fourteen more checks that take extra queries per nameserver. Each one was chosen because its result changes over time, so the history shows when a zone went wrong as well as that it is wrong.</p>
-        <p class="tier"><b>Deep run</b><span>Daily by default, or on demand for a single zone.</span></p>
+        <p class="tier"><b>Deep run</b><span>As often as you set, or on demand for a single zone with <span class="mono">--deep</span>.</span></p>
+        <p class="tier"><b>Working today</b><span>Eleven of the fourteen. Still to come: denial-of-existence proofs, key rollover state, and the one-network check.</span></p>
         <div class="checks four">
           <article>
             <div class="label">SEC 06&ndash;10</div>
@@ -472,7 +473,7 @@ footer .grid{row-gap:24px}
             <ul><li>Timer ranges</li><li>Primary reachable</li><li>Contact mailbox accepts mail</li></ul>
           </article>
         </div>
-        <p class="status"><b>After v1</b><span>The deep checks are planned for the release after the first one. A diagram of each zone's DNSSEC chain, with before-and-after comparison across runs, ships with the first web UI.</span></p>
+        <p class="status"><b>Deep findings last</b><span>A deep finding stays open through the hourly light runs and closes only when a later deep run no longer sees it.</span></p>
       </div>
     </div>
   </section>
@@ -545,7 +546,7 @@ footer .grid{row-gap:24px}
           </article>
           <article class="wide">
             <h3>Download a binary</h3>
-            <p>Release <a href="https://github.com/cschweda/zoneblick/releases/tag/v0.7.0">v0.7.0</a> has ready-built binaries for Linux, macOS and Windows. Pick your system, paste the commands into a terminal, and the last line runs your first check. Each release also has a <span class="mono">SHA256SUMS</span> file; the <a href="https://github.com/cschweda/zoneblick#install">README</a> shows how to verify a download.</p>
+            <p>Release <a href="https://github.com/cschweda/zoneblick/releases/tag/v0.8.0">v0.8.0</a> has ready-built binaries for Linux, macOS and Windows. Pick your system, paste the commands into a terminal, and the last line runs your first check. Each release also has a <span class="mono">SHA256SUMS</span> file; the <a href="https://github.com/cschweda/zoneblick#install">README</a> shows how to verify a download.</p>
             <div class="tabs">
               <div class="tablist" role="tablist" aria-label="Operating system">
                 <button type="button" role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="true">Linux</button>
@@ -554,7 +555,7 @@ footer .grid{row-gap:24px}
               </div>
               <div class="panel on" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux">
                 <h4 class="ptitle">Linux</h4>
-<pre tabindex="0">V=v0.7.0
+<pre tabindex="0">V=v0.8.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -566,7 +567,7 @@ zoneblick check example.org</pre>
               </div>
               <div class="panel" role="tabpanel" id="panel-macos" aria-labelledby="tab-macos">
                 <h4 class="ptitle">macOS</h4>
-<pre tabindex="0">V=v0.7.0
+<pre tabindex="0">V=v0.8.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -580,7 +581,7 @@ zoneblick check example.org</pre>
               </div>
               <div class="panel" role="tabpanel" id="panel-windows" aria-labelledby="tab-windows">
                 <h4 class="ptitle">Windows (PowerShell)</h4>
-<pre tabindex="0">$V = "v0.7.0"
+<pre tabindex="0">$V = "v0.8.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -651,7 +652,7 @@ zoneblick serve</pre>
   ghcr.io/cschweda/zoneblick</pre>
           </article>
         </div>
-        <p class="status"><b>Early days</b><span>v0.7.0 is an early pre-release. All twenty-six light checks, stored runs, baselines, discovery from certificate logs and zone transfers, muting, export, the daemon, alerts and the web UI work today. The deep checks and DNSSEC signature verification are still to come.</span></p>
+        <p class="status"><b>Early days</b><span>v0.8.0 is an early pre-release. All twenty-six light checks, stored runs, baselines, discovery from certificate logs and zone transfers, muting, export, the daemon, alerts and the web UI work today. Eleven of the fourteen deep checks work too. DNSSEC signature verification and the last three deep checks are still to come.</span></p>
       </div>
     </div>
   </section>

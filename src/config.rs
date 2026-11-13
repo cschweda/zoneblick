@@ -119,7 +119,8 @@ pub struct ScheduleConfig {
     pub every: String,
     #[serde(default = "default_qps")]
     pub max_qps_per_server: u32,
-    /// Accepted for the deep run level in the design; not used yet.
+    /// How often a run is a deep run, for example "24h". Left out or
+    /// "off": never.
     #[serde(default)]
     pub deep: Option<String>,
 }
@@ -260,6 +261,7 @@ impl Config {
         })?;
         config.interval()?;
         config.retention.limits()?;
+        config.deep_interval()?;
         let bind = config.bind_addr()?;
         if !bind.ip().is_loopback() && config.server.token_sha256.is_none() {
             return Err(ConfigError::Invalid(format!(
@@ -315,6 +317,14 @@ impl Config {
             ));
         }
         Ok(config)
+    }
+
+    /// How often a deep run is made; `None` when deep runs are off.
+    pub fn deep_interval(&self) -> Result<Option<Duration>, ConfigError> {
+        match self.schedule.deep.as_deref() {
+            None | Some("off") => Ok(None),
+            Some(text) => parse_duration(text).map(Some),
+        }
     }
 
     pub fn interval(&self) -> Result<Duration, ConfigError> {

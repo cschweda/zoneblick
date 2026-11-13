@@ -77,6 +77,9 @@ pub struct Report {
     /// Mail and policy records, the SPF chain, and alias targets.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy: Option<PolicyObservation>,
+    /// The deep probes. Present only for a deep run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deep: Option<crate::observe::DeepObservation>,
     /// Record sets per name, type and server. Present only for `run`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub records: Vec<RecordObservation>,
@@ -148,6 +151,7 @@ impl Report {
             nameservers: obs.ns_hosts,
             probes: obs.probes,
             dnssec: obs.dnssec,
+            deep: obs.deep,
             policy: obs.policy,
             records: obs.records,
             findings,

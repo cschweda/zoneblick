@@ -16,7 +16,7 @@ use crate::dnssec::{Dnskey, Ds, Rrsig, parse_dnskey, parse_ds, parse_rrsig};
 use crate::observe::{DnssecObservation, ParentDs, QType, ReferralStep, ServerDnssec, Transport};
 
 /// One query with the DO bit set: UDP, then TCP if the answer is truncated.
-async fn ask_signed(
+pub(crate) async fn ask_signed(
     client: &Client,
     server: IpAddr,
     qname: &str,
@@ -29,6 +29,7 @@ async fn ask_signed(
         qtype,
         edns: true,
         dnssec: true,
+        probe: Default::default(),
     };
     for _ in 0..2 {
         let msg = match client.exchange(&spec).await {
@@ -46,7 +47,7 @@ async fn ask_signed(
 }
 
 /// The raw record data of the answer records of one type owned by `owner`.
-fn raw_rdata<'m>(msg: &'m Message, owner: &str, rtype: RecordType) -> Vec<&'m [u8]> {
+pub(crate) fn raw_rdata<'m>(msg: &'m Message, owner: &str, rtype: RecordType) -> Vec<&'m [u8]> {
     msg.answers
         .iter()
         .filter(|rec| rec.record_type() == rtype && norm(&rec.name) == owner)
@@ -67,7 +68,7 @@ fn signatures(msg: &Message, owner: &str, covered: &str) -> Vec<Rrsig> {
     sigs
 }
 
-fn is_authoritative_answer(msg: &Message) -> bool {
+pub(crate) fn is_authoritative_answer(msg: &Message) -> bool {
     msg.metadata.authoritative && rcode_name(msg.metadata.response_code) == "NOERROR"
 }
 

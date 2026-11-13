@@ -15,6 +15,7 @@ fn args(zone: &str, replay: &str, json: bool) -> CheckArgs {
     CheckArgs {
         zone: zone.to_string(),
         json,
+        deep: false,
         source: SourceArgs {
             record: None,
             replay: Some(fixture(replay)),
@@ -108,6 +109,7 @@ async fn record_then_replay_gives_the_same_report() {
     let second_args = CheckArgs {
         zone: "broken.example".to_string(),
         json: true,
+        deep: false,
         source: SourceArgs {
             record: None,
             replay: Some(recorded),
@@ -139,6 +141,7 @@ async fn live_check_of_example_com() {
     let live = CheckArgs {
         zone: "example.com".to_string(),
         json: true,
+        deep: false,
         source: SourceArgs::default(),
     };
     let out = check(&live, false).await;

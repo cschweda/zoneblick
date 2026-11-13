@@ -21,7 +21,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 
 use super::limiter::Limiter;
-use crate::observe::{QType, Transport};
+use crate::observe::{Probe, QType, Transport};
 
 /// Network behaviour of the live backend. Defaults follow `DESIGN.md` where
 /// it gives a value (`max_qps_per_server = 5`); the rest are in `DECISIONS.md`.
@@ -67,6 +67,9 @@ pub struct QuerySpec {
     /// Set the DO bit, asking for DNSSEC records. Needs `edns`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dnssec: bool,
+    /// An unusual way of asking; plain for everything but the deep probes.
+    #[serde(default, skip_serializing_if = "Probe::is_plain")]
+    pub probe: Probe,
 }
 
 /// What came back, before parsing.
@@ -331,19 +334,52 @@ async fn live_http_get(url: &str, limit: usize, timeout: Duration) -> HttpOutcom
 
 /// Build the wire form of a query. Returns the message ID with it.
 fn build_query(spec: &QuerySpec, edns_payload: u16) -> Result<(u16, Vec<u8>), String> {
-    let name = Name::from_ascii(&spec.qname).map_err(|e| e.to_string())?;
-    // `Message::query` picks a random ID. Recursion is never requested.
+    let qname = match spec.probe {
+        Probe::MixedCase => mixed_case(&spec.qname),
+        _ => spec.qname.clone(),
+    };
+    let name = Name::from_ascii(&qname).map_err(|e| e.to_string())?;
+    // `Message::query` picks a random ID. Recursion is asked for only by
+    // the probe that tests for it.
     let mut msg = Message::query();
-    msg.metadata.recursion_desired = false;
+    msg.metadata.recursion_desired = spec.probe == Probe::Recursion;
     msg.add_query(Query::query(name, record_type(spec.qtype)));
     if spec.edns {
         let mut edns = Edns::new();
-        edns.set_version(0).set_max_payload(edns_payload);
+        let version = u8::from(spec.probe == Probe::EdnsVersion1);
+        edns.set_version(version).set_max_payload(edns_payload);
         edns.set_dnssec_ok(spec.dnssec);
         msg.set_edns(edns);
     }
-    let wire = msg.to_vec().map_err(|e| e.to_string())?;
+    let mut wire = msg.to_vec().map_err(|e| e.to_string())?;
+    if spec.edns && spec.probe == Probe::EdnsUnknownOption {
+        // The OPT record is the last thing in the message and carries no
+        // options, so it ends with a zero data length. Replace that with
+        // one option from the range reserved for local use.
+        let end = wire.len();
+        if end < 2 || wire[end - 2..] != [0, 0] {
+            return Err("cannot add an EDNS option to this query".to_string());
+        }
+        wire.truncate(end - 2);
+        wire.extend_from_slice(&[0, 8, 0xFD, 0xE9, 0, 4, b'z', b'b', b'l', b'k']);
+    }
     Ok((msg.metadata.id, wire))
+}
+
+/// The name with every second letter in upper case.
+pub(crate) fn mixed_case(name: &str) -> String {
+    let mut upper = false;
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphabetic() {
+                upper = !upper;
+                if upper {
+                    return c.to_ascii_uppercase();
+                }
+            }
+            c
+        })
+        .collect()
 }
 
 pub(crate) fn record_type(qtype: QType) -> RecordType {
@@ -358,6 +394,9 @@ pub(crate) fn record_type(qtype: QType) -> RecordType {
         QType::Caa => RecordType::CAA,
         QType::Ds => RecordType::DS,
         QType::Dnskey => RecordType::DNSKEY,
+        QType::Nsec3param => RecordType::NSEC3PARAM,
+        QType::Cds => RecordType::CDS,
+        QType::Cdnskey => RecordType::CDNSKEY,
     }
 }
 
@@ -433,6 +472,7 @@ mod tests {
             qtype: QType::Soa,
             edns: true,
             dnssec: false,
+            probe: Default::default(),
         }
     }
 
@@ -452,6 +492,7 @@ mod tests {
 
         let signed = QuerySpec {
             dnssec: true,
+            probe: Default::default(),
             ..spec()
         };
         let (_, wire) = build_query(&signed, 1232).unwrap();
@@ -518,5 +559,44 @@ mod tests {
         ));
         assert_eq!(client.queries_sent(), 2);
         assert_eq!(client.take_recording().len(), 2);
+    }
+
+    #[test]
+    fn probe_queries_are_built_as_asked() {
+        let with = |probe: Probe| {
+            let spec = QuerySpec {
+                qname: "www.example.org.".to_string(),
+                probe,
+                ..spec()
+            };
+            build_query(&spec, 1232).unwrap().1
+        };
+        let plain = Message::from_vec(&with(Probe::Plain)).unwrap();
+        assert!(!plain.metadata.recursion_desired);
+        assert_eq!(plain.edns.as_ref().unwrap().version(), 0);
+
+        let v1 = Message::from_vec(&with(Probe::EdnsVersion1)).unwrap();
+        assert_eq!(v1.edns.as_ref().unwrap().version(), 1);
+
+        assert!(
+            Message::from_vec(&with(Probe::Recursion))
+                .unwrap()
+                .metadata
+                .recursion_desired
+        );
+
+        // The unknown option is appended and the message still parses.
+        let wire = with(Probe::EdnsUnknownOption);
+        assert_eq!(wire.len(), with(Probe::Plain).len() + 8);
+        assert!(wire.ends_with(&[0xFD, 0xE9, 0, 4, b'z', b'b', b'l', b'k']));
+        assert!(Message::from_vec(&wire).unwrap().edns.is_some());
+
+        // Mixed case goes out on the wire as written.
+        assert_eq!(mixed_case("www.example.org."), "WwW.eXaMpLe.OrG.");
+        let wire = with(Probe::MixedCase);
+        assert!(wire.windows(3).any(|w| w == b"WwW"), "{wire:?}");
+        // A plain query needs no probe field in a fixture.
+        let json = serde_json::to_string(&spec()).unwrap();
+        assert!(!json.contains("probe"), "{json}");
     }
 }

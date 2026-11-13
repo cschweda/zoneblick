@@ -355,7 +355,7 @@ impl Store {
             "INSERT INTO runs (zone_id, started_at, finished_at, trigger, level, status, queries,
                                vantage_ipv4, vantage_ipv6, delegation_json, ns_hosts_json, probes_json,
                                dnssec_json, policy_json)
-             VALUES (?1, ?2, ?3, ?4, 'light', 'ok', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             VALUES (?1, ?2, ?3, ?4, ?13, 'ok', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 zone_id,
                 started,
@@ -369,6 +369,7 @@ impl Store {
                 serde_json::to_string(&obs.probes)?,
                 obs.dnssec.as_ref().map(serde_json::to_string).transpose()?,
                 obs.policy.as_ref().map(serde_json::to_string).transpose()?,
+                if obs.deep.is_some() { "deep" } else { "light" },
             ],
         )?;
         let run_id = tx.last_insert_rowid();
@@ -468,6 +469,31 @@ impl Store {
                     finding.severity.as_str(),
                     finding.summary
                 ])?;
+            }
+            if obs.deep.is_none() {
+                // A light run says nothing about the deep checks: their
+                // open findings carry over, and only a deep run resolves them.
+                let deep_ids: Vec<String> = crate::checks::CATALOG
+                    .iter()
+                    .filter(|c| c.deep)
+                    .map(|c| format!("'{}'", c.id))
+                    .collect();
+                let carried = format!(
+                    "zone_id = ?2 AND state IN ('open', 'muted') AND last_seen_run < ?1
+                     AND check_id IN ({})",
+                    deep_ids.join(", ")
+                );
+                tx.execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO run_findings (run_id, finding_id, severity, summary)
+                         SELECT ?1, id, severity, summary FROM findings WHERE {carried}"
+                    ),
+                    params![run_id, zone_id],
+                )?;
+                tx.execute(
+                    &format!("UPDATE findings SET last_seen_run = ?1 WHERE {carried}"),
+                    params![run_id, zone_id],
+                )?;
             }
             tx.execute(
                 "UPDATE findings SET state = 'resolved'
@@ -1453,5 +1479,73 @@ mod tests {
             store.remove_zone(ZONE),
             Err(StoreError::UnknownZone { .. })
         ));
+    }
+
+    #[test]
+    fn a_deep_finding_survives_light_runs() {
+        use crate::observe::{DeepObservation, ProbeAnswer, ServerDeep};
+        let deep_obs = |at: u64, recursion: bool| {
+            let mut obs = obs_with("192.0.2.10", at);
+            let answer = |rcode: &str| ProbeAnswer {
+                rcode: Some(rcode.to_string()),
+                opt_present: true,
+                error: None,
+            };
+            obs.deep = Some(DeepObservation {
+                servers: vec![ServerDeep {
+                    ns_name: "ns1.example.test.".to_string(),
+                    address: ip(V4_A),
+                    edns_version: answer("BADVERS"),
+                    edns_option: answer("NOERROR"),
+                    recursion_available: Some(recursion),
+                    case_preserved: Some(true),
+                    axfr_allowed: Some(false),
+                    nsec3param: Some(vec![]),
+                    cds: Some(vec![]),
+                    cdnskey: Some(vec![]),
+                }],
+                mname: None,
+                rname_domain: None,
+                rname_mx: None,
+                rname_address: None,
+            });
+            obs
+        };
+        let state = |store: &Store| -> String {
+            store
+                .finding_rows(Some(ZONE), None)
+                .unwrap()
+                .into_iter()
+                .find(|f| f.check_id == "NSB-03")
+                .map(|f| f.state)
+                .unwrap_or_default()
+        };
+        let mut store = Store::open_in_memory().unwrap();
+        save(&mut store, &deep_obs(100, true));
+        assert_eq!(state(&store), "open");
+        // Two light runs: the deep finding stays open, and no diff calls it resolved.
+        save(&mut store, &obs_with("192.0.2.10", 200));
+        save(&mut store, &obs_with("192.0.2.10", 300));
+        assert_eq!(state(&store), "open");
+        let runs = store.runs(ZONE).unwrap();
+        for pair in runs.windows(2) {
+            let d = store.diff(ZONE, pair[0], pair[1], &[]).unwrap();
+            assert!(d.findings_resolved.is_empty() && d.findings_opened.is_empty());
+        }
+        let levels: Vec<String> = store
+            .conn
+            .prepare("SELECT level FROM runs ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(levels, ["deep", "light", "light"]);
+        // A deep run that no longer sees it resolves it.
+        save(&mut store, &deep_obs(400, false));
+        assert_eq!(state(&store), "resolved");
+        let runs = store.runs(ZONE).unwrap();
+        let d = store.diff(ZONE, runs[2], runs[3], &[]).unwrap();
+        assert_eq!(d.findings_resolved.len(), 1);
     }
 }

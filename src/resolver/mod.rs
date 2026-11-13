@@ -8,6 +8,7 @@
 //! - [`probe`]: queries every nameserver address of a zone and builds the
 //!   [`ZoneObservation`](crate::observe::ZoneObservation)
 
+pub mod deep;
 pub mod hints;
 pub mod iterate;
 pub mod limiter;
@@ -16,6 +17,7 @@ pub mod probe;
 pub mod signed;
 pub mod transport;
 
+pub use deep::add_deep;
 pub use probe::{name_in_zone, normalise_zone, observe_zone, observe_zone_records};
 pub use transport::{
     Client, Exchange, Fixture, HttpExchange, HttpOutcome, NetConfig, QuerySpec, RawOutcome,

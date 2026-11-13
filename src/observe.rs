@@ -36,6 +36,9 @@ pub enum QType {
     Caa,
     Ds,
     Dnskey,
+    Nsec3param,
+    Cds,
+    Cdnskey,
 }
 
 impl QType {
@@ -62,6 +65,9 @@ impl QType {
             QType::Caa => "CAA",
             QType::Ds => "DS",
             QType::Dnskey => "DNSKEY",
+            QType::Nsec3param => "NSEC3PARAM",
+            QType::Cds => "CDS",
+            QType::Cdnskey => "CDNSKEY",
         }
     }
 
@@ -77,9 +83,37 @@ impl QType {
             QType::Caa,
             QType::Ds,
             QType::Dnskey,
+            QType::Nsec3param,
+            QType::Cds,
+            QType::Cdnskey,
         ]
         .into_iter()
         .find(|t| t.as_str() == s)
+    }
+}
+
+/// An unusual way of asking, used by the deep probes.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Probe {
+    /// An ordinary query.
+    #[default]
+    Plain,
+    /// EDNS version 1, which does not exist yet: the answer must be BADVERS.
+    EdnsVersion1,
+    /// An EDNS option nobody has defined: it must be ignored.
+    EdnsUnknownOption,
+    /// The "recursion desired" flag is set.
+    Recursion,
+    /// The query name is sent in mixed upper and lower case.
+    MixedCase,
+}
+
+impl Probe {
+    pub fn is_plain(&self) -> bool {
+        *self == Probe::Plain
     }
 }
 
@@ -449,6 +483,57 @@ pub struct PolicyObservation {
     pub services: Vec<ServiceProbe>,
 }
 
+/// The answer to one deep probe.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ProbeAnswer {
+    /// The response code; `None` when there was no usable response.
+    pub rcode: Option<String>,
+    /// The response carried an EDNS OPT record.
+    pub opt_present: bool,
+    /// Why there was no usable response.
+    pub error: Option<String>,
+}
+
+/// An NSEC3PARAM record.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Nsec3Param {
+    pub algorithm: u8,
+    pub iterations: u16,
+    /// The salt in lowercase hex; empty for no salt.
+    pub salt: String,
+}
+
+/// What the deep probes found at one nameserver address.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerDeep {
+    pub ns_name: String,
+    pub address: IpAddr,
+    pub edns_version: ProbeAnswer,
+    pub edns_option: ProbeAnswer,
+    /// The RA flag on the answer to a query that asked for recursion.
+    pub recursion_available: Option<bool>,
+    /// The answer repeated the query name in the case it was sent in.
+    pub case_preserved: Option<bool>,
+    /// A zone transfer was started for us. `None` when not tried.
+    pub axfr_allowed: Option<bool>,
+    /// `None` when the server gave no authoritative answer.
+    pub nsec3param: Option<Vec<Nsec3Param>>,
+    pub cds: Option<Vec<crate::dnssec::Ds>>,
+    pub cdnskey: Option<Vec<crate::dnssec::Dnskey>>,
+}
+
+/// What a deep run collects on top of a light one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeepObservation {
+    pub servers: Vec<ServerDeep>,
+    /// The address lookup of the primary named in the SOA record.
+    pub mname: Option<Lookup>,
+    /// The mail domain of the SOA contact, and its MX and address lookups.
+    pub rname_domain: Option<String>,
+    pub rname_mx: Option<Lookup>,
+    pub rname_address: Option<Lookup>,
+}
+
 /// Everything recorded about one zone in one run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZoneObservation {
@@ -474,6 +559,9 @@ pub struct ZoneObservation {
     /// built before they were collected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<PolicyObservation>,
+    /// The deep probes. `None` for a light run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deep: Option<DeepObservation>,
 }
 
 impl ZoneObservation {

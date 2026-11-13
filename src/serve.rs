@@ -66,6 +66,8 @@ pub struct AppState {
     next_run_unix: Mutex<Option<u64>>,
     /// When each zone's names were last looked up in certificate logs.
     discovered_at: Mutex<BTreeMap<String, u64>>,
+    /// When each zone last had a deep run.
+    deep_at: Mutex<BTreeMap<String, u64>>,
 }
 
 /// Certificate logs are asked at most this often per zone.
@@ -109,6 +111,7 @@ impl AppState {
             errors: Mutex::new(BTreeMap::new()),
             next_run_unix: Mutex::new(None),
             discovered_at: Mutex::new(BTreeMap::new()),
+            deep_at: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -215,9 +218,21 @@ async fn run_zone_inner(
     }
     names.sort();
 
-    let obs = observe_zone_records(client.clone(), &zone.name, started, &names)
+    let mut obs = observe_zone_records(client.clone(), &zone.name, started, &names)
         .await
         .map_err(|e| e.to_string())?;
+    // A deep run, when one is due for this zone.
+    if let Ok(Some(every)) = state.config.deep_interval() {
+        let mut deep_at = state.deep_at.lock().expect("lock").clone();
+        if deep_at
+            .get(&zone.name)
+            .is_none_or(|at| started >= at + every.as_secs())
+        {
+            crate::resolver::add_deep(client.clone(), &mut obs).await;
+            deep_at.insert(zone.name.clone(), started);
+            *state.deep_at.lock().expect("lock") = deep_at;
+        }
+    }
     // A zone transfer, when the zone asks for that and a server allows it.
     // Names it finds are checked from the next run on.
     let mut transferred = Vec::new();

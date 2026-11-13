@@ -36,6 +36,7 @@ fn run_args(db: &Path, state: &str, names: &[&str], json: bool) -> RunArgs {
         discover: vec![],
         db: db.to_path_buf(),
         json,
+        deep: false,
         source: SourceArgs {
             record: None,
             replay: Some(fixture(&format!("drift.example.{state}.json"))),

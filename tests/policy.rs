@@ -167,6 +167,7 @@ async fn a_run_can_discover_names_from_certificate_logs() {
         discover: discover.iter().map(|s| s.to_string()).collect(),
         db: db.clone(),
         json: true,
+        deep: false,
         source: SourceArgs {
             record: None,
             replay: Some(fixture.clone()),

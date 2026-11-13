@@ -101,6 +101,9 @@ fn record_type(qtype: QType) -> RecordType {
         QType::Caa => RecordType::CAA,
         QType::Ds => RecordType::DS,
         QType::Dnskey => RecordType::DNSKEY,
+        QType::Nsec3param => RecordType::NSEC3PARAM,
+        QType::Cds => RecordType::CDS,
+        QType::Cdnskey => RecordType::CDNSKEY,
     }
 }
 
@@ -142,6 +145,7 @@ impl World {
             qtype,
             edns,
             dnssec: false,
+            probe: Default::default(),
         };
         self.exchanges.retain(|e| e.query != query);
         self.exchanges.push(Exchange { query, outcome });
@@ -177,6 +181,43 @@ impl World {
         );
     }
 
+    /// Answer one of the deep probes, which ask for the zone's SOA over UDP
+    /// in an unusual way. `qname` is the name as the answer repeats it.
+    pub fn reply_probe(
+        &mut self,
+        server: &str,
+        zone: &str,
+        probe: zoneblick::observe::Probe,
+        qname: &str,
+        build: impl Fn(&mut Message),
+    ) {
+        let mut msg = Message::response(0, OpCode::Query);
+        msg.add_query(Query::query(
+            Name::from_ascii(qname).unwrap(),
+            record_type(QType::Soa),
+        ));
+        let mut opt = Edns::new();
+        opt.set_max_payload(1232);
+        msg.set_edns(opt);
+        build(&mut msg);
+        let query = QuerySpec {
+            server: server.parse().unwrap(),
+            transport: Transport::Udp,
+            qname: zone.to_string(),
+            qtype: QType::Soa,
+            edns: true,
+            dnssec: false,
+            probe,
+        };
+        self.exchanges.retain(|e| e.query != query);
+        self.exchanges.push(Exchange {
+            query,
+            outcome: RawOutcome::Response {
+                wire: msg.to_vec().unwrap(),
+            },
+        });
+    }
+
     /// Answer a query sent with the DO bit, over one transport.
     pub fn reply_signed(
         &mut self,
@@ -199,6 +240,7 @@ impl World {
             qtype,
             edns: true,
             dnssec: true,
+            probe: Default::default(),
         };
         self.exchanges.retain(|e| e.query != query);
         self.exchanges.push(Exchange {
