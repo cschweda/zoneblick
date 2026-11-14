@@ -374,14 +374,20 @@ async fn live_http_get(
         .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("zoneblick/", env!("CARGO_PKG_VERSION")));
     if let Some(address) = pin {
+        // The pin only binds a host *name*. A URL whose host is an IP
+        // address, or that carries a user name, would connect elsewhere
+        // than the address that was checked, so it is refused.
         let parsed = reqwest::Url::parse(url).ok();
         let host = parsed
             .as_ref()
-            .and_then(|u| u.host_str().map(str::to_string));
+            .filter(|u| u.username().is_empty())
+            .and_then(|u| u.host_str())
+            .filter(|h| !h.starts_with('[') && h.parse::<IpAddr>().is_err())
+            .map(str::to_string);
         let port = parsed.as_ref().and_then(|u| u.port_or_known_default());
         let (Some(host), Some(port)) = (host, port) else {
             return HttpOutcome::Error {
-                message: "the address is not a usable URL".to_string(),
+                message: "not fetched: the address does not name a plain host".to_string(),
             };
         };
         builder = builder.resolve(&host, SocketAddr::new(address, port));

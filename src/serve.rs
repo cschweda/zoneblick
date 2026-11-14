@@ -74,6 +74,8 @@ pub struct AppState {
     /// Counts everything that changes what the UI shows: a run starting
     /// or ending, a finding muted.
     generation: std::sync::atomic::AtomicU64,
+    /// Zones whose name list is over the limit, so that is said only once.
+    capped: Mutex<BTreeSet<String>>,
     /// The zones part of the UI's data, for one generation.
     ui_cache: Mutex<Option<(u64, serde_json::Value)>>,
 }
@@ -126,6 +128,7 @@ impl AppState {
             discovered_at: Mutex::new(BTreeMap::new()),
             deep_at: Mutex::new(BTreeMap::new()),
             generation: std::sync::atomic::AtomicU64::new(0),
+            capped: Mutex::new(BTreeSet::new()),
             ui_cache: Mutex::new(None),
         })
     }
@@ -144,6 +147,30 @@ impl AppState {
     fn zone_config(&self, zone: &str) -> Option<&ZoneConfig> {
         self.config.zones.iter().find(|z| z.name == zone)
     }
+}
+
+/// Cut a zone's names to [`MAX_NAMES_PER_ZONE`], keeping every name in
+/// `wanted` and filling the rest in name order. Returns how many were
+/// dropped. The result is sorted.
+pub fn cap_names(names: &mut Vec<String>, wanted: &BTreeSet<String>) -> usize {
+    names.sort();
+    names.dedup();
+    if names.len() <= MAX_NAMES_PER_ZONE {
+        return 0;
+    }
+    let before = names.len();
+    let kept_wanted = names.iter().filter(|n| wanted.contains(*n)).count();
+    let room = MAX_NAMES_PER_ZONE.saturating_sub(kept_wanted);
+    let mut extras = 0;
+    names.retain(|n| {
+        if wanted.contains(n) {
+            true
+        } else {
+            extras += 1;
+            extras <= room
+        }
+    });
+    before - names.len()
 }
 
 /// The live DNS client the daemon uses, with the configured rate cap.
@@ -361,14 +388,50 @@ async fn run_zone_inner(
             Err(e) => log(&format!("{} discovery failed: {e}", zone.name)),
         }
     }
-    names.sort();
-    if names.len() > MAX_NAMES_PER_ZONE {
+    // The cap must never push out a name the user asked for: the seeds
+    // and the names of the zone file stay, and only the extras found by
+    // discovery or remembered from earlier runs are cut.
+    let wanted: BTreeSet<String> = zone
+        .seeds
+        .iter()
+        .cloned()
+        .chain(declared.iter().flat_map(|d| d.names(&zone.name)))
+        .collect();
+    let dropped = cap_names(&mut names, &wanted);
+    if dropped > 0 {
         log(&format!(
-            "{} has {} names; only the first {MAX_NAMES_PER_ZONE} are checked",
-            zone.name,
-            names.len()
+            "{} has {dropped} more names than the limit of {MAX_NAMES_PER_ZONE}; they are not checked",
+            zone.name
         ));
-        names.truncate(MAX_NAMES_PER_ZONE);
+        // Say so once through the alert sinks too: names that go
+        // unchecked are a gap someone should know about.
+        if state.capped.lock().expect("lock").insert(zone.name.clone()) {
+            let title = format!(
+                "zoneblick: {dropped} names of {} are not checked",
+                zone.name
+            );
+            let text = format!(
+                "{} has more than {MAX_NAMES_PER_ZONE} names. The names in the config and the zone file are all checked; {dropped} others, found by discovery, are not. Remove names you do not need with: zoneblick run {} --forget-name NAME",
+                zone.name, zone.name
+            );
+            let out = alerts::Outgoing {
+                severity: Severity::Warning,
+                title: &title,
+                text: &text,
+                json: serde_json::json!({
+                    "kind": "names_capped", "zone": zone.name, "severity": "warning",
+                    "title": title, "text": text, "not_checked": dropped,
+                }),
+            };
+            for (sink, sent) in alerts::send_outgoing(&out, &state.config.alerts, &state.http).await
+            {
+                if let Err(e) = sent {
+                    log(&format!("{} alert by {sink} failed: {e}", zone.name));
+                }
+            }
+        }
+    } else {
+        state.capped.lock().expect("lock").remove(&zone.name);
     }
 
     let mut obs = observe_zone_records(client.clone(), &zone.name, started, &names)

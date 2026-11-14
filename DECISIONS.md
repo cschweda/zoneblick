@@ -215,3 +215,8 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - The UI model is cached per "generation" (bumped when a run starts or ends and on a mute) combined with the newest run ID in the database.
 - Not done: signed releases or build attestations, pinning the container base image by digest, verifying DNSSEC denials, rate-limiting token guesses. They are listed as open in the README.
 
+## 0.12.2
+
+- Three weaknesses in the 0.12.1 fixes, raised by the automated review of that commit. The address pin binds a host name, so a URL built from a record name that parses as another host or as an IP address is refused, and only names of letters, digits, hyphens, underscores and dots are fetched. "Not public" now covers IPv6 forms that embed IPv4 and more special-purpose IPv4 blocks. The name limit keeps the user's own names and cuts only discovered ones, in name order, with one alert when it is reached.
+- The pin check uses `reqwest::Url` and a parse as `IpAddr`; no `url` dependency was added.
+

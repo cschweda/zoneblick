@@ -474,3 +474,66 @@ fn a_new_database_is_private_to_its_owner() {
         }
     }
 }
+
+#[test]
+fn record_names_cannot_bend_a_web_address() {
+    use zoneblick::resolver::policy::{not_public, plain_host};
+    for good in [
+        "www.example.org.",
+        "a-b_c.example.org",
+        "xn--bcher-kva.example.",
+    ] {
+        assert!(plain_host(good), "{good}");
+    }
+    // A name is bytes; these would change the host or path of a URL, or
+    // read as an address.
+    for bad in [
+        "169.254.169.254/x.example.org.",
+        "user@127.0.0.1.example.org.",
+        "a#b.example.org.",
+        "a:80.example.org.",
+        "127.0.0.1",
+        "2130706433",
+        "0x7f.0.0.1",
+        "a b.example.org.",
+        "",
+    ] {
+        assert!(!plain_host(bad), "{bad}");
+    }
+    let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+    // IPv6 forms with an IPv4 address inside, and more special IPv4 blocks.
+    for refused in [
+        "64:ff9b::7f00:1",
+        "64:ff9b::a9fe:a9fe",
+        "2002:7f00:1::",
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+        "::7f00:1",
+        "192.0.0.8",
+        "198.18.0.1",
+        "192.88.99.1",
+    ] {
+        assert!(not_public(ip(refused)).is_some(), "{refused}");
+    }
+    assert!(not_public(ip("2606:4700::6810:84e5")).is_none());
+    assert!(not_public(ip("192.0.1.1")).is_none());
+}
+
+#[test]
+fn the_name_limit_never_drops_a_name_the_user_listed() {
+    use std::collections::BTreeSet;
+    use zoneblick::serve::{MAX_NAMES_PER_ZONE, cap_names};
+    // 1,500 discovered names that sort before the user's own.
+    let mut names: Vec<String> = (0..1500).map(|i| format!("a{i:04}.example.org.")).collect();
+    let wanted: BTreeSet<String> = ["www.example.org.", "zzz.example.org."]
+        .map(String::from)
+        .into();
+    names.extend(wanted.iter().cloned());
+    let dropped = cap_names(&mut names, &wanted);
+    assert_eq!(names.len(), MAX_NAMES_PER_ZONE);
+    assert_eq!(dropped, 502);
+    assert!(wanted.iter().all(|w| names.contains(w)));
+    // Under the limit nothing is dropped.
+    let mut few = vec!["b.example.org.".to_string(), "a.example.org.".to_string()];
+    assert_eq!(cap_names(&mut few, &wanted), 0);
+    assert_eq!(few, ["a.example.org.", "b.example.org."]);
+}

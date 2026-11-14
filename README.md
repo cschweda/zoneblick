@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 35 checks for every run and 20 more with `--deep`, which also follows the DNSSEC chain of trust from the root and watches the domain's registration. The current release, `v0.12.1`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 35 checks for every run and 20 more with `--deep`, which also follows the DNSSEC chain of trust from the root and watches the domain's registration. The current release, `v0.12.2`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -86,7 +86,7 @@ On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick`
 
 | Option | Effect |
 |---|---|
-| `--version v0.12.1` | Install that release instead of the newest |
+| `--version v0.12.2` | Install that release instead of the newest |
 | `--prefix DIR` | Install the binary to `DIR/bin` |
 | `--no-service` | Binary only; no user, config or service |
 
@@ -98,11 +98,11 @@ Each release has a `.deb` and an `.rpm` for x86_64 and ARM 64-bit on the [releas
 
 ```
 # Debian and Ubuntu (use arm64 on ARM)
-curl -fsSLO https://github.com/cschweda/zoneblick/releases/download/v0.12.1/zoneblick_0.12.1_amd64.deb
-sudo dpkg -i zoneblick_0.12.1_amd64.deb
+curl -fsSLO https://github.com/cschweda/zoneblick/releases/download/v0.12.2/zoneblick_0.12.2_amd64.deb
+sudo dpkg -i zoneblick_0.12.2_amd64.deb
 
 # Fedora and RHEL (use aarch64 on ARM)
-sudo rpm -i https://github.com/cschweda/zoneblick/releases/download/v0.12.1/zoneblick-0.12.1-1.x86_64.rpm
+sudo rpm -i https://github.com/cschweda/zoneblick/releases/download/v0.12.2/zoneblick-0.12.2-1.x86_64.rpm
 ```
 
 There is no package repository, so updates are not automatic: install the newer package over the old one. The `.deb` is installed and started on a GitHub runner as part of every release build. The `.rpm` is built and its contents listed there, but it has not been installed on a real Fedora or RHEL system.
@@ -136,7 +136,7 @@ Then open `http://127.0.0.1:8053` and enter the token. The container listens on 
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.12.1`.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.12.2`.
 
 | System | File name ends in |
 |---|---|
@@ -148,12 +148,12 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.12.1` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.12.2` to install another release.
 
 **Linux**
 
 ```
-V=v0.12.1
+V=v0.12.2
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -166,7 +166,7 @@ zoneblick check example.org
 **macOS**
 
 ```
-V=v0.12.1
+V=v0.12.2
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -181,7 +181,7 @@ zoneblick check example.org
 **Windows (PowerShell)**
 
 ```
-$V = "v0.12.1"
+$V = "v0.12.2"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -226,7 +226,7 @@ You need a stable [Rust toolchain](https://rustup.rs), version 1.88 or later, an
 cargo install --git https://github.com/cschweda/zoneblick
 ```
 
-Add `--tag v0.12.1 --locked` to build exactly one release with the dependency versions it was tested with. This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
+Add `--tag v0.12.2 --locked` to build exactly one release with the dependency versions it was tested with. This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
 
 To install from a local checkout instead:
 
@@ -832,7 +832,7 @@ When the run fails, the document is shorter:
 The repository is also a GitHub Action, for checking a zone from a workflow, for example when a pull request changes a zone file:
 
 ```yaml
-- uses: cschweda/zoneblick@v0.12.1
+- uses: cschweda/zoneblick@v0.12.2
   with:
     zone: example.org
     expect: dns/example.org.zone   # optional
@@ -916,7 +916,7 @@ One binary, one config file, one SQLite file, on your own server.
 
 ## Security review
 
-zoneblick reads data that other people control: every DNS answer, every page it fetches, every API reply. Version 0.12.0 was put through a red team / blue team review on 2026-11-13. The red team was two parts: an independent reviewer that read the code as an attacker, with the threat model below, and hands-on attacks against running instances and the parsers. The blue team fixed what broke and added a regression test for each fix; the fixes are in 0.12.1. This was one review by the project itself, not a third-party audit.
+zoneblick reads data that other people control: every DNS answer, every page it fetches, every API reply. Version 0.12.0 was put through a red team / blue team review on 2026-11-13. The red team was two parts: an independent reviewer that read the code as an attacker, with the threat model below, and hands-on attacks against running instances and the parsers. The blue team fixed what broke and added a regression test for each fix; the fixes are in 0.12.1. An automated review of that release then found three weaknesses in the fixes themselves, which 0.12.2 closes; they are marked below. This was one review by the project itself, not a third-party audit.
 
 **Who the attackers are**
 
@@ -937,16 +937,16 @@ zoneblick reads data that other people control: every DNS answer, every page it 
 
 **What broke, and the fix**
 
-| Severity | Finding | Fix in 0.12.1 |
+| Severity | Finding | Fix |
 |---|---|---|
 | High | **A zone could stall the daemon.** A zone that lists thousands of nameservers behind slow servers kept one run busy for hours. Zones are checked one after another and nothing is reported until a run ends, so no alert went out for that zone or any other. | A run of one zone is stopped after `run_timeout` (15 minutes) and counts as failed. A failed run now sends an alert. At most 26 nameserver names and 8 addresses per name are followed; the rest are marked "not checked" and the zone gets DEL-01 and DEL-02 findings. Each run has its own task, so a crash in one cannot stop the others. |
 | High | **No token plus a reverse proxy meant an open API.** Without a token zoneblick trusted requests addressed to `127.0.0.1`. nginx and Apache send exactly that by default, so the documented setup "localhost plus a proxy" let anyone read findings, mute them and start runs. | Without a token, requests that carry a proxy's headers are refused. The README and the starter config now say that a token comes before a proxy. |
 | Medium | **Escape sequences in zone-file drift output.** Record data is made safe to print when it is recorded, but the drift comparison read it back as zone-file fields, which turned `\027` back into a real escape character. A TXT value could clear the terminal and print a fake result, or inject workflow commands into a GitHub Actions log. | The comparison form is made safe to print again. Zero-width characters and Unicode line separators are now escaped everywhere too. |
 | Medium | **Pinning the Action did not pin the binary.** Pinned to a commit, the Action installed the newest release. | The Action installs the release its own copy belongs to, read from its `Cargo.toml`. It never installs "the newest". |
-| Low | **Fetching pages from internal addresses.** The MTA-STS policy and the hosting-service page were fetched from wherever the system resolver said the name was, so a zone could point that name at this machine, a private network or a cloud metadata service. Only a status code came back, never the page. | zoneblick resolves the name itself and connects to that address only when every address is public. |
+| Low | **Fetching pages from internal addresses.** The MTA-STS policy and the hosting-service page were fetched from wherever the system resolver said the name was, so a zone could point that name at this machine, a private network or a cloud metadata service. Only a status code came back, never the page. | zoneblick resolves the name itself and connects to that address only when every address is public. *0.12.2:* a record name holding `/`, `@` or `:`, or one that reads as an IP address, could turn the web address into one for another host and slip past that; such names are not fetched. IPv6 addresses that carry an IPv4 address inside (NAT64, 6to4, Teredo) and three more special IPv4 blocks now count as not public. |
 | Low | **DNS queries to any address a zone names.** A zone could list `127.0.0.1` or a link-local address as its nameserver and have zoneblick query it. | Loopback, link-local, multicast and unspecified addresses are never queried or asked for a zone transfer. Private ranges still are: internal zones with internal nameservers are a normal thing to watch (NET-02 reports them in a deep run). |
 | Low | The ntfy topic address, which is the secret when no token is used, appeared in the log when sending failed. | Removed from the error text, as was already done for Slack, Discord and webhooks. |
-| Low | Names found by discovery could grow without limit, and every name costs queries on every run. | At most 1,000 names per zone are checked. |
+| Low | Names found by discovery could grow without limit, and every name costs queries on every run. | At most 1,000 names per zone are checked. *0.12.2:* the limit cut names in alphabetical order, so a flood of discovered names could push out one you listed. Names from the config, `--name` and the zone file are now always kept, and reaching the limit sends an alert once. |
 | Low | The web UI's data was worked out on every request, ten diffs per zone, while holding the database lock. | Worked out once per change and off the request threads. |
 | Low | A database created by `zoneblick run` was readable by other local users. The documented way to hash a token put the token in the process list. | New database files are created `0600`. The documentation uses standard input for the token. |
 | Low | An answer with no question section was accepted for any response code. | Only for error codes. |

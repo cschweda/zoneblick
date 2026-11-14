@@ -154,6 +154,46 @@ pub fn not_public(address: std::net::IpAddr) -> Option<&'static str> {
     };
     super::transport::never_contacted(address)
         .or_else(|| crate::checks::deep::special_use(unmapped))
+        .or_else(|| match unmapped {
+            std::net::IpAddr::V4(a) => {
+                let o = a.octets();
+                // Special-purpose blocks the checks above do not name:
+                // protocol assignments, benchmarking, the old 6to4 relay.
+                let special = (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                    || (o[0] == 198 && (o[1] == 18 || o[1] == 19))
+                    || (o[0] == 192 && o[1] == 88 && o[2] == 99);
+                special.then_some("special-purpose")
+            }
+            std::net::IpAddr::V6(a) => {
+                let s = a.segments();
+                // Forms that carry an IPv4 address inside, which a
+                // gateway turns back into a connection to that address:
+                // NAT64, 6to4, Teredo, and IPv4-compatible addresses.
+                let embeds_ipv4 = (s[0] == 0x0064 && s[1] == 0xff9b)
+                    || s[0] == 0x2002
+                    || (s[0] == 0x2001 && s[1] == 0)
+                    || (s[..6].iter().all(|x| *x == 0) && (s[6] != 0 || s[7] > 1));
+                embeds_ipv4.then_some("IPv4-embedding")
+            }
+        })
+}
+
+/// True for a name that is safe to put into a URL as its host: letters,
+/// digits, hyphens, underscores and dots only, and not something that
+/// reads as an IP address. Record names can hold any byte, and `/`, `@`,
+/// `#` or `:` would change what the URL means.
+pub fn plain_host(name: &str) -> bool {
+    let name = name.trim_end_matches('.');
+    !name.is_empty()
+        && name.len() <= 253
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && name.parse::<std::net::IpAddr>().is_err()
+        && !name
+            .rsplit('.')
+            .next()
+            .is_some_and(|last| last.chars().all(|c| c.is_ascii_digit()) || last.starts_with("0x"))
 }
 
 /// The address to fetch a page of `host` from: resolved by zoneblick
@@ -200,7 +240,11 @@ async fn fetch_mta_sts(resolver: &Resolver, client: &Client, zone: &str, record:
         mx_patterns: Vec::new(),
     };
     // A replayed run answers from its fixture and connects to nothing.
-    let fetched = if client.is_live() {
+    let fetched = if !plain_host(host) {
+        HttpOutcome::Error {
+            message: "not fetched: the zone's name cannot be written as a web address".to_string(),
+        }
+    } else if client.is_live() {
         match public_address(resolver, &format!("mta-sts.{zone}")).await {
             Ok(address) => client.http_get_at(&policy_url, address).await,
             Err(message) => HttpOutcome::Error { message },
@@ -482,7 +526,11 @@ pub(crate) async fn service_probes(
             error: None,
             unclaimed: false,
         };
-        let fetched = if client.is_live() {
+        let fetched = if !plain_host(&t.owner) {
+            HttpOutcome::Error {
+                message: "not fetched: the name cannot be written as a web address".to_string(),
+            }
+        } else if client.is_live() {
             match public_address(resolver, &t.target).await {
                 Ok(address) => client.http_get_at(&url, address).await,
                 Err(message) => HttpOutcome::Error { message },

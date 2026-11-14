@@ -689,14 +689,18 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
             )),
         }
     }
-    names.sort();
-    if names.len() > crate::serve::MAX_NAMES_PER_ZONE {
+    // Names given now and the names of the zone file are always kept.
+    let mut wanted: std::collections::BTreeSet<String> =
+        declared.iter().flat_map(|d| d.names(&zone)).collect();
+    for input in &args.names {
+        wanted.insert(name_in_zone(&zone, input)?);
+    }
+    let dropped = crate::serve::cap_names(&mut names, &wanted);
+    if dropped > 0 {
         notes.push_str(&format!(
-            "zoneblick: {zone} has {} names; only the first {} are checked\n",
-            names.len(),
+            "zoneblick: {zone} has {dropped} more names than the limit of {}; they are not checked. Names given with --name and in the zone file are always checked\n",
             crate::serve::MAX_NAMES_PER_ZONE
         ));
-        names.truncate(crate::serve::MAX_NAMES_PER_ZONE);
     }
 
     let mut observed = observe_zone_records(client.clone(), &zone, started_at, &names).await;

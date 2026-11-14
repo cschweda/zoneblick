@@ -1,6 +1,6 @@
 # A GitHub Action that checks a DNS zone with zoneblick.
 #
-#   - uses: cschweda/zoneblick@v0.12.1
+#   - uses: cschweda/zoneblick@v0.12.2
 #     with:
 #       zone: example.org
 #       expect: dns/example.org.zone   # optional: a zone file to compare with
@@ -40,7 +40,7 @@ inputs:
     description: The database file. Restore it with actions/cache to see what changed since the last run.
     default: ""
   version:
-    description: The zoneblick release to use, such as v0.12.1. Default is the release this copy of the action belongs to.
+    description: The zoneblick release to use, such as v0.12.2. Default is the release this copy of the action belongs to.
     default: ""
 
 outputs:
