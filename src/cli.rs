@@ -82,6 +82,14 @@ pub enum Command {
     /// does this by itself after every round of checks.
     Prune(PruneArgs),
 
+    /// Look at a zone file before it is deployed: mistakes in the file,
+    /// and what deploying it would change compared with what the zone's
+    /// nameservers serve now. Stores nothing.
+    ///
+    /// Exit code: 0 no issues, 1 warnings, 2 a critical issue, 3 the
+    /// command failed. Changes alone do not set the exit code.
+    Plan(PlanArgs),
+
     /// Summarise every stored zone over a period: runs made, findings
     /// open now, and findings opened and resolved in the period.
     ///
@@ -136,6 +144,27 @@ pub struct BaselineArgs {
     /// The database file.
     #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
     pub db: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct PlanArgs {
+    /// The zone the file is for, for example example.org.
+    pub zone: String,
+
+    /// The proposed zone file (the standard format BIND uses).
+    #[arg(long, value_name = "FILE")]
+    pub file: PathBuf,
+
+    /// Check the file only; send no queries.
+    #[arg(long)]
+    pub offline: bool,
+
+    /// Print one JSON document instead of text.
+    #[arg(long)]
+    pub json: bool,
+
+    #[command(flatten)]
+    pub source: SourceArgs,
 }
 
 #[derive(Debug, Args)]
@@ -1079,6 +1108,63 @@ pub fn prune(args: &PruneArgs) -> CommandOutput {
         },
         Err(e) => failed("", false, &e),
     }
+}
+
+/// Run `zoneblick plan`.
+pub async fn plan(args: &PlanArgs) -> CommandOutput {
+    match try_plan(args).await {
+        Ok(output) => output,
+        Err(e) => failed(&args.zone, args.json, &e),
+    }
+}
+
+async fn try_plan(args: &PlanArgs) -> Result<CommandOutput, CliError> {
+    use crate::plan::{Plan, changes, issue_for_target, lint, outside_targets};
+
+    let zone = normalise_zone(&args.zone)?;
+    let text = std::fs::read_to_string(&args.file)
+        .map_err(|e| CliError::Usage(format!("cannot read {}: {e}", args.file.display())))?;
+    let parsed = crate::zonefile::parse_full(&zone, &text)
+        .map_err(|e| CliError::Usage(format!("{}: {e}", args.file.display())))?;
+    let mut issues = lint(&zone, &parsed);
+    let file = args.file.display().to_string();
+
+    let mut changed = None;
+    if !args.offline {
+        let declared = crate::zonefile::Declared {
+            source: file.clone(),
+            sets: parsed.sets.clone(),
+        };
+        let names = declared.names(&zone);
+        let (client, started_at, _) = make_client(&args.source, &zone)?;
+        let observed = observe_zone_records(client.clone(), &zone, started_at, &names).await;
+        let resolver = match &observed {
+            Ok(obs) => Some(crate::resolver::iterate::Resolver::new(
+                client.clone(),
+                obs.vantage,
+            )),
+            Err(_) => None,
+        };
+        // Where the file points outside the zone: does the target exist?
+        if let Some(resolver) = &resolver {
+            for (owner, rtype, target) in outside_targets(&zone, &parsed).into_iter().take(50) {
+                let lookup = resolver.lookup(&target, crate::observe::QType::A).await;
+                issues.extend(issue_for_target(&owner, &rtype, &target, &lookup));
+            }
+        }
+        save_recording(&args.source, &client, &zone, started_at)?;
+        changed = Some(changes(&observed?, &parsed));
+    }
+    let plan = Plan::new(&zone, &file, issues, changed);
+    Ok(CommandOutput {
+        stdout: if args.json {
+            json::render(&plan)
+        } else {
+            plan.render()
+        },
+        stderr: String::new(),
+        exit_code: plan.exit_code,
+    })
 }
 
 /// Run `zoneblick digest`.

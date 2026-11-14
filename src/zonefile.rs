@@ -257,8 +257,23 @@ pub fn comparable(rtype: &str, rdata: &str) -> String {
 
 /// Read a zone file for `zone` (a normalised name).
 pub fn parse(zone: &str, text: &str) -> Result<Vec<DeclaredSet>, String> {
+    parse_full(zone, text).map(|parsed| parsed.sets)
+}
+
+/// A zone file read for more than comparison: the record sets of the
+/// compared types, and every name and type the file holds at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedZone {
+    pub sets: Vec<DeclaredSet>,
+    /// Every (name, type) in the file, with the line it first appears on.
+    pub seen: BTreeMap<(String, String), usize>,
+}
+
+/// Read a zone file for `zone`, keeping track of every record in it.
+pub fn parse_full(zone: &str, text: &str) -> Result<ParsedZone, String> {
     let mut origin = zone.to_string();
     let mut owner: Option<String> = None;
+    let mut seen: BTreeMap<(String, String), usize> = BTreeMap::new();
     let mut sets: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     for line in lines(text)? {
         let n = line.number;
@@ -307,24 +322,26 @@ pub fn parse(zone: &str, text: &str) -> Result<Vec<DeclaredSet>, String> {
         let Some(rtype) = rest.first().map(|t| t.text.to_ascii_uppercase()) else {
             return Err(format!("line {n}: no record type"));
         };
-        if !COMPARED.contains(&rtype.as_str()) {
-            continue;
-        }
         if !is_ancestor_or_equal(zone, name.trim_start_matches("*.")) {
             return Err(format!("line {n}: {name} is not inside the zone {zone}"));
+        }
+        seen.entry((name.clone(), rtype.clone())).or_insert(n);
+        if !COMPARED.contains(&rtype.as_str()) {
+            continue;
         }
         let value = canonical(&rtype, &rest[1..], &origin)
             .ok_or(format!("line {n}: cannot read this {rtype} record"))?;
         sets.entry((name, rtype)).or_default().push(value);
     }
-    Ok(sets
+    let sets = sets
         .into_iter()
         .map(|((name, rtype), mut rdata)| {
             rdata.sort();
             rdata.dedup();
             DeclaredSet { name, rtype, rdata }
         })
-        .collect())
+        .collect();
+    Ok(ParsedZone { sets, seen })
 }
 
 /// Read the zone file at `path`.

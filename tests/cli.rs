@@ -171,3 +171,66 @@ async fn findings_are_also_written_as_sarif() {
     assert!(!results.is_empty());
     assert!(results.iter().any(|r| r["level"] == "error"));
 }
+
+#[tokio::test]
+async fn plan_lints_a_zone_file_and_shows_what_would_change() {
+    use zoneblick::cli::{PlanArgs, plan};
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let file = dir.join("plan.zone");
+    std::fs::write(
+        &file,
+        "www A 192.0.2.10\napi CNAME app.hosting.example.\nshop A 192.0.2.20\n@ MX 10 mail\n@ CAA 0 issue \"ca.example\"\n",
+    )
+    .unwrap();
+    let args = |file: &PathBuf, offline: bool| PlanArgs {
+        zone: "drift.example".to_string(),
+        file: file.clone(),
+        offline,
+        json: true,
+        source: SourceArgs {
+            record: None,
+            replay: Some(fixture("drift.example.after.json")),
+        },
+    };
+    let out = plan(&args(&file, false)).await;
+    assert_eq!(out.exit_code, 1, "{}", out.stdout);
+    let doc: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(doc["issues"][0]["id"], "PLN-05");
+    let changes: Vec<(&str, &str, &str)> = doc["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["kind"].as_str().unwrap(),
+                c["name"].as_str().unwrap(),
+                c["rtype"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    // The live zone serves another alias target and a second address for
+    // shop; staging and the TXT record are not in the file's names.
+    assert_eq!(
+        changes,
+        [
+            ("change", "api.drift.example.", "CNAME"),
+            ("change", "shop.drift.example.", "A"),
+        ]
+    );
+
+    // Offline: only the file is judged, and a broken file is critical.
+    let broken = dir.join("plan-broken.zone");
+    std::fs::write(&broken, "@ CNAME elsewhere.example.net.\nwww A 192.0.2.1\n").unwrap();
+    let out = plan(&args(&broken, true)).await;
+    assert_eq!(out.exit_code, 2);
+    let doc: Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(doc["issues"][0]["id"], "PLN-01");
+    assert_eq!(doc["changes"], Value::Null);
+
+    // A file that cannot be read as a zone file names the line.
+    let bad = dir.join("plan-bad.zone");
+    std::fs::write(&bad, "www A 192.0.2.999\n").unwrap();
+    let out = plan(&args(&bad, true)).await;
+    assert_eq!(out.exit_code, 3);
+    assert!(out.stdout.contains("line 1"), "{}", out.stdout);
+}

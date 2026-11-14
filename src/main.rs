@@ -48,6 +48,7 @@ fn run(cli: Cli) -> anyhow::Result<u8> {
         Command::Baseline { action } => cli::baseline(&action),
         Command::Prune(args) => cli::prune(&args),
         Command::Digest(args) => cli::digest(&args),
+        Command::Plan(args) => runtime.block_on(cli::plan(&args)),
         Command::Serve(args) => runtime.block_on(cli::serve(&args)),
         Command::Token(args) => cli::token(&args),
     };

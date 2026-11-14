@@ -19,6 +19,7 @@ pub mod discover;
 pub mod dnssec;
 pub mod observe;
 pub mod output;
+pub mod plan;
 pub mod providers;
 pub mod registration;
 pub mod resolver;
