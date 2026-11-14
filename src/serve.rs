@@ -215,7 +215,7 @@ async fn run_zone_inner(
 
     // More names from certificate logs, when the zone asks for that.
     let mut discovered = Vec::new();
-    let mut provided: Vec<String> = Vec::new();
+    let mut provided: Vec<(&str, Vec<String>)> = Vec::new();
     let due = state
         .discovered_at
         .lock()
@@ -246,32 +246,30 @@ async fn run_zone_inner(
             Err(e) => log(&format!("{} discovery failed: {e}", zone.name)),
         }
     }
-    if due && zone.discover.iter().any(|d| d == "digitalocean") {
-        let found = match state
-            .config
-            .providers
-            .digitalocean
-            .as_ref()
-            .map(|p| p.token())
-        {
-            Some(Ok(token)) => {
-                crate::discover::digitalocean_names(&client, &zone.name, &token).await
+    for provider in crate::providers::PROVIDERS {
+        if !due || !zone.discover.iter().any(|d| d == provider) {
+            continue;
+        }
+        let who = crate::providers::label(provider);
+        let found = match state.config.providers.credential(provider) {
+            Some(Ok(credential)) => {
+                crate::providers::names(&client, provider, &zone.name, &credential).await
             }
             Some(Err(e)) => Err(e),
-            None => Err("no [providers.digitalocean] section".to_string()),
+            None => Err(format!("no [providers.{provider}] section")),
         };
         match found {
             Ok(found) => {
                 let new: Vec<String> = found.into_iter().filter(|n| !names.contains(n)).collect();
                 if !new.is_empty() {
                     log(&format!(
-                        "{} found {} new names at DigitalOcean",
+                        "{} found {} new names at {who}",
                         zone.name,
                         new.len()
                     ));
                 }
                 names.extend(new.iter().cloned());
-                provided = new;
+                provided.push((provider, new));
             }
             Err(e) => log(&format!("{} discovery failed: {e}", zone.name)),
         }
@@ -324,9 +322,11 @@ async fn run_zone_inner(
         store
             .set_name_source(&zone.name, &discovered, "ct")
             .map_err(|e| e.to_string())?;
-        store
-            .set_name_source(&zone.name, &provided, "digitalocean")
-            .map_err(|e| e.to_string())?;
+        for (provider, found) in &provided {
+            store
+                .set_name_source(&zone.name, found, provider)
+                .map_err(|e| e.to_string())?;
+        }
         let added = store
             .add_names(&zone.name, &transferred, "axfr", outcome.run_id)
             .map_err(|e| e.to_string())?;

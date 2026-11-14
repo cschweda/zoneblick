@@ -43,17 +43,45 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct ProvidersConfig {
     #[serde(default)]
-    pub digitalocean: Option<DigitalOceanConfig>,
+    pub digitalocean: Option<TokenFileConfig>,
+    #[serde(default)]
+    pub cloudflare: Option<TokenFileConfig>,
+    #[serde(default)]
+    pub gandi: Option<TokenFileConfig>,
+    #[serde(default)]
+    pub hetzner: Option<TokenFileConfig>,
+    #[serde(default)]
+    pub route53: Option<Route53Config>,
+}
+
+impl ProvidersConfig {
+    /// The credential for a provider. `None` when it has no section.
+    pub fn credential(
+        &self,
+        provider: &str,
+    ) -> Option<Result<crate::providers::Credential, String>> {
+        use crate::providers::Credential;
+        let token =
+            |c: &Option<TokenFileConfig>| c.as_ref().map(|c| c.token().map(Credential::Token));
+        match provider {
+            "digitalocean" => token(&self.digitalocean),
+            "cloudflare" => token(&self.cloudflare),
+            "gandi" => token(&self.gandi),
+            "hetzner" => token(&self.hetzner),
+            "route53" => self.route53.as_ref().map(|c| c.credential()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DigitalOceanConfig {
+pub struct TokenFileConfig {
     /// A file holding an API token with read access, and nothing else.
     pub token_file: PathBuf,
 }
 
-impl DigitalOceanConfig {
+impl TokenFileConfig {
     /// Read the token. The error names the file, never its contents.
     pub fn token(&self) -> Result<String, String> {
         let text = std::fs::read_to_string(&self.token_file)
@@ -63,6 +91,24 @@ impl DigitalOceanConfig {
             return Err(format!("{} is empty", self.token_file.display()));
         }
         Ok(token)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Route53Config {
+    /// A file in the format of `~/.aws/credentials`, holding a read-only
+    /// access key.
+    pub credentials_file: PathBuf,
+}
+
+impl Route53Config {
+    /// Read the access key. The error names the file, never its contents.
+    pub fn credential(&self) -> Result<crate::providers::Credential, String> {
+        let text = std::fs::read_to_string(&self.credentials_file)
+            .map_err(|e| format!("cannot read {}: {e}", self.credentials_file.display()))?;
+        crate::providers::parse_aws_credentials(&text)
+            .map_err(|e| format!("{}: {e}", self.credentials_file.display()))
     }
 }
 
@@ -358,21 +404,24 @@ impl Config {
                 }
             }
             zone.seeds = seeds;
-            if let Some(other) = zone
-                .discover
-                .iter()
-                .find(|d| !matches!(d.as_str(), "ct" | "axfr" | "digitalocean"))
-            {
-                return Err(ConfigError::Invalid(format!(
-                    "zone {name}, discover: \"{other}\" is not a discovery source; they are \"ct\", \"axfr\" and \"digitalocean\""
-                )));
-            }
-            if zone.discover.iter().any(|d| d == "digitalocean")
-                && config.providers.digitalocean.is_none()
-            {
-                return Err(ConfigError::Invalid(format!(
-                    "zone {name} uses discover = [\"digitalocean\"], which needs [providers.digitalocean] token_file"
-                )));
+            for source in &zone.discover {
+                let provider = crate::providers::PROVIDERS.contains(&source.as_str());
+                if !provider && !matches!(source.as_str(), "ct" | "axfr") {
+                    return Err(ConfigError::Invalid(format!(
+                        "zone {name}, discover: \"{source}\" is not a discovery source; they are \"ct\", \"axfr\", \"{}\"",
+                        crate::providers::PROVIDERS.join("\", \"")
+                    )));
+                }
+                if provider && config.providers.credential(source).is_none() {
+                    let key = if source == "route53" {
+                        "credentials_file"
+                    } else {
+                        "token_file"
+                    };
+                    return Err(ConfigError::Invalid(format!(
+                        "zone {name} uses discover = [\"{source}\"], which needs [providers.{source}] {key}"
+                    )));
+                }
             }
             seen.push(name.clone());
             zone.name = name;
@@ -553,7 +602,20 @@ webhook_url = "https://discord.com/api/webhooks/1/x"
         let err = config.providers.digitalocean.unwrap().token().unwrap_err();
         assert!(err.contains("/nonexistent/do-token"), "{err}");
         assert!(
-            Config::parse("[[zone]]\nname = \"example.org\"\ndiscover = [\"route53\"]\n").is_err()
+            Config::parse("[[zone]]\nname = \"example.org\"\ndiscover = [\"bind\"]\n").is_err()
         );
+        let err = Config::parse("[[zone]]\nname = \"example.org\"\ndiscover = [\"route53\"]\n")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("[providers.route53] credentials_file"),
+            "{err}"
+        );
+        let config = Config::parse(
+            "[providers.cloudflare]\ntoken_file = \"/nonexistent/cf\"\n[providers.route53]\ncredentials_file = \"/nonexistent/aws\"\n[[zone]]\nname = \"example.org\"\ndiscover = [\"cloudflare\", \"route53\"]\n",
+        )
+        .unwrap();
+        let err = config.providers.credential("route53").unwrap().unwrap_err();
+        assert!(err.contains("/nonexistent/aws"), "{err}");
     }
 }

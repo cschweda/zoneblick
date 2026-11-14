@@ -293,3 +293,75 @@ async fn a_run_can_discover_names_at_digitalocean() {
         serde_json::json!(["app.policy.example."])
     );
 }
+
+#[tokio::test]
+async fn a_run_can_discover_names_at_other_dns_hosts() {
+    use zoneblick::cli::{RunArgs, SourceArgs, run};
+    use zoneblick::providers::{cloudflare_records_url, cloudflare_zone_url, gandi_url};
+
+    let mut world = policy_world();
+    world.http(
+        &cloudflare_zone_url(POLICY_ZONE),
+        200,
+        r#"{"result":[{"id":"0123456789abcdef0123456789abcdef"}]}"#,
+    );
+    world.http(
+        &cloudflare_records_url("0123456789abcdef0123456789abcdef", 1),
+        200,
+        r#"{"result":[{"name":"app.policy.example","type":"A"},{"name":"policy.example","type":"MX"}],"result_info":{"total_pages":1}}"#,
+    );
+    world.http(
+        &gandi_url(POLICY_ZONE, 1),
+        200,
+        r#"[{"rrset_name":"app","rrset_type":"A"},{"rrset_name":"blog","rrset_type":"CNAME"}]"#,
+    );
+    // Route 53 has no recorded answer: its failure must not stop the run.
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let fixture = dir.join("discover-hosts.fixture.json");
+    std::fs::write(
+        &fixture,
+        serde_json::to_string(&world.fixture(POLICY_ZONE)).unwrap(),
+    )
+    .unwrap();
+    let db = dir.join("discover-hosts.sqlite");
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", db.display()));
+    }
+    let out = run(
+        &RunArgs {
+            zone: POLICY_ZONE.to_string(),
+            names: vec![],
+            forget_names: vec![],
+            discover: ["gandi", "route53", "cloudflare"]
+                .map(String::from)
+                .to_vec(),
+            deep: false,
+            expect: None,
+            db,
+            json: true,
+            sarif: None,
+            source: SourceArgs {
+                record: None,
+                replay: Some(fixture),
+            },
+        },
+        false,
+    )
+    .await;
+    for line in [
+        "Cloudflare lists 1 hosts in policy.example., 1 of them new",
+        "Gandi lists 2 hosts in policy.example., 1 of them new",
+        "discovery failed, continuing without it: Amazon Route 53: no recorded exchange",
+    ] {
+        assert!(
+            out.stderr.contains(line),
+            "missing '{line}' in: {}",
+            out.stderr
+        );
+    }
+    let doc: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    assert_eq!(
+        doc["run"]["names"],
+        serde_json::json!(["app.policy.example.", "blog.policy.example."])
+    );
+}

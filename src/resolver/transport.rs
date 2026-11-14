@@ -217,6 +217,23 @@ impl Client {
         limit: usize,
         timeout: Duration,
     ) -> HttpOutcome {
+        let headers: Vec<(&str, String)> = bearer
+            .map(|token| ("authorization", format!("Bearer {token}")))
+            .into_iter()
+            .collect();
+        self.http_get_headers(url, &headers, limit, timeout).await
+    }
+
+    /// [`Client::http_get_with`], sending these request headers as well.
+    /// Headers carry credentials, so they are never recorded: a fixture
+    /// holds only the URL and the answer.
+    pub async fn http_get_headers(
+        &self,
+        url: &str,
+        headers: &[(&str, String)],
+        limit: usize,
+        timeout: Duration,
+    ) -> HttpOutcome {
         let outcome = match &self.backend {
             Backend::Replay(_) => {
                 self.http_replay
@@ -226,7 +243,7 @@ impl Client {
                         message: "no recorded exchange for this URL".to_string(),
                     })
             }
-            Backend::Live(_) => live_http_get(url, bearer, limit, timeout).await,
+            Backend::Live(_) => live_http_get(url, headers, limit, timeout).await,
         };
         let mut rec = self.http_recording.lock().expect("recording lock");
         if !rec.iter().any(|e| e.url == url) {
@@ -308,7 +325,7 @@ impl Client {
 
 async fn live_http_get(
     url: &str,
-    bearer: Option<&str>,
+    headers: &[(&str, String)],
     limit: usize,
     timeout: Duration,
 ) -> HttpOutcome {
@@ -326,8 +343,8 @@ async fn live_http_get(
         Err(e) => return error(e),
     };
     let mut request = client.get(url);
-    if let Some(token) = bearer {
-        request = request.bearer_auth(token);
+    for (name, value) in headers {
+        request = request.header(*name, value);
     }
     let mut response = match request.send().await {
         Ok(response) => response,

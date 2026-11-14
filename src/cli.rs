@@ -302,10 +302,12 @@ pub struct RunArgs {
     /// Certificate Transparency logs through crt.sh, which is told the
     /// zone's name; the names are checked in this run. `axfr` asks the
     /// zone's nameservers for a zone transfer, which most refuse; the names
-    /// are checked from the next run on. `digitalocean` asks DigitalOcean's
-    /// API for the zone's records, with the read-only token in the
-    /// environment variable ZONEBLICK_DIGITALOCEAN_TOKEN. Repeat for more.
-    #[arg(long, value_name = "SOURCE", value_parser = ["ct", "axfr", "digitalocean"])]
+    /// are checked from the next run on. `digitalocean`, `cloudflare`,
+    /// `gandi` and `hetzner` ask that DNS host's API for the zone's
+    /// records, with a read-only token in the environment variable
+    /// ZONEBLICK_<HOST>_TOKEN; `route53` uses AWS_ACCESS_KEY_ID and
+    /// AWS_SECRET_ACCESS_KEY. Repeat for more.
+    #[arg(long, value_name = "SOURCE", value_parser = ["ct", "axfr", "digitalocean", "cloudflare", "gandi", "hetzner", "route53"])]
     pub discover: Vec<String>,
 
     /// Also make the deep checks: a few unusual queries per nameserver and
@@ -634,29 +636,31 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
             Err(e) => notes = format!("zoneblick: discovery failed, continuing without it: {e}\n"),
         }
     }
-    let mut provided: Vec<String> = Vec::new();
-    if args.discover.iter().any(|d| d == "digitalocean") {
-        let token = std::env::var(crate::discover::DIGITALOCEAN_TOKEN_ENV)
-            .ok()
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty());
-        let found = match token {
-            Some(token) => crate::discover::digitalocean_names(&client, &zone, &token).await,
-            None if replaying => crate::discover::digitalocean_names(&client, &zone, "").await,
-            None => Err(format!(
-                "set {} to a read-only API token",
-                crate::discover::DIGITALOCEAN_TOKEN_ENV
-            )),
+    let mut provided: Vec<(&str, Vec<String>)> = Vec::new();
+    for provider in crate::providers::PROVIDERS {
+        if !args.discover.iter().any(|d| d == provider) {
+            continue;
+        }
+        let who = crate::providers::label(provider);
+        let credential = match crate::providers::credential_from_env(provider) {
+            Ok(credential) => Ok(credential),
+            Err(_) if replaying => Ok(crate::providers::replay_credential(provider)),
+            Err(e) => Err(e),
+        };
+        let found = match credential {
+            Ok(credential) => crate::providers::names(&client, provider, &zone, &credential).await,
+            Err(e) => Err(e),
         };
         match found {
             Ok(found) => {
                 let total = found.len();
-                provided = found.into_iter().filter(|n| !names.contains(n)).collect();
+                let new: Vec<String> = found.into_iter().filter(|n| !names.contains(n)).collect();
                 notes.push_str(&format!(
-                    "zoneblick: DigitalOcean lists {total} hosts in {zone}, {} of them new\n",
-                    provided.len()
+                    "zoneblick: {who} lists {total} hosts in {zone}, {} of them new\n",
+                    new.len()
                 ));
-                names.extend(provided.iter().cloned());
+                names.extend(new.iter().cloned());
+                provided.push((provider, new));
             }
             Err(e) => notes.push_str(&format!(
                 "zoneblick: discovery failed, continuing without it: {e}\n"
@@ -703,7 +707,9 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     };
     let run_id = store.save_run(&obs, &findings, &meta)?;
     store.set_name_source(&zone, &discovered, "ct")?;
-    store.set_name_source(&zone, &provided, "digitalocean")?;
+    for (provider, found) in &provided {
+        store.set_name_source(&zone, found, provider)?;
+    }
     if let Some(found) = &transferred {
         let added = store.add_names(&zone, found, "axfr", run_id)?;
         notes.push_str(&format!(
