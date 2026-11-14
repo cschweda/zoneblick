@@ -20,7 +20,7 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="author" content="Christopher Schweda">
 <meta property="article:published_time" content="2026-11-13T15:35:13Z">
-<meta property="article:modified_time" content="2026-11-13T16:05:02Z">
+<meta property="article:modified_time" content="2026-11-14T16:30:00Z">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -57,7 +57,7 @@
         "url": "https://github.com/cschweda"
       },
       "datePublished": "2026-11-13",
-      "dateModified": "2026-11-13",
+      "dateModified": "2026-11-14",
       "primaryImageOfPage": {
         "@type": "ImageObject",
         "url": "https://zoneblick.com/og-image.png",
@@ -77,14 +77,14 @@
         "https://opensource.org/licenses/MIT",
         "https://www.apache.org/licenses/LICENSE-2.0"
       ],
-      "runtimePlatform": "Linux, macOS",
+      "runtimePlatform": "Linux, macOS, Windows",
       "author": {
         "@type": "Person",
         "name": "Christopher Schweda",
         "url": "https://github.com/cschweda"
       },
       "dateCreated": "2026-11-13",
-      "dateModified": "2026-11-13",
+      "dateModified": "2026-11-14",
       "keywords": "DNS, DNSSEC, zone monitoring, delegation, nameserver consistency, subdomain takeover, self-hosted"
     }
   ]
@@ -565,8 +565,35 @@ footer .grid{row-gap:24px}
         <div class="run two">
           <article class="wide">
             <h3>Install script</h3>
-            <p>For Linux and macOS. It downloads the newest release, verifies its checksum and installs the binary. Run as root on a Linux server with systemd, it also sets up the daemon as a service with a starter config. <a href="https://github.com/cschweda/zoneblick/blob/main/install.sh">Read the script</a> first if you like.</p>
-<pre tabindex="0">curl -fsSL https://zoneblick.com/install.sh | sh</pre>
+            <p>For Linux and macOS. It downloads the newest release, verifies its checksum and, when the GitHub CLI is signed in, its build provenance, and installs the binary. Run as root on a Linux server with systemd, it also sets up the daemon as a service with a starter config. <a href="https://github.com/cschweda/zoneblick/blob/main/install.sh">Read the script</a> first if you like.</p>
+<pre tabindex="0">curl -fsSL https://zoneblick.com/install.sh | sh
+
+<span class="c"># a server: binary, service user, starter config and a running service</span>
+curl -fsSL https://zoneblick.com/install.sh | sudo sh
+
+<span class="c"># a laptop, without root: the binary only</span>
+curl -fsSL https://zoneblick.com/install.sh | sh -s -- --prefix ~/.local --no-service
+
+<span class="c"># one exact release, refused unless its build provenance verifies</span>
+curl -fsSL https://zoneblick.com/install.sh | sh -s -- --version v0.14.0 --require-attestation</pre>
+          </article>
+          <article>
+            <h3>Debian, Ubuntu, Fedora, RHEL</h3>
+            <p>A <span class="mono">.deb</span> and an <span class="mono">.rpm</span> for x86_64 and 64-bit ARM. They install the binary, the service and a starter config that upgrades never overwrite.</p>
+<pre tabindex="0"><span class="c"># Debian and Ubuntu (arm64 on ARM)</span>
+B=https://github.com/cschweda/zoneblick/releases/download/v0.14.0
+curl -fsSLO $B/zoneblick_0.14.0_amd64.deb
+sudo dpkg -i zoneblick_0.14.0_amd64.deb
+
+<span class="c"># Fedora and RHEL (aarch64 on ARM)</span>
+sudo rpm -i $B/zoneblick-0.14.0-1.x86_64.rpm</pre>
+          </article>
+          <article>
+            <h3>Homebrew</h3>
+            <p>For macOS and Linux. The formula installs the release binary and checks its SHA-256; nothing is compiled.</p>
+<pre tabindex="0">brew tap cschweda/zoneblick \
+  https://github.com/cschweda/zoneblick
+brew install zoneblick</pre>
           </article>
           <article class="wide">
             <h3>Download a binary</h3>
@@ -615,6 +642,23 @@ Expand-Archive zoneblick.zip -DestinationPath .
                 <p>Run these in PowerShell. The binary is for 64-bit Windows and also runs on ARM PCs through emulation. It is not signed. To run <span class="mono">zoneblick</span> from any folder, move <span class="mono">zoneblick.exe</span> to a folder on your PATH.</p>
               </div>
             </div>
+          </article>
+          <article>
+            <h3>Verify a download</h3>
+            <p>Every release file and the container image carries a build provenance attestation: signed proof that this repository's release workflow built that exact file from the release's tag. The install script and the GitHub Action check it for you.</p>
+<pre tabindex="0">gh attestation verify \
+  zoneblick-v0.14.0-x86_64-unknown-linux-musl.tar.gz \
+  --repo cschweda/zoneblick \
+  --source-ref refs/tags/v0.14.0</pre>
+          </article>
+          <article>
+            <h3>GitHub Action</h3>
+            <p>Checks a zone from a workflow, for example when a pull request changes a zone file. Pinning the action pins the binary it runs.</p>
+<pre tabindex="0">- uses: cschweda/zoneblick@v0.14.0
+  with:
+    zone: example.org
+    expect: dns/example.org.zone
+    fail-on: critical</pre>
           </article>
           <article class="wide">
             <h3>Build with cargo</h3>
@@ -668,16 +712,40 @@ zoneblick serve</pre>
           </article>
           <article>
             <h3>Or use Docker</h3>
-            <p>Works today. One image for x86_64 and ARM, one volume for data, one mounted config file. The <a href="https://github.com/cschweda/zoneblick#docker">README</a> has a Compose file and the token setup.</p>
+            <p>Works today. One image for x86_64 and ARM, one volume for data, one mounted config file. The <a href="https://github.com/cschweda/zoneblick#docker">README</a> has a Compose file and the token setup. For a single check, no config is needed.</p>
 <pre tabindex="0">docker run -d \
   -v zoneblick-data:/data \
   -v ./zoneblick.toml:/etc/zoneblick.toml:ro \
   -p 127.0.0.1:8053:8053 \
-  ghcr.io/cschweda/zoneblick</pre>
+  ghcr.io/cschweda/zoneblick
+
+<span class="c"># one check, nothing stored</span>
+docker run --rm ghcr.io/cschweda/zoneblick \
+  check example.org</pre>
+          </article>
+          <article>
+            <h3>Sign in with the token</h3>
+            <p>New in v0.14.0. The API and the web UI always ask for a token, on localhost too. The daemon makes one on its first start; to choose your own, the config keeps only its hash.</p>
+<pre tabindex="0"><span class="c"># the token the daemon made</span>
+sudo cat /var/lib/zoneblick/api-token
+zoneblick token --show zoneblick.toml
+
+<span class="c"># or your own: prints token_sha256 = "..."</span>
+printf '%s' "$TOKEN" | zoneblick token</pre>
+          </article>
+          <article>
+            <h3>Check a zone file first</h3>
+            <p>Works today. Before a zone file goes live, <span class="mono">plan</span> finds the mistakes in it and lists what deploying it would add, change or remove. Stores nothing, so it suits a pull request.</p>
+<pre tabindex="0">zoneblick plan example.org \
+  --file example.org.zone
+
+<span class="c"># the file only, no queries</span>
+zoneblick plan example.org \
+  --file example.org.zone --offline</pre>
           </article>
         </div>
         <p class="status"><b>Early days</b><span>v0.14.0 is an early pre-release. All forty light checks, stored runs, baselines, zone-file comparison and <span class="mono">zoneblick plan</span> for a file before it is deployed, discovery from certificate logs, zone transfers and five DNS hosts, muting, export, the daemon, alerts, a weekly digest, metrics and the web UI work today. All twenty-one deep checks work too, including the DNSSEC chain of trust from the root with verified proofs of absence, mail-server certificates against TLSA records, and the domain's registration. Release files carry a build provenance that the install script verifies. Parts that talk to outside services (DNS host APIs, chat alerts, email) are tested against recorded answers, not the live services.</span></p>
-        <p class="status"><b>Security audits</b><span>Two red team and blue team audits so far, of 0.12.0 and 0.13.0, plus an automated review of every commit. The second found two serious problems and thirteen smaller ones, all fixed by v0.14.0, which also makes the API token mandatory. The <a href="https://github.com/cschweda/zoneblick#security-audits">README</a> keeps the full record: what broke, what held, and what is still open.</span></p>
+        <p class="status"><b>Security audits</b><span>Two red team and blue team audits so far, of 0.12.0 and 0.13.0, plus an automated review of every commit. The second found two serious problems and thirteen smaller ones, all fixed by v0.14.0, which also makes the API token mandatory. The <a href="https://github.com/cschweda/zoneblick#security">README</a> says how each part is protected and keeps the full record: what broke, what held, and what is still open.</span></p>
       </div>
     </div>
   </section>

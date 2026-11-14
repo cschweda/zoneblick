@@ -2,11 +2,15 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 40 checks for every run and 21 more with `--deep`, which also follows the DNSSEC chain of trust from the root, verifies denial proofs, compares mail servers' certificates with their TLSA records and watches the domain's registration. `zoneblick plan` checks a zone file before it is deployed, several daemons can compare what they see from different places, and release files carry a verifiable build provenance. The current release, `v0.14.0`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 40 checks for every run and 21 more with `--deep`, which also follows the DNSSEC chain of trust from the root, verifies denial proofs, compares mail servers' certificates with their TLSA records and watches the domain's registration. `zoneblick plan` checks a zone file before it is deployed, several daemons can compare what they see from different places, and release files carry a verifiable build provenance. The daemon's API and web UI always need a token, which the daemon makes itself on its first start; it can serve HTTPS with your own certificate or listen on a socket file. The current release, `v0.14.0`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
 - Design document: [DESIGN.md](DESIGN.md)
+- Who it is for, with the commands for each case: [Who it is for](#who-it-is-for)
+- How it is protected, and what is still open: [Security](#security)
+
+![The zoneblick social card: "Know the moment your DNS drifts." Below it, a one-line description, a three-line record diff, the labels 40 checks every run, 21 deep checks, alerts, web UI and API, one binary and one SQLite file, and four nameservers of which one serves an older SOA serial](docs/og-image.png)
 
 ## What it looks like
 
@@ -30,6 +34,10 @@ A zone compared with the zone file it is meant to match (`run --expect`). Three 
 
 ![Terminal output of zoneblick run with a zone file: a consistency warning, three DRF-01 findings for record sets that differ from the file or are missing, and one DRF-02 finding for a record that is served but not in the file](screenshots/drift.png)
 
+A zone file checked before it is deployed (`zoneblick plan`): one mistake in the file, and the three record sets that deploying it would change:
+
+![Terminal output of zoneblick plan for a test zone: one warning, PLN-05, for a mail server name with no address record in the file, then two record sets that would change and one that would be added](screenshots/plan.png)
+
 The mail checks, in a test zone whose mail records are wrong in several ways: a revoked DKIM key, a missing one, TLSA records that have no effect, no TLS reporting, and a BIMI record without enforced DMARC:
 
 ![Terminal output of zoneblick check for a test zone: one critical finding for an SPF include of an unregistered domain, four warnings covering MTA-STS, TLSA and two DKIM selectors, and four notices covering DMARC, CAA, TLS reporting and BIMI](screenshots/mail.png)
@@ -46,9 +54,106 @@ The web UI's history tab, for a test zone that changed in its tenth run. The str
 
 ![The zoneblick web interface on the history tab of drift.example: a timeline of ten runs with the last one marked as a warning, a list of the runs, and the change list of run 10 with a changed CNAME, a removed TXT record, two changed address records and a newly opened finding](screenshots/ui-history.png)
 
+The API token, from 0.14.0. The daemon makes one on its first start in a file only its own user can read; a request without it is refused, also on localhost:
+
+![Terminal session: zoneblick serve logs that it made an API token, the token file is readable by its owner only, a request without the token gets an unauthorized error, zoneblick token --show prints the token, and the same request with the token returns the zone](screenshots/token.png)
+
+The web UI asks for the token once per browser session:
+
+![The zoneblick web interface before sign-in: a bar across the top says that zoneblick needs its API token and where to find it, with a field and a Use token button; the page below shows no data yet](screenshots/ui-signin.png)
+
 The web UI that `zoneblick serve` provides. This picture is of the [demo](https://zoneblick.com/demo.html), which is the same interface filled with invented sample data:
 
 ![The zoneblick web interface, shown with sample data: a list of zones on the left and the findings for example.org on the right](screenshots/demo-ui.png)
+
+## Who it is for
+
+Ten situations zoneblick was built for, each with the commands that answer it. Every command here is explained further down.
+
+**1. "I look after a few domains and want to hear when something breaks."** Install the daemon on a small Linux server, list the zones, and point an alert at your phone.
+
+```
+curl -fsSL https://zoneblick.com/install.sh | sudo sh
+sudoedit /etc/zoneblick/zoneblick.toml      # add [[zone]] blocks and an [alerts.ntfy] url
+sudo systemctl restart zoneblick
+sudo cat /var/lib/zoneblick/api-token       # the token the web UI at http://127.0.0.1:8053 asks for
+```
+
+**2. "Before I sign off on a domain, I want one report of what is wrong with it."** No install, no config, no database:
+
+```
+docker run --rm ghcr.io/cschweda/zoneblick check example.org --deep
+```
+
+**3. "Our zone file is in git, and a pull request should show what it would change before anyone deploys it."** Run `plan` on the pull request; it exits 2 for a critical mistake in the file.
+
+```yaml
+- run: curl -fsSL https://zoneblick.com/install.sh | sh -s -- --version v0.14.0 --no-service
+- run: zoneblick plan example.org --file dns/example.org.zone
+```
+
+**4. "Somebody edits records by hand in the DNS host's dashboard, and I want to know when the live zone no longer matches the file."** Compare every run with the file; differences are findings DRF-01 and DRF-02.
+
+```
+zoneblick run example.org --expect dns/example.org.zone
+```
+
+**5. "I need to find the forgotten subdomains that still point at something we gave up."** Take the names from certificate logs or your DNS host, check them for dangling aliases and unclaimed hosting, and hand the result to whoever tracks it.
+
+```
+zoneblick run example.org --discover ct --discover cloudflare
+zoneblick export --format csv --zone example.org > findings.csv
+zoneblick run example.org --sarif zoneblick.sarif
+```
+
+**6. "Our mail must arrive, and nobody should be able to forge it."** SPF, DMARC, MTA-STS, TLS reporting, DKIM keys and BIMI on every run; with `--deep`, the mail servers' certificates against their TLSA records.
+
+```
+zoneblick check example.org --dkim-selector s1 --dkim-selector s2 --deep
+```
+
+**7. "We sign our zone, and I do not want to learn from our users that the signatures ran out."** A daily deep run follows the chain of trust from the root, verifies the signature on every record set, and watches key rollovers; SEC-02 warns seven days before a signature expires.
+
+```toml
+[schedule]
+every = "1h"
+deep = "24h"
+```
+
+**8. "We are moving to another DNS host and nothing may change on the way."** Pin the state before the move, and compare with it afterwards, however many runs lie between.
+
+```
+zoneblick baseline pin example.org
+# ... move the zone ...
+zoneblick run example.org
+zoneblick diff example.org --baseline
+```
+
+**9. "Customers in one region say the site is down, and it works for me."** Run a second daemon somewhere else and list it as a [vantage point](#vantage-points); answers that differ by place are VAN-01, a nameserver that only one side can reach is VAN-02.
+
+```toml
+[[vantage]]
+name = "frankfurt"
+url = "https://zoneblick-fra.example.org"
+token_file = "/etc/zoneblick/frankfurt-token"
+```
+
+**10. "DNS should sit on the same dashboard and in the same weekly report as everything else."** Scrape the [metrics](#the-api), and have a digest sent to the alert channels.
+
+```toml
+[alerts]
+digest = "7d"
+```
+
+```yaml
+# prometheus.yml
+- job_name: zoneblick
+  metrics_path: /api/v1/metrics
+  authorization: { credentials: "<token>" }
+  static_configs: [{ targets: ["127.0.0.1:8053"] }]
+```
+
+Also covered: a domain about to lapse or lose its transfer lock (REG-01 to REG-04, in deep runs), a certificate with no renewal in sight (CRT-01), and a finding you have decided to live with (`zoneblick findings mute`).
 
 ## Platforms
 
@@ -60,6 +165,7 @@ zoneblick runs on Linux, macOS and Windows. The same tests run on all three in C
 | Archive | `.tar.gz` | `.tar.gz` | `.zip` |
 | Extra packages needed | None; the binary is statically linked, SQLite included | None | None |
 | Signed | Not applicable | No; see the [macOS note](#macos-apple-could-not-verify-warning) | No |
+| Build provenance | Yes; see [Verifying a download](#verifying-a-download) | Yes | Yes |
 | Install with | `curl`, `tar`, `sudo install` | `curl`, `tar`, `sudo install` | PowerShell |
 | Build from source | Yes | Yes | Yes |
 | Colour output | Yes | Yes | Yes, in Windows Terminal and PowerShell 7; the old console may show raw escape codes |
@@ -74,21 +180,44 @@ On every platform:
 
 There are several ways to install zoneblick: the install script, a `.deb` or `.rpm` package, Homebrew, a binary download, Docker, or building from source. For CI there is a [GitHub Action](#github-action).
 
+| Your situation | Use |
+|---|---|
+| A Linux server that should watch zones all the time | The [install script](#install-script-linux-and-macos) as root, or the [`.deb` or `.rpm`](#debian-ubuntu-fedora-and-rhel-packages): both set up the service |
+| A laptop, for a check now and then | [Homebrew](#homebrew-macos-and-linux), or the install script with `--no-service` |
+| Everything runs in containers | [Docker](#docker) |
+| A check in a CI pipeline | The [GitHub Action](#github-action); elsewhere, the install script with `--version` and `--no-service` |
+| Windows | [Download a binary](#download-a-binary) |
+| You want to read or change the code first | [Build from source](#build-from-source) |
+
 ### Install script (Linux and macOS)
 
 ```
 curl -fsSL https://zoneblick.com/install.sh | sh
 ```
 
+Three common forms:
+
+```
+# a server: the binary, a zoneblick user, a starter config and a running service
+curl -fsSL https://zoneblick.com/install.sh | sudo sh
+
+# a laptop, without root: the binary only, in ~/.local/bin
+curl -fsSL https://zoneblick.com/install.sh | sh -s -- --prefix ~/.local --no-service
+
+# one exact release, refused unless its build provenance verifies (needs the GitHub CLI)
+curl -fsSL https://zoneblick.com/install.sh | sh -s -- --version v0.14.0 --require-attestation
+```
+
 The script downloads the newest release for your system, verifies its SHA-256 checksum, and installs the binary to `/usr/local/bin`. When the GitHub CLI (`gh`) is installed and signed in, it also verifies the file's [build provenance](#verifying-a-download) and stops if that does not hold; without `gh` it says that only the checksum was checked. `--require-attestation` makes the provenance check mandatory. Read it first if you like: it is [`install.sh`](install.sh) in this repository.
 
-On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick` system user, a starter config at `/etc/zoneblick/zoneblick.toml`, a data directory at `/var/lib/zoneblick`, and a `zoneblick` service, which it starts. Add your zones to the config and run `systemctl restart zoneblick`. An existing config is never overwritten.
+On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick` system user, a starter config at `/etc/zoneblick/zoneblick.toml`, a data directory at `/var/lib/zoneblick`, and a `zoneblick` service, which it starts. Add your zones to the config and run `systemctl restart zoneblick`. An existing config is never overwritten. The web UI is then at `http://127.0.0.1:8053` on that machine and asks for the [API token](#the-api-token), which the service made on its first start: `sudo cat /var/lib/zoneblick/api-token`.
 
 | Option | Effect |
 |---|---|
 | `--version v0.14.0` | Install that release instead of the newest |
 | `--prefix DIR` | Install the binary to `DIR/bin` |
 | `--no-service` | Binary only; no user, config or service |
+| `--require-attestation` | Stop unless the file's build provenance verifies; needs the GitHub CLI, signed in |
 
 Pass options after `sh -s --`, for example `curl -fsSL https://zoneblick.com/install.sh | sh -s -- --no-service`.
 
@@ -103,6 +232,14 @@ sudo dpkg -i zoneblick_0.14.0_amd64.deb
 
 # Fedora and RHEL (use aarch64 on ARM)
 sudo rpm -i https://github.com/cschweda/zoneblick/releases/download/v0.14.0/zoneblick-0.14.0-1.x86_64.rpm
+```
+
+After either, list your zones and read the token the web UI asks for:
+
+```
+sudoedit /etc/zoneblick/zoneblick.toml
+sudo systemctl restart zoneblick
+sudo cat /var/lib/zoneblick/api-token
 ```
 
 There is no package repository, so updates are not automatic: install the newer package over the old one. The `.deb` is installed and started on a GitHub runner as part of every release build. The `.rpm` is built and its contents listed there, but it has not been installed on a real Fedora or RHEL system.
@@ -126,7 +263,7 @@ gh attestation verify zoneblick-v0.14.0-x86_64-unknown-linux-musl.tar.gz \
   --signer-workflow cschweda/zoneblick/.github/workflows/release.yml \
   --source-ref refs/tags/v0.14.0
 
-gh attestation verify oci://ghcr.io/cschweda/zoneblick:0.13.0 --repo cschweda/zoneblick
+gh attestation verify oci://ghcr.io/cschweda/zoneblick:0.14.0 --repo cschweda/zoneblick
 ```
 
 The install script and the GitHub Action run the first form for you. The files are not signed with a project key, and the `.deb` and `.rpm` carry no package signature; the attestation is the verification. Releases up to 0.12.2 have none.
@@ -147,7 +284,20 @@ printf '%s' "$TOKEN" | docker run --rm -i ghcr.io/cschweda/zoneblick:latest toke
 docker compose up -d
 ```
 
-Then open `http://127.0.0.1:8053` and enter the token. The container listens on all its interfaces, so a token is required; `compose.yaml` publishes the port on the host's localhost only. Data lives in the `zoneblick-data` volume. The image contains only the static binary and CA certificates and runs as an unprivileged user. Its base image is pinned by digest.
+Then open `http://127.0.0.1:8053` and enter the token. `compose.yaml` publishes the port on the host's localhost only.
+
+From 0.14.0 you can also leave the token to the daemon: delete the `token_sha256` line from `zoneblick.toml`, start the container, and read the token it made (kept in the data volume) with the command below. This path has not been tried on a published image yet.
+
+```
+docker compose exec zoneblick /usr/local/bin/zoneblick token --show /etc/zoneblick.toml
+```
+
+For a single check without the daemon, no config or volume is needed:
+
+```
+docker run --rm ghcr.io/cschweda/zoneblick check example.org
+```
+ Data lives in the `zoneblick-data` volume. The image contains only the static binary and CA certificates and runs as an unprivileged user. Its base image is pinned by digest.
 
 ### Download a binary
 
@@ -231,7 +381,7 @@ Either of these avoids it:
   xattr -d com.apple.quarantine zoneblick-*/zoneblick
   ```
 
-Check the download against `SHA256SUMS` first, since that is the only verification an unsigned binary has. Building from source avoids the question altogether.
+Verify the download first, since Apple has not: check its [build provenance](#verifying-a-download) with `gh attestation verify`, or at least compare it with `SHA256SUMS`. Building from source avoids the question altogether.
 
 ### Build from source
 
@@ -635,7 +785,7 @@ Record data comes from the DNS, so in Slack messages `&`, `<` and `>` are sent a
 
 ### The web UI
 
-Open the `bind` address in a browser. The page lists your zones with their open findings, a nameserver table, the delegation path, and a history: a timeline with one bar per stored run (up to 200), coloured by the worst finding of that run, and the changes between any run and the one before it, or any other run you pick. "Run checks now" starts a run of every zone, "Deep check of this zone" a deep run of the selected one, and each finding has a Mute button. When a token is set, the page asks for it once per browser session and "Sign out" forgets it. `#findings`, `#servers` and `#history` at the end of the address open that tab, and `#history=example.org` opens it for one zone. The page is a single file compiled into the binary; it loads nothing from other sites.
+Open the `bind` address in a browser. The page lists your zones with their open findings, a nameserver table, the delegation path, and a history: a timeline with one bar per stored run (up to 200), coloured by the worst finding of that run, and the changes between any run and the one before it, or any other run you pick. "Run checks now" starts a run of every zone, "Deep check of this zone" a deep run of the selected one, and each finding has a Mute button. The page asks for the [API token](#the-api-token) once per browser session and "Sign out" forgets it. `#findings`, `#servers` and `#history` at the end of the address open that tab, and `#history=example.org` opens it for one zone. The page is a single file compiled into the binary; it loads nothing from other sites.
 
 ### The API
 
@@ -676,7 +826,7 @@ Errors are JSON too: `{"error": {"kind": "...", "message": "..."}}` with a match
 | `zoneblick zones list` | Lists the stored zones | No |
 | `zoneblick zones add\|remove <zone>` | Adds a zone with names, or deletes a zone and its history | Yes |
 | `zoneblick serve` | Runs the daemon: schedule, alerts, API and web UI | Yes |
-| `zoneblick token` | Prints the hash of an API token for the config file | No |
+| `zoneblick token` | Prints the hash of an API token for the config file; with `--show CONFIG`, the token the daemon made for itself | No |
 
 ### Options
 
@@ -701,6 +851,7 @@ Errors are JSON too: `{"error": {"kind": "...", "message": "..."}}` with a match
 | `--run RUN` | `baseline pin` | The run to pin. Default: the latest |
 | `--keep-all TIME`, `--keep-daily TIME` | `prune` | The retention limits. Default: `30d` and `365d` |
 | `--config FILE` | `serve` | The configuration file. Default: `zoneblick.toml` |
+| `--show CONFIG` | `token` | Print the token the daemon made, from the data directory this config file names; fails when the config sets `token_sha256`, since only the hash is stored then |
 | `--record FILE` | `check`, `run` | Save every DNS exchange of the run to a fixture file |
 | `--replay FILE` | `check`, `run` | Answer from a fixture file instead of the network |
 
@@ -1007,22 +1158,67 @@ One binary, one config file, one SQLite file, on your own server.
 | `THIRD-PARTY.md` | Where the signatures come from, and their licence |
 | `src/config.rs` | The `zoneblick.toml` configuration file |
 | `src/serve.rs` | The daemon: scheduler, API and UI data |
+| `src/tls.rs` | The daemon's own HTTPS listener |
 | `src/alerts.rs` | Composing and sending alerts |
 | `src/runner.rs` | The store-and-compare step shared by `run` and `serve` |
 | `src/ui/index.html` | The web UI, compiled into the binary |
-| `install.sh`, `compose.yaml`, `packaging/` | Install script, Docker Compose file, systemd unit and image recipe |
+| `install.sh`, `compose.yaml`, `packaging/` | Install script, Docker Compose file, systemd unit image recipe, and the source of the social card (`og-image.html`, rendered at 1200x630 to `docs/og-image.png`) |
 | `src/cli.rs` | The commands |
 | `tests/` | Offline tests and DNS fixtures |
 | `screenshots/` | The images in this README |
 | `.github/workflows/ci.yml` | Lint and tests on Linux, macOS and Windows |
 | `docs/` | The project website, served by GitHub Pages |
 
+## Security
+
+zoneblick reads data that other people control: every DNS answer, every page it fetches, every API reply, every zone file in a pull request. And it holds things worth stealing: a database that lists your names and what is wrong with them, the API token, and, when you use them, read-only credentials for your DNS host and an SMTP password. This section says how each is protected. The record of what was attacked, what broke and what is still open follows under [Security audits](#security-audits).
+
+**What is exposed**
+
+| Surface | Reachable by | Guarded by |
+|---|---|---|
+| The API and web UI | Whoever can reach the `bind` address: this machine by default | The token, on every route but `health` |
+| The DNS resolver and every parser | Any zone you check, and any zone its records point into | Limits on size, count and time; no trust in what an answer says about itself |
+| Outgoing HTTP, SMTP and API requests | The services asked: crt.sh, RDAP servers, DNS hosts, mail servers, vantage points, alert receivers | Public addresses only, no redirects, verified TLS, credentials to fixed hosts |
+| Files on disk | Other users of the machine | Owner-only permissions, an unprivileged service user |
+| Releases, the install script, the Action | Whoever can alter a download | Checksums and build provenance |
+
+**What is done, by area**
+
+| Area | Protection |
+|---|---|
+| API | A token is always required, also on localhost and on a socket file (from 0.14.0). The daemon stores a hash of it and compares in constant time. Requests that change something must send JSON and must not come from another website. Every response forbids framing, content sniffing, referrers and caching. |
+| Web UI | One file compiled into the binary, with a content security policy; it loads nothing from other sites and writes data from the DNS into the page as text only. The token is kept for the browser session and "Sign out" forgets it. |
+| Transport | The daemon listens on localhost unless told otherwise. It can serve HTTPS itself (TLS 1.2 and 1.3; five seconds and eight handshakes per address), or listen on a socket file with mode `0660` in a directory nobody else can write to. |
+| Hostile DNS data | A run has a deadline and a failed run alerts. Nameserver names, addresses, discovered names, signature checks (16 per record set, 32 keys per answer) and signature queries are capped. An answer without the question is refused. DNSSEC proofs are verified, not believed. |
+| Output | Everything quoted from the DNS, a zone file or another daemon is made safe before it reaches a terminal, a CI log, a Slack or Discord message, the web UI or a spreadsheet (CSV formulas get a leading apostrophe). |
+| Outgoing requests | Pages are fetched from public addresses only; nothing is sent to loopback or link-local addresses; the address checked is the address connected to. No request follows a redirect. TLS certificates are verified. A provider credential goes to that provider's API host and nowhere else; a vantage token goes only over `https://`. Mail servers get `EHLO`, `STARTTLS` and `QUIT` under a 30-second deadline, and no mail. |
+| Secrets and data | The database and the token file are made readable by their owner only (on Unix). Credentials are read from files or the environment and are not written to the database, the log or a recorded fixture. `zoneblick token` reads the token from standard input so that it does not show in the process list. |
+| The service | The systemd unit runs as the unprivileged `zoneblick` user with `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome` and `PrivateTmp`, and may write to `/var/lib/zoneblick` only. The container holds the static binary and CA certificates, runs as an unprivileged user, and its base image is pinned by digest. |
+| Supply chain | Every release file and the image carries a [build provenance attestation](#verifying-a-download) pinned to this repository, the release workflow and the tag; the install script and the Action verify it and the SHA-256. Pinning the Action pins the binary. Dependencies are locked in `Cargo.lock`. |
+| What it does to others | It only reads. It never tries to claim a dangling resource, sends no mail, keeps nothing of a zone transfer, limits itself to 5 queries per second per server, and sends no telemetry (see [Privacy](#privacy)). |
+| Tests | The attacks from every audit are regression tests ([`tests/hostile.rs`](tests/hostile.rs), [`tests/serve.rs`](tests/serve.rs), [`tests/dnssec.rs`](tests/dnssec.rs)) that run in CI on Linux, macOS and Windows. |
+
+**What you should do**
+
+- Leave `bind` on localhost or a socket file unless you need more. For access from other machines, set `tls_cert` and `tls_key`, or put a reverse proxy with TLS in front; do not send the token over plain HTTP across a network.
+- For anything but a single-user machine, set `token_sha256`, so that the token itself is in no file.
+- Give DNS-host credentials read access only, in files that only the `zoneblick` user can read.
+- Keep the database and exports private: they are a list of your weak points.
+- Verify what you install: `gh attestation verify`, or `--require-attestation` on the install script.
+- On Windows, put the data directory where other users cannot read; see [Open now](#open-now).
+
+**Limits of this analysis.** The audits are the project's own, not a third party's. 0.14.0 has had a review of its one change and no full audit yet. The DNS and TLS libraries were fuzzed through zoneblick but not reviewed, and dependencies have not been checked against advisory databases. zoneblick's DNSSEC verdicts cover the answers it asks for; it is not a general validator.
+
+To report a security problem, open a GitHub security advisory on the repository.
+
 ## Security audits
 
-zoneblick reads data that other people control: every DNS answer, every page it fetches, every API reply, every zone file in a pull request. This section is the record of every security audit of it, newest first; older audits are kept in short form. They are reviews by the project itself, not third-party audits. Each has a red team (an independent reviewer reading the code as an attacker, plus hands-on attacks on running instances and parsers) and a blue team (the fixes, each with a regression test).
+This section is the record of every security audit of zoneblick, newest first; older audits are kept in short form. They are reviews by the project itself, not third-party audits. Each has a red team (an independent reviewer reading the code as an attacker, plus hands-on attacks on running instances and parsers) and a blue team (the fixes, each with a regression test).
 
 | Audit | Version audited | Date | Found | Fixed in |
 |---|---|---|---|---|
+| [Review of the token change](#review-of-0140-the-mandatory-token) | 0.14.0 | 2026-11-14 | 2 low | open |
 | [2](#audit-2-version-0130) | 0.13.0 | 2026-11-14 | 2 high, 4 medium, 9 low | 0.13.1; the proxy finding fully in 0.14.0 |
 | [Commit reviews](#automated-review-of-each-commit) | every commit from 0.12.0 on | continuous | 14 medium | the next commit or release |
 | [1](#audit-1-version-0120-in-short) | 0.12.0 | 2026-11-13 | 2 high, 2 medium, 7 low | 0.12.1, 0.12.2 |
@@ -1043,6 +1239,8 @@ Known, and not fixed. This list is current as of 0.14.0, which closed the two it
 
 - **A token the daemon made is stored as it is**, in a file only the daemon's user and root can read (`api-token` in the data directory). Anyone who can read that file can use the API. Set `token_sha256` to keep only a hash.
 - **No limit on token guesses**, and the stored hash is unsalted SHA-256. Fine for a long random token; a short or reused one is not.
+- **On Windows, the token file and the database get no permissions of their own.** They take those of the data directory, so other users of the machine may be able to read them. Owner-only permissions are set on Unix only.
+- **A vantage address with a user part passes as local.** A token may go over plain `http://` to a vantage point on this machine, and the check for "this machine" reads the start of the address: `http://127.0.0.1:80@other.example/` passes it and is sent, with the token, to `other.example`. Only someone who can edit the config file can write such an address.
 - **A stripped proof hides a broken chain.** An answer that claims there is no DS record and brings no proof reads "unknown", not "broken".
 - **DANE trust-anchor records (usage 2) are not verified.** A match against a certificate the server merely sent proves nothing, so such a match is left without a verdict; only usage 3 is checked for real.
 - **Plain HTTP for the hosting-service page** (TKO-02): someone on the network path can add or remove the "unclaimed" text.
@@ -1051,6 +1249,16 @@ Known, and not fixed. This list is current as of 0.14.0, which closed the two it
 - **Packages carry no package signature**; the build provenance attestation is the verification.
 - **Names with unusual bytes** (escaped dots, bytes above 127) can get wrong NSEC and signature verdicts. It is a wrong answer, not a crash.
 - **The DNS and TLS libraries were fuzzed through zoneblick, not reviewed**, and dependencies were not checked against advisory databases.
+
+### Review of 0.14.0: the mandatory token
+
+0.14.0 changed one thing: the API token became mandatory, and the daemon makes one when the config has none. That removed code (the `Host` check and the two proxy heuristics, which existed only for running without a token) and added a little. The change was read on 2026-11-14, with one hands-on test of the config check. It is a review of that change, not an audit of the release.
+
+- **Held:** the token is 32 bytes from the system's random source. Its file is created new, never over an existing file, and readable by its owner only from the first moment; a file from an older version has its permissions narrowed when read. A file with fewer than 16 characters is refused, not used. Every route but `health` compares the token's hash in constant time, and no route trusts a request for being local. `token --show` refuses to run when only a hash is stored.
+- **Low, open:** on Windows the token file gets no permissions of its own.
+- **Low, open:** a vantage address such as `http://127.0.0.1:80@other.example/` passes as "this machine", so its token would cross the network in the clear. It takes write access to the config file.
+
+Both are listed under [Open now](#open-now).
 
 ### Audit 2: version 0.13.0
 
@@ -1112,7 +1320,7 @@ Audited on 2026-11-13; fixes in 0.12.1 and 0.12.2. The red team replayed 3,200 r
 - **Low, fixed:** pages fetched from internal addresses; DNS queries to loopback and link-local addresses; a secret in the log; unlimited discovered names; the web UI's data recomputed under a lock; a world-readable database and a token on the command line; answers without a question accepted; missing security headers.
 - **Held:** the parsers (no crash, no hang), the API token and cross-site checks, the web UI (text nodes only), output escaping on every other path, outgoing requests (no redirects on fetches, verified TLS, credentials to fixed hosts only), and the packaging.
 
-The tests from all audits are in [`tests/hostile.rs`](tests/hostile.rs), [`tests/serve.rs`](tests/serve.rs) and [`tests/dnssec.rs`](tests/dnssec.rs) and run with the rest in CI. To report a security problem, open a GitHub security advisory on the repository.
+The tests from all audits are in [`tests/hostile.rs`](tests/hostile.rs), [`tests/serve.rs`](tests/serve.rs) and [`tests/dnssec.rs`](tests/dnssec.rs) and run with the rest in CI.
 
 ## Responsible use
 

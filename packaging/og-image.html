@@ -1,0 +1,58 @@
+<!-- Source of docs/og-image.png. Render at 1200x630 with headless Chrome:
+     chrome --headless=new --hide-scrollbars --window-size=1200,630 --screenshot=docs/og-image.png packaging/og-image.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>og card</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;background:#0b0b0c}
+#card{width:1200px;height:630px;background:#0b0b0c;color:#f0efea;font-family:"Inter","Helvetica Neue",Helvetica,Arial,sans-serif;position:relative;overflow:hidden;-webkit-font-smoothing:antialiased}
+.top{position:absolute;left:64px;right:64px;top:44px;display:flex;align-items:center;justify-content:space-between}
+.mark{display:flex;align-items:center;gap:20px;font-weight:800;font-size:68px;letter-spacing:-.035em;line-height:1}
+.mark i{width:30px;height:30px;background:#ff4a33;display:block;margin-top:6px}
+.tags{font-family:"IBM Plex Mono",monospace;font-size:16px;letter-spacing:.1em;text-transform:uppercase;color:#a3a29b;text-align:right;line-height:1.2}
+.tags b{display:inline-block;margin-top:16px;font-weight:500;color:#ff4a33;border:1px solid #ff4a33;padding:3px 14px;line-height:1.7}
+h1{position:absolute;left:64px;top:152px;margin:0;font-weight:800;font-size:90px;line-height:.94;letter-spacing:-.05em;white-space:nowrap}
+h1 em{font-style:normal;color:#ff4a33}
+.ns{position:absolute;left:0;right:0;bottom:0;height:102px;background:#131315;border-top:1px solid #2b2b2f;display:grid;grid-template-columns:332px 268px 268px 1fr;font-family:"IBM Plex Mono",monospace}
+.ns div{padding:22px 0 0 22px;border-left:1px solid #2b2b2f}
+.ns div:first-child{padding-left:64px;border-left:0}
+.ns span{display:block;font-size:15px;color:#a3a29b;letter-spacing:.02em}
+.ns strong{display:block;font-weight:500;font-size:23px;margin-top:6px}
+.ns .bad span,.ns .bad strong{color:#ff4a33}
+.lede{position:absolute;left:64px;top:344px;margin:0;width:650px;font-size:23px;line-height:1.36;color:#a3a29b;letter-spacing:-.005em}
+.lede b{color:#f0efea;font-weight:500}
+.chips{position:absolute;left:64px;right:64px;top:466px;display:flex;gap:12px;font-family:"IBM Plex Mono",monospace;font-size:14px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.chips span{border:1px solid #2b2b2f;padding:6px 12px;color:#f0efea}
+.diff{position:absolute;right:64px;top:346px;width:372px;font-family:"IBM Plex Mono",monospace;font-size:14.5px;line-height:1.75;white-space:nowrap;border:1px solid #2b2b2f;background:#131315;padding:8px 0}
+.diff div{padding:0 14px}
+.diff .del{color:#ff4a33;background:rgba(255,74,51,.09)}
+.diff .add{color:#74d3a0;background:rgba(116,211,160,.08)}
+</style>
+</head>
+<body>
+<div id="card">
+  <div class="top">
+    <div class="mark"><i></i>zoneblick</div>
+    <div class="tags">Self-hosted DNS zone watchdog<br><b>Written in Rust</b></div>
+  </div>
+  <h1>Know the moment<br>your DNS <em>drifts.</em></h1>
+  <p class="lede">Asks <b>every authoritative nameserver</b> directly, checks delegation, DNSSEC, mail policy and takeover exposure, and <b>keeps a history</b> of every run.</p>
+  <div class="diff">
+    <div class="del">- api&nbsp;&nbsp;&nbsp;&nbsp; CNAME edge-1.example.net.</div>
+    <div class="add">+ api&nbsp;&nbsp;&nbsp;&nbsp; CNAME edge-2.example.net.</div>
+    <div class="del">- @&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; CAA&nbsp;&nbsp; 0 issue "ca.example"</div>
+  </div>
+  <div class="chips"><span>40 checks every run</span><span>21 deep checks</span><span>Alerts</span><span>Web UI + API</span><span>One binary, one SQLite file</span></div>
+  <div class="ns">
+    <div><span>ns1.example.org</span><strong>2026111302</strong></div>
+    <div><span>ns2.example.org</span><strong>2026111302</strong></div>
+    <div><span>ns3.example.net</span><strong>2026111302</strong></div>
+    <div class="bad"><span>ns4.example.net</span><strong>2026111301</strong></div>
+  </div>
+</div>
+</body>
+</html>
