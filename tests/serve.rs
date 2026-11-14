@@ -30,7 +30,20 @@ fn drifting() -> ClientFactory {
     })
 }
 
+/// The token every test daemon is given, unless the test sets its own.
+const TOKEN: &str = "test-token-0123456789";
+
 fn config(extra: &str) -> Config {
+    // The token goes into the [server] section: the test's own, when it
+    // has one, or one added here.
+    let token_line = format!("token_sha256 = \"{}\"\n", token_hash(TOKEN));
+    let extra = if extra.contains("token_sha256") {
+        extra.to_string()
+    } else if extra.contains("[server]\n") {
+        extra.replacen("[server]\n", &format!("[server]\n{token_line}"), 1)
+    } else {
+        format!("[server]\n{token_line}{extra}")
+    };
     Config::parse(&format!(
         r#"
 [[zone]]
@@ -51,8 +64,28 @@ async fn serve(app: axum::Router) -> String {
     format!("http://{addr}")
 }
 
+/// An HTTP client that sends the test token unless a request sets its own.
+fn client() -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        format!("Bearer {TOKEN}").parse().unwrap(),
+    );
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap()
+}
+
+/// A file holding the test token, for a `[[vantage]]` block.
+fn token_file() -> String {
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("vantage-token");
+    std::fs::write(&path, TOKEN).unwrap();
+    path.display().to_string()
+}
+
 async fn get(url: &str) -> (u16, Value) {
-    let r = reqwest::Client::new().get(url).send().await.unwrap();
+    let r = client().get(url).send().await.unwrap();
     let status = r.status().as_u16();
     (status, r.json().await.unwrap_or(Value::Null))
 }
@@ -201,7 +234,7 @@ async fn the_ui_document_and_page() {
     assert!(history[1]["changes"].as_array().unwrap().is_empty());
 
     // The page itself is one self-contained document.
-    let page = reqwest::Client::new().get(&base).send().await.unwrap();
+    let page = client().get(&base).send().await.unwrap();
     assert_eq!(page.status(), 200);
     assert!(
         page.headers()["content-security-policy"]
@@ -222,7 +255,7 @@ async fn the_ui_document_and_page() {
 async fn a_triggered_run_happens_in_the_background() {
     let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
     let base = serve(router(state)).await;
-    let http = reqwest::Client::new();
+    let http = client();
 
     let r = http
         .post(format!("{base}/api/v1/runs"))
@@ -260,7 +293,7 @@ async fn the_api_token_is_enforced() {
     let extra = format!("[server]\ntoken_sha256 = \"{}\"", token_hash(token));
     let state = AppState::with_store(config(&extra), Store::open_in_memory().unwrap(), drifting());
     let base = serve(router(state)).await;
-    let http = reqwest::Client::new();
+    let http = client();
 
     let (status, err) = get(&format!("{base}/api/v1/zones")).await;
     assert_eq!(
@@ -366,83 +399,13 @@ async fn a_failed_run_is_reported_not_stored() {
 }
 
 #[tokio::test]
-async fn an_open_local_api_refuses_other_hosts_and_other_sites() {
-    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
-    let base = serve(router(state)).await;
-    let http = reqwest::Client::new();
-    let runs = format!("{base}/api/v1/runs");
-    let zones_url = format!("{base}/api/v1/zones");
-
-    // DNS rebinding: the request reaches 127.0.0.1 but was addressed elsewhere.
-    let r = http
-        .get(&zones_url)
-        .header("Host", "evil.example:8053")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 403);
-    let body: Value = r.json().await.unwrap();
-    assert_eq!(body["error"]["kind"], "forbidden_host");
-    let r = http
-        .get(&zones_url)
-        .header("Host", "localhost:8053")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 200);
-
-    // A form on another site cannot start a run: no JSON body, wrong origin.
-    let r = http
-        .post(&runs)
-        .body("zone=x")
-        .header("Content-Type", "text/plain")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 415);
-    let empty = serde_json::json!({});
-    let r = http
-        .post(&runs)
-        .json(&empty)
-        .header("Origin", "https://evil.example")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 403);
-    let r = http
-        .post(&runs)
-        .json(&empty)
-        .header("Sec-Fetch-Site", "cross-site")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 403);
-    let (_, zones) = get(&zones_url).await;
-    assert!(
-        zones["zones"].as_array().unwrap().is_empty(),
-        "no run was started"
-    );
-
-    // The page's own request is accepted.
-    let r = http
-        .post(&runs)
-        .json(&empty)
-        .header("Origin", base.clone())
-        .header("Sec-Fetch-Site", "same-origin")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 202);
-}
-
-#[tokio::test]
 async fn findings_are_muted_through_the_api() {
     let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
     let zone = state.config.zones[0].clone();
     run_zone(&state, &zone, "test").await.unwrap();
     run_zone(&state, &zone, "test").await.unwrap();
     let base = serve(router(state)).await;
-    let http = reqwest::Client::new();
+    let http = client();
 
     let (_, ui) = get(&format!("{base}/api/v1/ui")).await;
     let finding = &ui["zones"][0]["findings"][0];
@@ -537,7 +500,7 @@ async fn metrics_are_served_in_the_prometheus_text_format() {
     assert_eq!(run_zone(&state, &zone, "test").await, Ok(2));
     let base = serve(router(state)).await;
 
-    let r = reqwest::Client::new()
+    let r = client()
         .get(format!("{base}/api/v1/metrics"))
         .send()
         .await
@@ -577,7 +540,7 @@ async fn metrics_need_the_token_when_one_is_set() {
     );
     let base = serve(router(state)).await;
     let url = format!("{base}/api/v1/metrics");
-    let http = reqwest::Client::new();
+    let http = client();
     assert_eq!(http.get(&url).send().await.unwrap().status().as_u16(), 401);
     let ok = http
         .get(&url)
@@ -642,7 +605,7 @@ async fn the_ui_gets_a_timeline_and_can_compare_any_two_runs() {
 async fn every_response_carries_the_hardening_headers() {
     let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
     let base = serve(router(state)).await;
-    let http = reqwest::Client::new();
+    let http = client();
     for path in [
         "/",
         "/api/v1/health",
@@ -663,57 +626,6 @@ async fn every_response_carries_the_hardening_headers() {
             "{path}"
         );
     }
-}
-
-#[tokio::test]
-async fn without_a_token_requests_through_a_proxy_are_refused() {
-    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
-    let base = serve(router(state)).await;
-    let http = reqwest::Client::new();
-    // A reverse proxy on the same machine keeps "Host: 127.0.0.1" but adds
-    // one of these; without a token that would open the API to everyone.
-    for header in [
-        "X-Forwarded-For",
-        "X-Real-IP",
-        "Forwarded",
-        "Via",
-        "X-Forwarded-Host",
-    ] {
-        let r = http
-            .get(format!("{base}/api/v1/zones"))
-            .header(header, "203.0.113.9")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(r.status().as_u16(), 403, "{header}");
-        let body: Value = r.json().await.unwrap();
-        assert_eq!(body["error"]["kind"], "forbidden_proxy", "{header}");
-    }
-    let r = http
-        .post(format!("{base}/api/v1/runs"))
-        .header("X-Forwarded-For", "203.0.113.9")
-        .json(&serde_json::json!({}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status().as_u16(), 403);
-
-    // With a token set, a proxy is fine: the token is what counts.
-    let hash = token_hash("s3cret-token-for-the-proxy");
-    let state = AppState::with_store(
-        config(&format!("[server]\ntoken_sha256 = \"{hash}\"")),
-        Store::open_in_memory().unwrap(),
-        drifting(),
-    );
-    let base = serve(router(state)).await;
-    let r = http
-        .get(format!("{base}/api/v1/zones"))
-        .header("X-Forwarded-For", "203.0.113.9")
-        .bearer_auth("s3cret-token-for-the-proxy")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status().as_u16(), 200);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -804,7 +716,8 @@ async fn a_run_is_compared_with_another_vantage_point() {
     // Here: the zone's new state, plus one vantage point that is down.
     let new = fixture("drift.example.after.json");
     let extra = format!(
-        "[[vantage]]\nname = \"far\"\nurl = \"{far_url}\"\n[[vantage]]\nname = \"gone\"\nurl = \"http://127.0.0.1:9\"\n"
+        "[[vantage]]\nname = \"far\"\nurl = \"{far_url}\"\ntoken_file = \"{}\"\n[[vantage]]\nname = \"gone\"\nurl = \"http://127.0.0.1:9\"\n",
+        token_file()
     );
     let here = AppState::with_store(
         config(&extra),
@@ -905,7 +818,7 @@ async fn a_hostile_vantage_point_cannot_inject_or_redirect() {
     );
 
     let base = serve(router(state)).await;
-    let r = reqwest::Client::new()
+    let r = client()
         .get(format!("{base}/api/v1/findings?state=open"))
         .send()
         .await
@@ -971,7 +884,7 @@ async fn data_from_a_vantage_point_is_escaped_in_findings() {
     let zone = state.config.zones[0].clone();
     run_zone(&state, &zone, "test").await.unwrap();
     let base = serve(router(state)).await;
-    let text = reqwest::Client::new()
+    let text = client()
         .get(format!("{base}/api/v1/findings?state=open"))
         .send()
         .await
@@ -999,37 +912,6 @@ async fn data_from_a_vantage_point_is_escaped_in_findings() {
     );
     assert!(text.contains("\\\\027[2J"), "{text}");
     assert!(!text.contains("x\\n::error"), "{text}");
-}
-
-#[tokio::test]
-async fn without_a_token_an_old_style_proxy_request_is_refused() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
-    let base = serve(router(state)).await;
-    let addr = base.trim_start_matches("http://").to_string();
-    // What nginx sends by default: HTTP/1.0, the upstream's own address
-    // as Host, and no forwarding header at all.
-    let ask = |version: &'static str| {
-        let addr = addr.clone();
-        async move {
-            let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
-            let request = format!(
-                "GET /api/v1/zones HTTP/{version}\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
-            );
-            stream.write_all(request.as_bytes()).await.unwrap();
-            let mut answer = String::new();
-            stream.read_to_string(&mut answer).await.unwrap();
-            answer
-        }
-    };
-    let old = ask("1.0").await;
-    assert!(
-        old.starts_with("HTTP/1.0 403") || old.starts_with("HTTP/1.1 403"),
-        "{old}"
-    );
-    assert!(old.contains("forbidden_proxy"), "{old}");
-    let new = ask("1.1").await;
-    assert!(new.starts_with("HTTP/1.1 200"), "{new}");
 }
 
 #[cfg(unix)]
@@ -1064,4 +946,89 @@ async fn the_socket_file_is_only_made_where_it_is_safe() {
         std::fs::read_dir(&shared).unwrap().next().is_none(),
         "nothing was left behind"
     );
+}
+
+#[tokio::test]
+async fn the_api_needs_the_token_however_local_a_request_looks() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    // No token in the config: the daemon has one all the same, and
+    // nothing that makes a request look local replaces it.
+    let state = AppState::with_store(
+        Config::parse("[[zone]]\nname = \"drift.example\"\n").unwrap(),
+        Store::open_in_memory().unwrap(),
+        drifting(),
+    );
+    let base = serve(router(state)).await;
+    let addr = base.trim_start_matches("http://").to_string();
+    let bare = reqwest::Client::builder().build().unwrap();
+    for path in [
+        "/api/v1/zones",
+        "/api/v1/ui",
+        "/api/v1/metrics",
+        "/api/v1/vantage?zone=drift.example",
+    ] {
+        let r = bare.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 401, "{path}");
+    }
+    // As a reverse proxy on this machine would send it, in each of the
+    // ways the earlier heuristics looked for and the one they missed.
+    for request in [
+        format!("GET /api/v1/zones HTTP/1.0\r\nHost: {addr}\r\nConnection: close\r\n\r\n"),
+        format!("GET /api/v1/zones HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"),
+        "GET /api/v1/zones HTTP/1.1\r\nHost: localhost\r\nX-Forwarded-For: 203.0.113.9\r\nConnection: close\r\n\r\n".to_string(),
+    ] {
+        let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+        stream.write_all(request.as_bytes()).await.unwrap();
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer).await.unwrap();
+        assert!(answer.contains(" 401 "), "{answer}");
+    }
+    let r = bare
+        .post(format!("{base}/api/v1/runs"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 401);
+    // Health says only that the daemon is up, and stays open.
+    let r = bare
+        .get(format!("{base}/api/v1/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+
+    // With the token, a request from another site is still refused.
+    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
+    let base = serve(router(state)).await;
+    let r = client()
+        .post(format!("{base}/api/v1/runs"))
+        .header("Origin", "https://evil.example")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403);
+}
+
+#[test]
+fn a_token_is_made_once_and_kept_private() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("token-dir");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("api-token");
+    let first = zoneblick::serve::load_or_make_token(&path).unwrap();
+    assert_eq!(first.len(), 64);
+    assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+    // The next start reads the same token.
+    assert_eq!(zoneblick::serve::load_or_make_token(&path).unwrap(), first);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o077, 0, "{mode:o}");
+    }
+    // A file that holds no real token is not silently accepted.
+    std::fs::write(&path, "short\n").unwrap();
+    assert!(zoneblick::serve::load_or_make_token(&path).is_err());
 }

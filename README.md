@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 40 checks for every run and 21 more with `--deep`, which also follows the DNSSEC chain of trust from the root, verifies denial proofs, compares mail servers' certificates with their TLSA records and watches the domain's registration. `zoneblick plan` checks a zone file before it is deployed, several daemons can compare what they see from different places, and release files carry a verifiable build provenance. The current release, `v0.13.1`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 40 checks for every run and 21 more with `--deep`, which also follows the DNSSEC chain of trust from the root, verifies denial proofs, compares mail servers' certificates with their TLSA records and watches the domain's registration. `zoneblick plan` checks a zone file before it is deployed, several daemons can compare what they see from different places, and release files carry a verifiable build provenance. The current release, `v0.14.0`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -86,7 +86,7 @@ On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick`
 
 | Option | Effect |
 |---|---|
-| `--version v0.13.1` | Install that release instead of the newest |
+| `--version v0.14.0` | Install that release instead of the newest |
 | `--prefix DIR` | Install the binary to `DIR/bin` |
 | `--no-service` | Binary only; no user, config or service |
 
@@ -98,11 +98,11 @@ Each release has a `.deb` and an `.rpm` for x86_64 and ARM 64-bit on the [releas
 
 ```
 # Debian and Ubuntu (use arm64 on ARM)
-curl -fsSLO https://github.com/cschweda/zoneblick/releases/download/v0.13.1/zoneblick_0.13.1_amd64.deb
-sudo dpkg -i zoneblick_0.13.1_amd64.deb
+curl -fsSLO https://github.com/cschweda/zoneblick/releases/download/v0.14.0/zoneblick_0.14.0_amd64.deb
+sudo dpkg -i zoneblick_0.14.0_amd64.deb
 
 # Fedora and RHEL (use aarch64 on ARM)
-sudo rpm -i https://github.com/cschweda/zoneblick/releases/download/v0.13.1/zoneblick-0.13.1-1.x86_64.rpm
+sudo rpm -i https://github.com/cschweda/zoneblick/releases/download/v0.14.0/zoneblick-0.14.0-1.x86_64.rpm
 ```
 
 There is no package repository, so updates are not automatic: install the newer package over the old one. The `.deb` is installed and started on a GitHub runner as part of every release build. The `.rpm` is built and its contents listed there, but it has not been installed on a real Fedora or RHEL system.
@@ -121,10 +121,10 @@ The formula, [`Formula/zoneblick.rb`](Formula/zoneblick.rb), installs the releas
 From 0.13.0 on, every release file (archives, `.deb`, `.rpm`, `SHA256SUMS`) and the container image has a build provenance attestation: a statement signed through GitHub and recorded in a public transparency log, saying that this exact file was built by this repository's release workflow from the release's tag. The checksum file alone cannot show that, because it comes from the same place as the binaries.
 
 ```
-gh attestation verify zoneblick-v0.13.1-x86_64-unknown-linux-musl.tar.gz \
+gh attestation verify zoneblick-v0.14.0-x86_64-unknown-linux-musl.tar.gz \
   --repo cschweda/zoneblick \
   --signer-workflow cschweda/zoneblick/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.13.1
+  --source-ref refs/tags/v0.14.0
 
 gh attestation verify oci://ghcr.io/cschweda/zoneblick:0.13.0 --repo cschweda/zoneblick
 ```
@@ -151,7 +151,7 @@ Then open `http://127.0.0.1:8053` and enter the token. The container listens on 
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.13.1`.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.14.0`.
 
 | System | File name ends in |
 |---|---|
@@ -163,12 +163,12 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.13.1` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.14.0` to install another release.
 
 **Linux**
 
 ```
-V=v0.13.1
+V=v0.14.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -181,7 +181,7 @@ zoneblick check example.org
 **macOS**
 
 ```
-V=v0.13.1
+V=v0.14.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -196,7 +196,7 @@ zoneblick check example.org
 **Windows (PowerShell)**
 
 ```
-$V = "v0.13.1"
+$V = "v0.14.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -241,7 +241,7 @@ You need a stable [Rust toolchain](https://rustup.rs), version 1.88 or later, an
 cargo install --git https://github.com/cschweda/zoneblick
 ```
 
-Add `--tag v0.13.1 --locked` to build exactly one release with the dependency versions it was tested with. This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
+Add `--tag v0.14.0 --locked` to build exactly one release with the dependency versions it was tested with. This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
 
 To install from a local checkout instead:
 
@@ -506,7 +506,7 @@ It checks all zones at startup and then once per interval. Stop it with Ctrl-C. 
 [server]
 bind = "127.0.0.1:8053"           # where the API and web UI listen; or "unix:/run/zoneblick/zoneblick.sock"
 data_dir = "/var/lib/zoneblick"    # holds zoneblick.sqlite
-# token_sha256 = "..."             # required unless bind is localhost
+# token_sha256 = "..."             # the hash of your own API token; left out, the daemon makes a token
 # tls_cert = "/etc/zoneblick/cert.pem"   # with tls_key: serve HTTPS
 # tls_key = "/etc/zoneblick/key.pem"
 
@@ -563,7 +563,7 @@ Every section is optional. Unknown keys are refused, so a typo is reported inste
 
 ### A socket file in place of a port
 
-`bind = "unix:/run/zoneblick/zoneblick.sock"` makes the daemon listen on a socket file with mode `0660`: only its own user and group can connect, which a localhost port cannot offer. `curl --unix-socket /run/zoneblick/zoneblick.sock http://localhost/api/v1/zones` talks to it, and a reverse proxy can be pointed at it. The directory must exist and belong to the daemon's user. A proxy in front still needs a token, as with a port.
+`bind = "unix:/run/zoneblick/zoneblick.sock"` makes the daemon listen on a socket file with mode `0660`: only its own user and group can connect, which a localhost port cannot offer. `curl --unix-socket /run/zoneblick/zoneblick.sock http://localhost/api/v1/zones` talks to it, and a reverse proxy can be pointed at it. The directory must exist and belong to the daemon's user. The token is needed here too.
 
 ### HTTPS
 
@@ -593,14 +593,27 @@ Each vantage point is an ordinary zoneblick daemon that has the zone in its own 
 
 ### The API token
 
-The API and UI need no token while `bind` is a localhost address; then zoneblick only answers requests addressed to `localhost`, `127.0.0.1` or `[::1]`. To listen on any other address you must set a token. Pick a long random one and store only its hash:
+The API and the web UI always need a token, also on localhost. There are two ways to have one.
+
+**Let the daemon make it.** With no `token_sha256` in the config, the daemon makes a random token on its first start and keeps it in the file `api-token` in its data directory, readable by the daemon's user only. Read it with:
+
+```
+sudo cat /var/lib/zoneblick/api-token
+zoneblick token --show zoneblick.toml     # the same, found through the config file
+```
+
+**Choose your own.** Pick a long random token and store only its hash in the config; the token itself is then in no file:
 
 ```
 TOKEN=$(openssl rand -hex 32); echo "$TOKEN"
 printf '%s' "$TOKEN" | zoneblick token      # prints: token_sha256 = "..."
 ```
 
-Put the printed line under `[server]`. Clients send the token as `Authorization: Bearer <token>`; the web UI asks for it once per browser session. For access from other machines, keep `bind` on localhost, **set a token**, and put a reverse proxy with TLS in front. A proxy on the same machine makes every visitor look local, so without a token zoneblick refuses any request that carries a proxy's headers (`X-Forwarded-For`, `X-Real-IP`, `Forwarded`, `Via`). The token is typed on standard input here so that it does not show in the process list.
+Put the printed line under `[server]`. The token is typed on standard input here so that it does not show in the process list.
+
+Clients send the token as `Authorization: Bearer <token>`; the web UI asks for it once per browser session. Only `GET /api/v1/health` answers without it.
+
+*Before 0.14.0 a daemon on localhost needed no token.* That made any reverse proxy on the same machine a way in, which two security audits could narrow but not close, so the token is now always required. After upgrading, a daemon that had none makes one on its next start: the web UI will ask for it, and scripts that call the API need the `Authorization` header.
 
 ### Alerts
 
@@ -626,11 +639,11 @@ Open the `bind` address in a browser. The page lists your zones with their open 
 
 ### The API
 
-JSON under `/api/v1`. All routes except `health` need the token when one is set.
+JSON under `/api/v1`. All routes except `health` need the token.
 
 | Route | Returns |
 |---|---|
-| `GET /health` | `status` and `version`; needs no token |
+| `GET /health` | `status` and `version`; the only route that needs no token |
 | `GET /zones` | The stored zones with run and finding counts, and any run errors |
 | `GET /zones/{zone}` | One zone: names, runs, the latest run's observations, and its findings |
 | `GET /runs?zone=` | The stored runs of a zone |
@@ -919,7 +932,7 @@ When the run fails, the document is shorter:
 The repository is also a GitHub Action, for checking a zone from a workflow, for example when a pull request changes a zone file:
 
 ```yaml
-- uses: cschweda/zoneblick@v0.13.1
+- uses: cschweda/zoneblick@v0.14.0
   with:
     zone: example.org
     expect: dns/example.org.zone   # optional
@@ -947,8 +960,8 @@ The same lint and tests run in CI on Linux, macOS and Windows for every push and
 Binaries are built by GitHub Actions (`.github/workflows/release.yml`). To publish a release, set the version in `Cargo.toml`, commit, then push a matching tag:
 
 ```
-git tag v0.14.0
-git push origin v0.14.0
+git tag v0.15.0
+git push origin v0.15.0
 ```
 
 The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, packages the Linux ones as `.deb` and `.rpm` (installing the `.deb` on the runner to see the service start), and attaches everything to a GitHub Release with a `SHA256SUMS` file. It then publishes the container image to `ghcr.io/cschweda/zoneblick`, commits the Homebrew formula for the release to `main`, and runs the GitHub Action against `example.com`. Each archive holds the binary, this README, both license files and `THIRD-PARTY.md`. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
@@ -1010,7 +1023,7 @@ zoneblick reads data that other people control: every DNS answer, every page it 
 
 | Audit | Version audited | Date | Found | Fixed in |
 |---|---|---|---|---|
-| [2](#audit-2-version-0130) | 0.13.0 | 2026-11-14 | 2 high, 4 medium, 9 low | 0.13.1 |
+| [2](#audit-2-version-0130) | 0.13.0 | 2026-11-14 | 2 high, 4 medium, 9 low | 0.13.1; the proxy finding fully in 0.14.0 |
 | [Commit reviews](#automated-review-of-each-commit) | every commit from 0.12.0 on | continuous | 14 medium | the next commit or release |
 | [1](#audit-1-version-0120-in-short) | 0.12.0 | 2026-11-13 | 2 high, 2 medium, 7 low | 0.12.1, 0.12.2 |
 
@@ -1026,10 +1039,9 @@ zoneblick reads data that other people control: every DNS answer, every page it 
 
 ### Open now
 
-Known, and not fixed. This list is current as of 0.13.1.
+Known, and not fixed. This list is current as of 0.14.0, which closed the two items both audits had flagged (the API without a token behind a reverse proxy, and without a token for other local users) by making the token mandatory.
 
-- **Without a token, a reverse proxy can still expose the API.** zoneblick refuses requests that carry a proxy's headers or come as HTTP/1.0 (what nginx sends by default), but a proxy can be configured to show neither. Nothing zoneblick sees can tell such a request from a local one. Set a token before putting anything in front of it. Both audits flagged this; making a token mandatory would close it and is an open decision.
-- **Without a token, every local user and process can use the API** when the daemon listens on a localhost port, the default of the install script and the packages. Set a token, or listen on a socket file.
+- **A token the daemon made is stored as it is**, in a file only the daemon's user and root can read (`api-token` in the data directory). Anyone who can read that file can use the API. Set `token_sha256` to keep only a hash.
 - **No limit on token guesses**, and the stored hash is unsalted SHA-256. Fine for a long random token; a short or reused one is not.
 - **A stripped proof hides a broken chain.** An answer that claims there is no DS record and brings no proof reads "unknown", not "broken".
 - **DANE trust-anchor records (usage 2) are not verified.** A match against a certificate the server merely sent proves nothing, so such a match is left without a verdict; only usage 3 is checked for real.
@@ -1057,7 +1069,7 @@ Audited on 2026-11-14, after 0.13.0 added the DNSSEC denial proofs, the mail-cer
 | Severity | Finding | Fix in 0.13.1 |
 |---|---|---|
 | High | **A zone could pin every CPU core with signature checks.** The key tag that links a signature to a key is a 16-bit checksum, so a zone can publish hundreds of keys with the same tag and hundreds of junk signatures; every pairing was tried. One answer cost about 22 seconds per nameserver, and the run deadline from audit 1 could not interrupt it. | At most 16 verifications per record set and 32 keys per answer. A flood of 300 keys and 300 signatures now costs the same as a normal answer. |
-| High | **The proxy protection from audit 1 missed nginx's default.** A bare `proxy_pass` adds none of the headers zoneblick looked for. | Requests that arrive as HTTP/1.0, which is what nginx sends unless told otherwise, are refused too. This is still a heuristic; see [Open now](#open-now). |
+| High | **The proxy protection from audit 1 missed nginx's default.** A bare `proxy_pass` adds none of the headers zoneblick looked for. | Requests that arrive as HTTP/1.0, which is what nginx sends unless told otherwise, are refused too. That was still a heuristic. 0.14.0 removes the case: the API always needs a token. |
 | Medium | **`zoneblick plan` printed raw control characters.** The record-type field of a zone file, and the parser's error messages, carried escaped line breaks and escape characters through to the terminal: in CI, a pull request's zone file could write its own lines into the log. | A record type must be letters, digits and hyphens. Every quoted piece of a file is made safe to print, and so is every error message and every line of the plan. |
 | Medium | **A SHA-1 DS record matched any key with the right tag.** Its digest was not computed, so a forged key set with a fitting tag read as "secure". | SHA-1 digests are computed and compared. A DS record with a digest type zoneblick cannot compute matches nothing. |
 | Medium | **The daemon followed redirects** on alert and vantage requests, so a hostile vantage point could send it to an internal address. | Redirects are off for every request the daemon makes. |
@@ -1095,7 +1107,7 @@ Every commit since 0.12.0 was also read by an automated security reviewer, which
 Audited on 2026-11-13; fixes in 0.12.1 and 0.12.2. The red team replayed 3,200 runs over corrupted DNS answers, fed 40,000 random inputs to the parsers, sent 25 hostile requests to two daemons, and published records carrying escape sequences.
 
 - **High, fixed:** a zone listing thousands of slow nameservers stalled the daemon for hours with no alert. Runs now have a deadline, failed runs alert, and nameserver names and addresses are capped.
-- **High, partly fixed:** with no token, a reverse proxy made the API public. Proxied requests are refused; audit 2 found the gap that remains.
+- **High, closed in 0.14.0:** with no token, a reverse proxy made the API public. Refusing proxied requests narrowed it; the token became mandatory in 0.14.0.
 - **Medium, fixed:** escape sequences in zone-file drift output; pinning the GitHub Action did not pin the binary.
 - **Low, fixed:** pages fetched from internal addresses; DNS queries to loopback and link-local addresses; a secret in the log; unlimited discovered names; the web UI's data recomputed under a lock; a world-readable database and a token on the command line; answers without a question accepted; missing security headers.
 - **Held:** the parsers (no crash, no hang), the API token and cross-site checks, the web UI (text nodes only), output escaping on every other path, outgoing requests (no redirects on fetches, verified TLS, credentials to fixed hosts only), and the packaging.

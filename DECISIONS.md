@@ -242,3 +242,11 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - The deep phase has half the run's time and is marked as tried before it starts.
 - The socket's directory must not be writable by group or others and must have the same owner as a directory the daemon just made in it; there is no direct way to ask for the process's user without another dependency.
 
+## 0.14.0: the API token is mandatory
+
+- Decided by the owner after both audits flagged the no-token mode. The daemon does not refuse to start without a token in the config: it makes one on first start and keeps it in `api-token` in the data directory, mode 0600, so a fresh install still needs no setup beyond reading that file. `zoneblick token --show CONFIG` prints it.
+- The made token is stored as it is, because the web UI's user has to be able to read it somewhere. A token set through `token_sha256` is still stored only as a hash.
+- The Host check, the proxy-header refusal and the HTTP/1.0 refusal are removed: they existed only for the no-token mode. The cross-site check on requests that change something stays.
+- A vantage point on this machine may be reached over plain http with a token; any other needs https.
+- This breaks API clients that sent no token. It is in the README under "The API token".
+

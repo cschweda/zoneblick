@@ -162,9 +162,11 @@ setup_service() {
 # proxy with TLS in front for remote access.
 bind = "127.0.0.1:8053"
 data_dir = "/var/lib/zoneblick"
-# Needed before binding to anything but localhost. Make one with:
+# The API and the web UI always ask for a token. Leave this out and the
+# daemon makes one on its first start, in /var/lib/zoneblick/api-token:
+#   sudo cat /var/lib/zoneblick/api-token
+# To choose your own, store only its hash here:
 #   TOKEN=$(openssl rand -hex 32); echo "$TOKEN"; printf '%s' "$TOKEN" | zoneblick token
-# It is also needed before putting a reverse proxy in front of zoneblick.
 # token_sha256 = ""
 
 [schedule]
@@ -225,7 +227,9 @@ UNIT
   say ""
   say "Next: add your zones to /etc/zoneblick/zoneblick.toml, then"
   say "  systemctl restart zoneblick"
-  say "The web UI is at http://127.0.0.1:8053 on this machine."
+  say "The web UI is at http://127.0.0.1:8053 on this machine. It asks for"
+  say "the API token, which the service made on its first start:"
+  say "  sudo cat /var/lib/zoneblick/api-token"
 }
 
 if [ "$SERVICE" = "auto" ] && [ "$os" = "Linux" ] && [ -d /run/systemd/system ] && have systemctl; then

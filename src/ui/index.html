@@ -214,7 +214,7 @@ function notice(text,isError){
 function askToken(){
   var n=$("notice");n.hidden=false;n.className="notice err";
   var box=$("noticetext");box.textContent="";
-  box.appendChild(document.createTextNode("This zoneblick instance needs its API token."));
+  box.appendChild(document.createTextNode("zoneblick needs its API token. If you did not set one, the daemon made one: it is in the file api-token in its data directory (zoneblick token --show zoneblick.toml prints it)."));
   var input=el("input",{type:"password",id:"tok",autocomplete:"off","aria-label":"API token"});
   box.appendChild(el("form",{onsubmit:function(e){
     e.preventDefault();

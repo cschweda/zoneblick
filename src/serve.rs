@@ -58,6 +58,11 @@ pub enum ServeError {
         path: std::path::PathBuf,
         source: std::io::Error,
     },
+    #[error("cannot read or make the API token file {path}: {source}")]
+    Token {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
     #[error("HTTPS cannot be set up: {0}")]
     Tls(String),
     #[error("the server stopped: {0}")]
@@ -65,6 +70,8 @@ pub enum ServeError {
 }
 
 pub struct AppState {
+    /// SHA-256 of the API token, in lowercase hex. There always is one.
+    token_hash: String,
     pub config: Config,
     store: Mutex<Store>,
     client_factory: ClientFactory,
@@ -114,13 +121,44 @@ impl AppState {
             source,
         })?;
         let store = Store::open(&config.db_path())?;
-        Ok(Self::with_store(config, store, client_factory))
+        // The API always needs a token. When the config sets none, one is
+        // made on the first start and kept in a file only the daemon's
+        // user can read.
+        let token_hash = match &config.server.token_sha256 {
+            Some(hash) => hash.to_ascii_lowercase(),
+            None => {
+                let path = token_path(&config);
+                let token = load_or_make_token(&path).map_err(|source| ServeError::Token {
+                    path: path.clone(),
+                    source,
+                })?;
+                token_hash(&token)
+            }
+        };
+        Ok(Self::build(config, store, client_factory, token_hash))
     }
 
+    /// A daemon over an already open store, for tests. Without a token in
+    /// the config, one is made up and never told to anyone, so nothing
+    /// can use the API.
     pub fn with_store(config: Config, store: Store, client_factory: ClientFactory) -> Arc<Self> {
+        let hash = match &config.server.token_sha256 {
+            Some(hash) => hash.to_ascii_lowercase(),
+            None => token_hash(&random_token().unwrap_or_default()),
+        };
+        Self::build(config, store, client_factory, hash)
+    }
+
+    fn build(
+        config: Config,
+        store: Store,
+        client_factory: ClientFactory,
+        token_hash: String,
+    ) -> Arc<Self> {
         // TLS for outgoing alerts. Installing twice is harmless.
         let _ = rustls::crypto::ring::default_provider().install_default();
         Arc::new(Self {
+            token_hash,
             config,
             store: Mutex::new(store),
             client_factory,
@@ -182,6 +220,62 @@ pub fn cap_names(names: &mut Vec<String>, wanted: &BTreeSet<String>) -> usize {
         }
     });
     before - names.len()
+}
+
+/// The file that holds the API token when the config sets none.
+pub fn token_path(config: &Config) -> std::path::PathBuf {
+    config.server.data_dir.join("api-token")
+}
+
+/// 32 random bytes as hex.
+fn random_token() -> std::io::Result<String> {
+    use ring::rand::SecureRandom;
+    let mut bytes = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| std::io::Error::other("the system gave no random numbers"))?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Read the token file, or make a token and write the file, readable by
+/// its owner only.
+pub fn load_or_make_token(path: &std::path::Path) -> std::io::Result<String> {
+    use std::io::Write;
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let token = text.trim().to_string();
+            if token.len() < 16 {
+                return Err(std::io::Error::other(
+                    "the file holds no usable token (at least 16 characters); delete it to have a new one made",
+                ));
+            }
+            // An older file may have been made with wider permissions.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+            }
+            Ok(token)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let token = random_token()?;
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(path)?;
+            file.write_all(format!("{token}\n").as_bytes())?;
+            log(&format!(
+                "made an API token; it is in {} (the web UI and the API ask for it)",
+                path.display()
+            ));
+            Ok(token)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// The live DNS client the daemon uses, with the configured rate cap.
@@ -727,9 +821,6 @@ pub async fn serve(
         let _ = std::fs::remove_dir_all(&nursery);
         let listener = placed?;
         started(&format!("the socket file {}", path.display()));
-        if state.config.server.token_sha256.is_none() {
-            log("no API token is set; the API is open to users who may open the socket file");
-        }
         let job = tokio::spawn(scheduler(state.clone(), every));
         let result = axum::serve(listener, router(state))
             .with_graceful_shutdown(shutdown)
@@ -749,9 +840,6 @@ pub async fn serve(
         let config = crate::tls::load(&cert, &key).map_err(ServeError::Tls)?;
         let listener = crate::tls::TlsListener::new(listener, config, cert, key, log)?;
         started(&format!("https://{addr}"));
-        if state.config.server.token_sha256.is_none() {
-            log("no API token is set; the API is open to this machine only");
-        }
         let job = tokio::spawn(scheduler(state.clone(), every));
         let result = axum::serve(listener, router(state))
             .with_graceful_shutdown(shutdown)
@@ -760,9 +848,6 @@ pub async fn serve(
         return Ok(result?);
     }
     started(&format!("http://{addr}"));
-    if state.config.server.token_sha256.is_none() {
-        log("no API token is set; the API is open to this machine only");
-    }
     let job = tokio::spawn(scheduler(state.clone(), every));
     let result = axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown)
@@ -822,30 +907,13 @@ pub fn token_hash(token: &str) -> String {
         .collect()
 }
 
-/// The host part of a `Host` or `Origin` value, without scheme or port.
-fn host_only(value: &str) -> &str {
-    let value = value
-        .strip_prefix("http://")
-        .or_else(|| value.strip_prefix("https://"))
-        .unwrap_or(value);
-    if let Some(end) = value.find(']') {
-        // An IPv6 literal: keep the brackets, drop any port.
-        return &value[..=end];
-    }
-    value.split(':').next().unwrap_or(value)
-}
-
 fn forbidden(kind: &'static str, message: &str) -> Response {
     ApiError(StatusCode::FORBIDDEN, kind, message.to_string()).into_response()
 }
 
 /// Guard the API routes.
 ///
-/// - With a token configured, every request must carry it.
-/// - Without one, the server only ever listens on loopback, and the request
-///   must have been addressed to a loopback name. That stops a web page
-///   from reaching the API through a hostname it has pointed at 127.0.0.1
-///   (DNS rebinding).
+/// - Every request must carry the API token.
 /// - A request that changes something must not come from another site.
 async fn require_token(
     State(state): State<Arc<AppState>>,
@@ -856,45 +924,20 @@ async fn require_token(
     let header_str = |name: header::HeaderName| headers.get(name).and_then(|v| v.to_str().ok());
     let host = header_str(header::HOST).unwrap_or("");
 
-    if let Some(expected) = &state.config.server.token_sha256 {
-        let given = header_str(header::AUTHORIZATION)
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(token_hash);
-        let ok = given.is_some_and(|hash| constant_time_eq(&hash, &expected.to_ascii_lowercase()));
-        if !ok {
-            return ApiError(
-                StatusCode::UNAUTHORIZED,
-                "unauthorized",
-                "a valid API token is required: send it as 'Authorization: Bearer <token>'"
-                    .to_string(),
-            )
-            .into_response();
-        }
-    } else if !matches!(host_only(host), "localhost" | "127.0.0.1" | "[::1]") {
-        return forbidden(
-            "forbidden_host",
-            "without an API token, zoneblick only answers requests addressed to localhost",
-        );
-    } else if request.version() < axum::http::Version::HTTP_11
-        || [
-            "forwarded",
-            "x-forwarded-for",
-            "x-forwarded-host",
-            "x-real-ip",
-            "via",
-        ]
-        .iter()
-        .any(|name| headers.contains_key(*name))
-    {
-        // A reverse proxy on this machine makes every visitor look local.
-        // nginx, unless told otherwise, speaks HTTP/1.0 to what it
-        // proxies and adds none of those headers; browsers and API
-        // clients speak 1.1 or later. Neither sign is proof: a proxy can
-        // be set up to show none, which is why a token must come first.
-        return forbidden(
-            "forbidden_proxy",
-            "this request came through a proxy; set an API token (zoneblick token) before putting zoneblick behind one",
-        );
+    // Every request needs the token. There is no way to tell a request
+    // that came through a proxy on this machine from a local one, so
+    // "local" earns no trust.
+    let given = header_str(header::AUTHORIZATION)
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(token_hash);
+    if !given.is_some_and(|hash| constant_time_eq(&hash, &state.token_hash)) {
+        return ApiError(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "a valid API token is required: send it as 'Authorization: Bearer <token>'. If the config sets none, the token is in the file api-token in the data directory"
+                .to_string(),
+        )
+        .into_response();
     }
 
     if !matches!(
@@ -1744,14 +1787,6 @@ mod tests {
         assert!(constant_time_eq("abc", "abc"));
         assert!(!constant_time_eq("abc", "abd"));
         assert!(!constant_time_eq("abc", "abcd"));
-    }
-
-    #[test]
-    fn hosts_are_read_without_port_or_scheme() {
-        assert_eq!(host_only("127.0.0.1:8053"), "127.0.0.1");
-        assert_eq!(host_only("localhost"), "localhost");
-        assert_eq!(host_only("[::1]:8053"), "[::1]");
-        assert_eq!(host_only("http://evil.example:8053"), "evil.example");
     }
 
     #[test]

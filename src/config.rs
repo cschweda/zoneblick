@@ -198,6 +198,8 @@ pub struct ServerConfig {
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
     /// SHA-256 of the API token, in hex. Make one with `zoneblick token`.
+    /// Left out, the daemon makes a token on its first start and keeps
+    /// it in the file `api-token` in the data directory.
     #[serde(default)]
     pub token_sha256: Option<String>,
     /// A certificate chain in PEM form. With `tls_key`, the daemon
@@ -421,8 +423,16 @@ impl Config {
                     v.name
                 )));
             }
-            // A token must not cross the network in the clear.
-            if plain && v.token_file.is_some() {
+            // A token must not cross the network in the clear. This
+            // machine itself is not the network.
+            let local = ["http://127.0.0.1", "http://localhost", "http://[::1]"]
+                .iter()
+                .any(|l| {
+                    v.url
+                        .strip_prefix(l)
+                        .is_some_and(|rest| rest.is_empty() || rest.starts_with([':', '/']))
+                });
+            if plain && !local && v.token_file.is_some() {
                 return Err(ConfigError::Invalid(format!(
                     "[[vantage]] {}: a token is only sent over https://",
                     v.name
@@ -462,13 +472,8 @@ impl Config {
                     "[server] bind = \"unix:...\" needs a Unix system".to_string(),
                 ));
             }
-        } else if let bind = config.bind_addr()?
-            && !bind.ip().is_loopback()
-            && config.server.token_sha256.is_none()
-        {
-            return Err(ConfigError::Invalid(format!(
-                "[server] bind = \"{bind}\" is reachable from other machines, so [server] token_sha256 must be set; make one with `zoneblick token`"
-            )));
+        } else {
+            config.bind_addr()?;
         }
         if let Some(hash) = &config.server.token_sha256
             && (hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()))
@@ -655,7 +660,9 @@ smtp_host = "smtp.example.org"
     #[test]
     fn mistakes_are_explained() {
         let err = |text: &str| Config::parse(text).unwrap_err().to_string();
-        assert!(err("[server]\nbind = \"0.0.0.0:8053\"").contains("token_sha256"));
+        // Any address may be bound without a token in the config: the
+        // daemon then makes one itself.
+        assert!(Config::parse("[server]\nbind = \"0.0.0.0:8053\"").is_ok());
         assert!(err("[server]\nbind = \"localhost\"").contains("not an address and port"));
         if cfg!(unix) {
             let config = Config::parse("[server]\nbind = \"unix:/run/zoneblick/z.sock\"").unwrap();

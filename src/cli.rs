@@ -120,6 +120,12 @@ pub struct ServeArgs {
 pub struct TokenArgs {
     /// The token to hash. Read from standard input when left out.
     pub token: Option<String>,
+
+    /// Print the token the daemon made for itself, from the data
+    /// directory named in this config file. For when the config sets no
+    /// `token_sha256`.
+    #[arg(long, value_name = "CONFIG", conflicts_with = "token")]
+    pub show: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1244,6 +1250,38 @@ pub async fn serve(args: &ServeArgs) -> CommandOutput {
 
 /// Run `zoneblick token`: print the config line for a token's hash.
 pub fn token(args: &TokenArgs) -> CommandOutput {
+    if let Some(config_path) = &args.show {
+        let result = crate::config::Config::load(config_path)
+            .map_err(|e| e.to_string())
+            .and_then(|config| {
+                if config.server.token_sha256.is_some() {
+                    return Err(format!(
+                        "{} sets token_sha256, so only its hash is stored; zoneblick cannot show the token",
+                        config_path.display()
+                    ));
+                }
+                let path = crate::serve::token_path(&config);
+                std::fs::read_to_string(&path)
+                    .map(|t| format!("{}\n", t.trim()))
+                    .map_err(|e| {
+                        format!(
+                            "cannot read {}: {e}. The daemon makes the file on its first start; reading it needs the daemon's user or root",
+                            path.display()
+                        )
+                    })
+            });
+        return match result {
+            Ok(stdout) => CommandOutput {
+                stdout,
+                ..Default::default()
+            },
+            Err(e) => CommandOutput {
+                stderr: format!("zoneblick: {e}\n"),
+                exit_code: exit::RUN_FAILED,
+                ..Default::default()
+            },
+        };
+    }
     let token = match &args.token {
         Some(t) => t.clone(),
         None => {
