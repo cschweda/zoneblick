@@ -5,6 +5,9 @@
 #
 # What it does:
 #   1. Downloads the release binary for this system and checks its SHA-256.
+#      When the GitHub CLI (gh) is installed and signed in, it also checks
+#      the build provenance: a signed statement that the file was built by
+#      the project's release workflow.
 #   2. Installs it to /usr/local/bin (or --prefix DIR/bin).
 #   3. On Linux with systemd, when run as root: creates a `zoneblick` user,
 #      a starter config in /etc/zoneblick, a data directory in
@@ -14,6 +17,8 @@
 #   --version vX.Y.Z   install this release instead of the newest
 #   --prefix DIR       install the binary to DIR/bin (default /usr/local)
 #   --no-service       do not set up the systemd service
+#   --require-attestation
+#                      stop unless the build provenance could be verified
 #
 # Nothing is changed outside the paths above. Existing config is never
 # overwritten.
@@ -28,6 +33,7 @@ REPO="cschweda/zoneblick"
 VERSION="${ZONEBLICK_VERSION:-}"
 PREFIX="${ZONEBLICK_PREFIX:-/usr/local}"
 SERVICE="auto"
+ATTEST="auto"
 
 say() { printf '%s\n' "$*"; }
 fail() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
@@ -37,7 +43,8 @@ while [ $# -gt 0 ]; do
     --version) [ $# -ge 2 ] || fail "--version needs a value"; VERSION="$2"; shift 2 ;;
     --prefix) [ $# -ge 2 ] || fail "--prefix needs a value"; PREFIX="$2"; shift 2 ;;
     --no-service) SERVICE="no"; shift ;;
-    -h|--help) sed -n '2,22p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --require-attestation) ATTEST="require"; shift ;;
+    -h|--help) sed -n '2,25p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) fail "unknown option: $1" ;;
   esac
 done
@@ -91,6 +98,28 @@ else fail "sha256sum or shasum is needed to verify the download"
 fi
 [ "$expected" = "$actual" ] || fail "checksum mismatch for $name.tar.gz; nothing was installed"
 say "Checksum verified"
+
+# The checksum file comes from the same release as the binary, so it only
+# shows that the download is whole. The attestation shows where the file
+# was built. Releases before 0.13.0 have none.
+attested() { # attested VERSION: true for v0.13.0 and later
+  v=${1#v}; major=${v%%.*}; rest=${v#*.}; minor=${rest%%.*}
+  case "$major$minor" in *[!0-9]*) return 1 ;; esac
+  [ "$major" -gt 0 ] || [ "$minor" -ge 13 ]
+}
+if attested "$VERSION"; then
+  if have gh && gh auth status >/dev/null 2>&1; then
+    gh attestation verify "$tmp/$name.tar.gz" --repo "$REPO" >/dev/null 2>"$tmp/attest.err" \
+      || fail "the build provenance of $name.tar.gz does not verify; nothing was installed ($(head -n 1 "$tmp/attest.err"))"
+    say "Build provenance verified"
+  elif [ "$ATTEST" = "require" ]; then
+    fail "--require-attestation needs the GitHub CLI (gh), signed in; nothing was installed"
+  else
+    say "Build provenance not checked (needs the GitHub CLI, gh, signed in)"
+  fi
+elif [ "$ATTEST" = "require" ]; then
+  fail "$VERSION was released before build provenance was recorded; nothing was installed"
+fi
 
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
 

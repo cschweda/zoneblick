@@ -6,7 +6,8 @@
 #       expect: dns/example.org.zone   # optional: a zone file to compare with
 #
 # It downloads the release binary for the runner (Linux or macOS), checks
-# its SHA-256, runs `zoneblick run`, and fails the job by `fail-on`.
+# its SHA-256 and, when the step has `env: GH_TOKEN: ${{ github.token }}`,
+# its build provenance, runs `zoneblick run`, and fails the job by `fail-on`.
 # Check only zones you control.
 
 name: zoneblick
@@ -71,7 +72,12 @@ runs:
         esac
         dir="$RUNNER_TEMP/zoneblick-bin"
         mkdir -p "$dir"
-        sh "$ACTION_PATH/install.sh" --no-service --prefix "$dir" --version "$version"
+        # Runners have gh; with GH_TOKEN set, the binary's build provenance
+        # is verified and the job stops if it does not hold.
+        require=""
+        if [ -n "${GH_TOKEN:-}" ]; then require="--require-attestation"; fi
+        case "$version" in v0.?.*|v0.1[0-2].*) require="" ;; esac
+        sh "$ACTION_PATH/install.sh" --no-service --prefix "$dir" --version "$version" $require
         echo "$dir/bin" >> "$GITHUB_PATH"
     - name: Check the zone
       id: run
