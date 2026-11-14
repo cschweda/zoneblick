@@ -1,6 +1,6 @@
 # zoneblick — High-Level Design
 
-**Author:** Christopher Schweda · **Date:** 2026-11-13 · **Status:** Draft v0.2 (adds deep checks) · License question settled
+**Author:** Christopher Schweda · **Date:** 2026-11-13 · **Status:** Draft v0.2 (adds deep checks) · License question settled · `SVC` group proposed 2026-11-14
 
 > *zoneblick* — *zone* + German *Blick* (a look, a glance). A self-hosted watchdog for DNS zones.
 
@@ -232,6 +232,57 @@ deep  = "24h"     # deep runs; set to "off" to disable
 
 Deep-run findings follow the same lifecycle as light ones (open, resolved, muted) and appear in the same list, tagged with the run level that produced them. A deep finding is only resolved by a later deep run.
 
+### Proposed: HTTPS records and Encrypted Client Hello (`SVC`)
+
+**Status:** proposed 2026-11-14, not built. Written against the code as of 0.14.0.
+
+#### What exists already
+
+Since 0.13.0 a run asks every ordinary name for its HTTPS record, and underscore names for SVCB. The records are stored, compared between nameservers and between runs, and have their signatures checked in a deep run. TKO-06 flags one whose target does not exist.
+
+So two things need no new check: an HTTPS record that differs between nameservers (CON-02) and one that changed since the last run (drift).
+
+#### What is missing
+
+Nothing reads what is inside the record. An HTTPS record carries parameters that a browser acts on before it connects: address hints, the protocols on offer, a port, and the Encrypted Client Hello (ECH) configuration. Each of them can disagree with the rest of the zone or with the server, and the site still loads, because clients fall back.
+
+ECH is the case that fits zoneblick best. The server rotates its ECH keys while resolvers still hold the old configuration from DNS. A mismatch appears over time and nobody is told, which is what the selection rule above asks for.
+
+#### Checks
+
+| ID | Check | Severity | Run level |
+|---|---|---|---|
+| SVC-01 | Address hints (`ipv4hint`, `ipv6hint`) differ from the A and AAAA records of the record's target | warning | light |
+| SVC-02 | A record set mixes alias-mode and service-mode records, or has more than one alias-mode record | notice | light |
+| SVC-03 | `mandatory` names a parameter the record does not carry, or the record breaks another RFC 9460 rule | warning | light |
+| SVC-04 | The `ech` parameter does not parse as an ECH configuration list, or holds no version the checker knows | warning | light |
+| SVC-05 | The record offers `h3` and the server's `Alt-Svc` header does not, or the reverse | notice | deep |
+| SVC-06 | A TLS handshake that offers ECH with the published configuration is rejected by the server | warning | deep |
+| SVC-07 | The port or target in a service-mode record does not accept a TLS connection | warning | deep |
+
+A name with no HTTPS record gets no finding. Most zones have none, and that is not a fault.
+
+SVC-06 is the one with no equivalent elsewhere in the tool. When a server cannot decrypt the inner hello it finishes the handshake under its public name and hands back fresh configurations. The check reports that outcome, with the public name and the age of the record, so the fix is clear: publish the current configuration.
+
+#### What it needs
+
+- **DNS parsing.** `hickory-proto` 0.26, already a dependency, parses SVCB and HTTPS parameters, including the ECH configuration list as wire-format bytes. Confirmed against its documentation on 2026-11-14.
+- **ECH handshake.** `rustls` 0.23, already a dependency, has client-side ECH: a configuration is built from the list in DNS and switched on in the client config. Confirmed against its documentation on 2026-11-14.
+- **HPKE.** rustls needs an HPKE implementation to encrypt the hello. zoneblick builds rustls with the `ring` provider; whether that is enough, or ECH needs the `aws-lc-rs` provider or a separate HPKE crate, is **not yet confirmed** and is a new-dependency decision for the owner. See open question 6.
+- **Connections.** SVC-05 to SVC-07 open a connection to the zone's own web server. They follow the same limits, deadlines and private-address rules as the existing certificate and mail connections.
+
+#### Build order
+
+1. **SVC-01 to SVC-04.** Rules over records the store already holds. No new dependency and no new connection.
+2. **SVC-05 and SVC-07.** Use the HTTP and TLS clients already in the build.
+3. **SVC-06.** After the HPKE decision. Tests need a zone that publishes ECH; recorded fixtures cover the rejected case.
+
+#### Out of scope
+
+- A QUIC connection to prove HTTP/3 works. That needs a QUIC client and belongs in a separate tool.
+- GREASE ECH, and anything about serving or publishing ECH configurations.
+- A finding for "this zone could use ECH and does not".
+
 ## 6. Data model and drift
 
 ### Tables (sketch)
@@ -397,7 +448,8 @@ The DNSSEC chain view and the DNSViz / Zonemaster links ship with the web UI in 
 3. **Provider API import** — which provider first? DigitalOcean is the obvious one for the reference deployment.
 4. **UI config editing** — keep config file-only, or allow adding zones from the UI in a later version?
 5. **ASN data for NET-01** — look up network ownership over DNS at run time (for example Team Cymru's IP-to-ASN service), or ship an offline table that is refreshed with releases?
-6. **Name checks** — zoneblick.com was registered on 2026-11-13. A web search found no project using the name. Trademark, crate and GitHub names still need checking.
+6. **HPKE for the ECH check (SVC-06)** — can rustls do ECH with the `ring` provider this build uses, or does the check need the `aws-lc-rs` provider or a separate HPKE crate? Either is a new direct dependency and needs the owner's approval.
+7. **Name checks** — zoneblick.com was registered on 2026-11-13. A web search found no project using the name. Trademark, crate and GitHub names still need checking.
 
 ---
 
@@ -410,3 +462,5 @@ The DNSSEC chain view and the DNSViz / Zonemaster links ship with the web UI in 
 - dns-monitor — https://pypi.org/project/dns-monitor/
 - DNS Spy — https://dnsspy.io
 - Hickory DNS — https://github.com/hickory-dns/hickory-dns
+- RFC 9460, SVCB and HTTPS records — https://www.rfc-editor.org/rfc/rfc9460
+- rustls client ECH configuration — https://docs.rs/rustls/latest/rustls/client/struct.EchConfig.html
