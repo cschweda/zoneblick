@@ -673,6 +673,23 @@ pub struct RecordSignature {
     pub status: String,
 }
 
+/// What a mail server that has TLSA records presented when asked to
+/// start TLS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailTls {
+    /// The mail server's name.
+    pub mx: String,
+    /// The address that was connected to.
+    pub address: Option<IpAddr>,
+    /// Its TLSA records.
+    pub records: Vec<String>,
+    /// Whether a usable TLSA record matches the certificate. `None` when
+    /// no certificate was read or no record could be judged.
+    pub matched: Option<bool>,
+    /// Why no certificate was read, when none was.
+    pub error: Option<String>,
+}
+
 /// What a deep run collects on top of a light one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeepObservation {
@@ -695,6 +712,9 @@ pub struct DeepObservation {
     /// The signature check of every record set the run collected.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub record_signatures: Vec<RecordSignature>,
+    /// The certificates of the mail servers that have TLSA records.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mail_tls: Vec<MailTls>,
     /// The domain's registration, from the registry's RDAP service.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration: Option<Registration>,

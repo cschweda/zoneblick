@@ -1629,6 +1629,7 @@ mod tests {
                 origins: Vec::new(),
                 chain: Vec::new(),
                 record_signatures: Vec::new(),
+                mail_tls: Vec::new(),
                 registration: None,
             });
             obs

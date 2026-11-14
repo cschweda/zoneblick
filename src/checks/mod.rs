@@ -582,6 +582,11 @@ pub const CATALOG: &[CheckInfo] = &[
         Severity::Critical,
     ),
     deep_check(
+        "POL-10",
+        "A mail server's certificate matches none of its TLSA records",
+        Severity::Critical,
+    ),
+    deep_check(
         "NSB-01",
         "Server does not follow the EDNS rules",
         Severity::Warning,
@@ -723,6 +728,7 @@ const CHECKS: &[Check] = &[
     deep::sec_10_algorithm_completeness,
     deep::sec_12_record_signatures,
     deep::sec_13_chain,
+    deep::pol_10_tlsa_certificate,
     deep::nsb_01_edns_compliance,
     deep::nsb_02_open_transfer,
     deep::nsb_03_recursion,

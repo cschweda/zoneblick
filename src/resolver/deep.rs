@@ -488,6 +488,7 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
         origins,
         chain: Vec::new(),
         record_signatures: Vec::new(),
+        mail_tls: Vec::new(),
         registration: None,
     };
     if let Some(soa) = soa {
@@ -510,8 +511,85 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
     }
     deep.chain = super::chain::chain_of_trust(&client, obs, &super::chain::root_anchors()).await;
     deep.record_signatures = super::chain::record_signatures(&client, obs).await;
+    deep.mail_tls = mail_certificates(&client, obs).await;
     deep.registration = crate::registration::collect(&client, obs).await;
     obs.deep = Some(deep);
+}
+
+/// At most this many mail servers are connected to.
+const MAX_MAIL_SERVERS: usize = 5;
+
+/// For each mail server of the zone that has TLSA records: connect to
+/// port 25, start TLS, and compare the certificate with the records. Only
+/// a live run does this, and only to public addresses.
+async fn mail_certificates(client: &Client, obs: &ZoneObservation) -> Vec<crate::observe::MailTls> {
+    use crate::observe::MailTls;
+    let Some(policy) = obs.policy.as_ref().filter(|_| client.is_live()) else {
+        return Vec::new();
+    };
+    let Some(mail) = &policy.mail else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for lookup in mail
+        .tlsa
+        .iter()
+        .filter(|l| !l.rdata.is_empty())
+        .take(MAX_MAIL_SERVERS)
+    {
+        let Some(mx) = lookup.name.strip_prefix("_25._tcp.") else {
+            continue;
+        };
+        let mut entry = MailTls {
+            mx: mx.to_string(),
+            address: None,
+            records: lookup.rdata.clone(),
+            matched: None,
+            error: None,
+        };
+        let address = policy
+            .targets
+            .iter()
+            .filter(|t| t.rtype == "MX" && t.target == mx)
+            .flat_map(|t| &t.lookup.rdata)
+            .find_map(|r| r.parse::<IpAddr>().ok());
+        let reason = match address {
+            None => Some("no IPv4 address is known for the server".to_string()),
+            Some(a) if !obs.vantage.can_reach(&a) => Some("not reachable from here".to_string()),
+            Some(a) => super::policy::not_public(a)
+                .map(|why| format!("not connected to: {a} is a {why} address")),
+        };
+        if let (Some(address), None) = (address, &reason) {
+            entry.address = Some(address);
+            let host = mx.to_string();
+            let read = tokio::task::spawn_blocking(move || {
+                super::smtp::starttls_certificates(std::net::SocketAddr::new(address, 25), &host)
+            });
+            match tokio::time::timeout(std::time::Duration::from_secs(45), read).await {
+                Ok(Ok(Ok(chain))) => {
+                    let verdicts: Vec<Option<bool>> = entry
+                        .records
+                        .iter()
+                        .map(|r| super::smtp::tlsa_matches(r, &chain))
+                        .collect();
+                    entry.matched = if verdicts.contains(&Some(true)) {
+                        Some(true)
+                    } else if verdicts.contains(&Some(false)) {
+                        Some(false)
+                    } else {
+                        None
+                    };
+                }
+                Ok(Ok(Err(e))) => entry.error = Some(printable(&e)),
+                Ok(Err(_)) => entry.error = Some("the connection attempt stopped".to_string()),
+                Err(_) => entry.error = Some("timed out".to_string()),
+            }
+        } else {
+            entry.error = reason;
+        }
+        out.push(entry);
+    }
+    out
 }
 
 #[cfg(test)]

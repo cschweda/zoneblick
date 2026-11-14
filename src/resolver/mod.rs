@@ -16,6 +16,7 @@ pub mod limiter;
 pub mod policy;
 pub mod probe;
 pub mod signed;
+pub mod smtp;
 pub mod transport;
 
 pub use deep::add_deep;

@@ -727,6 +727,44 @@ pub fn sec_10_algorithm_completeness(obs: &ZoneObservation) -> Vec<Finding> {
     )]
 }
 
+/// POL-10: a mail server has TLSA records, and the certificate it
+/// presents matches none of them, or it does not offer STARTTLS at all.
+/// Senders that validate DANE then refuse to deliver.
+pub fn pol_10_tlsa_certificate(obs: &ZoneObservation) -> Vec<Finding> {
+    let Some(d) = deep(obs) else {
+        return Vec::new();
+    };
+    let mut findings = Vec::new();
+    for m in &d.mail_tls {
+        let no_starttls = m.error.as_deref() == Some(crate::resolver::smtp::NO_STARTTLS);
+        let summary = if no_starttls {
+            format!(
+                "{} has TLSA records but does not offer STARTTLS; senders that check DANE will not deliver to it",
+                m.mx
+            )
+        } else if m.matched == Some(false) {
+            format!(
+                "the certificate of {} matches none of its TLSA records; senders that check DANE will not deliver to it",
+                m.mx
+            )
+        } else {
+            continue;
+        };
+        let mut details: Vec<String> = m.records.iter().map(|r| format!("TLSA {r}")).collect();
+        if let Some(address) = m.address {
+            details.push(format!("connected to {address}, port 25"));
+        }
+        findings.push(zone_finding(
+            "POL-10",
+            Severity::Critical,
+            &format!("_25._tcp.{}", m.mx),
+            summary,
+            details,
+        ));
+    }
+    findings
+}
+
 /// SEC-12: a record set's signature is missing, expired or does not
 /// verify with the zone's keys. Validating resolvers refuse such answers
 /// when the zone is chained to its parent.
@@ -815,6 +853,47 @@ pub fn sec_13_chain(obs: &ZoneObservation) -> Vec<Finding> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_mail_certificate_that_matches_no_tlsa_record_is_critical() {
+        use crate::observe::MailTls;
+        let entry = |mx: &str, matched: Option<bool>, error: Option<&str>| MailTls {
+            mx: mx.to_string(),
+            address: Some("192.0.2.25".parse().unwrap()),
+            records: vec!["3 1 1 abcd".to_string()],
+            matched,
+            error: error.map(String::from),
+        };
+        let mut obs = sound();
+        d(&mut obs).mail_tls = vec![
+            entry("ok.example.test.", Some(true), None),
+            entry("stale.example.test.", Some(false), None),
+            entry(
+                "plain.example.test.",
+                None,
+                Some(crate::resolver::smtp::NO_STARTTLS),
+            ),
+            // Port 25 is often blocked where zoneblick runs: no opinion.
+            entry("far.example.test.", None, Some("timed out")),
+        ];
+        let found: Vec<(String, Severity)> = pol_10_tlsa_certificate(&obs)
+            .into_iter()
+            .map(|f| (f.name, f.severity))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "_25._tcp.stale.example.test.".to_string(),
+                    Severity::Critical
+                ),
+                (
+                    "_25._tcp.plain.example.test.".to_string(),
+                    Severity::Critical
+                ),
+            ]
+        );
+    }
+
     use super::*;
     use crate::checks::run_all;
     use crate::checks::testkit::*;
@@ -891,6 +970,7 @@ mod tests {
             origins: Vec::new(),
             chain: Vec::new(),
             record_signatures: Vec::new(),
+            mail_tls: Vec::new(),
             registration: None,
         });
         obs
