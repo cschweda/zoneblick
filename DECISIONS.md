@@ -271,7 +271,7 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - Lookalikes are deliberately few (at most 60, no keyboard neighbours, no other alphabets): each costs lookups at the top-level domain's servers, and a long list of honest neighbours would only be muted.
 - TLS and SMTP connections are made only by a live run, never when replaying a fixture, like the TLSA certificate check before them.
 
-## After 0.15.0: fixes from the third audit
+## 0.15.1: fixes from the third audit
 
 - One answer keeps at most 64 records and 16 KB, one run at most 32 MB of record data. What is dropped is the end of the sorted set, so the same answer gives the same stored set. No real record set is near these limits; a zone that exceeds them is compared on the part that is kept.
 - A finding whose severity rises counts as opened again (diff, alerts) and a mute on it is lifted. The fingerprint is unchanged, so its history stays one finding.

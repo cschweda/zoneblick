@@ -12,7 +12,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 40 checks for every run and 32 more with `--deep`, which also follows the DNSSEC chain of trust from the root, verifies denial proofs, compares mail servers' certificates with their TLSA records and watches the domain's registration. Eleven of the deep checks are new in `v0.15.0`: subdomains delegated to nameservers that no longer serve them, the registration of the domains your nameservers and mail servers are in, the certificates your mail and web servers really present, route origin validation (RPKI) of your nameservers' networks, what Cloudflare's, Google's and Quad9's resolvers say about the zone, blocklists, weak SPF and DMARC records, and registered lookalike domains. `zoneblick plan` checks a zone file before it is deployed, several daemons can compare what they see from different places, and release files carry a verifiable build provenance. The daemon's API and web UI always need a token, which the daemon makes itself on its first start; it can serve HTTPS with your own certificate or listen on a socket file. The current release, `v0.15.0`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 40 checks for every run and 32 more with `--deep`, which also follows the DNSSEC chain of trust from the root, verifies denial proofs, compares mail servers' certificates with their TLSA records and watches the domain's registration. Eleven of the deep checks are new in `v0.15.0`: subdomains delegated to nameservers that no longer serve them, the registration of the domains your nameservers and mail servers are in, the certificates your mail and web servers really present, route origin validation (RPKI) of your nameservers' networks, what Cloudflare's, Google's and Quad9's resolvers say about the zone, blocklists, weak SPF and DMARC records, and registered lookalike domains. `zoneblick plan` checks a zone file before it is deployed, several daemons can compare what they see from different places, and release files carry a verifiable build provenance. The daemon's API and web UI always need a token, which the daemon makes itself on its first start; it can serve HTTPS with your own certificate or listen on a socket file. The current release, `v0.15.1`, is an early pre-release; it fixes what the third [security audit](#security-audits) found in `v0.15.0`.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -102,7 +102,7 @@ docker run --rm ghcr.io/cschweda/zoneblick check example.org --deep
 **3. "Our zone file is in git, and a pull request should show what it would change before anyone deploys it."** Run `plan` on the pull request; it exits 2 for a critical mistake in the file.
 
 ```yaml
-- run: curl -fsSL https://zoneblick.com/install.sh | sh -s -- --version v0.15.0 --no-service
+- run: curl -fsSL https://zoneblick.com/install.sh | sh -s -- --version v0.15.1 --no-service
 - run: zoneblick plan example.org --file dns/example.org.zone
 ```
 
@@ -227,7 +227,7 @@ curl -fsSL https://zoneblick.com/install.sh | sudo sh
 curl -fsSL https://zoneblick.com/install.sh | sh -s -- --prefix ~/.local --no-service
 
 # one exact release, refused unless its build provenance verifies (needs the GitHub CLI)
-curl -fsSL https://zoneblick.com/install.sh | sh -s -- --version v0.15.0 --require-attestation
+curl -fsSL https://zoneblick.com/install.sh | sh -s -- --version v0.15.1 --require-attestation
 ```
 
 The script downloads the newest release for your system, verifies its SHA-256 checksum, and installs the binary to `/usr/local/bin`. When the GitHub CLI (`gh`) is installed and signed in, it also verifies the file's [build provenance](#verifying-a-download) and stops if that does not hold; without `gh` it says that only the checksum was checked. `--require-attestation` makes the provenance check mandatory. Read it first if you like: it is [`install.sh`](install.sh) in this repository.
@@ -236,7 +236,7 @@ On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick`
 
 | Option | Effect |
 |---|---|
-| `--version v0.15.0` | Install that release instead of the newest |
+| `--version v0.15.1` | Install that release instead of the newest |
 | `--prefix DIR` | Install the binary to `DIR/bin` |
 | `--no-service` | Binary only; no user, config or service |
 | `--require-attestation` | Stop unless the file's build provenance verifies; needs the GitHub CLI, signed in |
@@ -249,11 +249,11 @@ Each release has a `.deb` and an `.rpm` for x86_64 and ARM 64-bit on the [releas
 
 ```
 # Debian and Ubuntu (use arm64 on ARM)
-curl -fsSLO https://github.com/cschweda/zoneblick/releases/download/v0.15.0/zoneblick_0.15.0_amd64.deb
-sudo dpkg -i zoneblick_0.15.0_amd64.deb
+curl -fsSLO https://github.com/cschweda/zoneblick/releases/download/v0.15.1/zoneblick_0.15.1_amd64.deb
+sudo dpkg -i zoneblick_0.15.1_amd64.deb
 
 # Fedora and RHEL (use aarch64 on ARM)
-sudo dnf install --nogpgcheck https://github.com/cschweda/zoneblick/releases/download/v0.15.0/zoneblick-0.15.0-1.x86_64.rpm
+sudo dnf install --nogpgcheck https://github.com/cschweda/zoneblick/releases/download/v0.15.1/zoneblick-0.15.1-1.x86_64.rpm
 ```
 
 After either, list your zones and read the token the web UI asks for:
@@ -281,12 +281,12 @@ The formula, [`Formula/zoneblick.rb`](Formula/zoneblick.rb), installs the releas
 From 0.13.0 on, every release file (archives, `.deb`, `.rpm`, `SHA256SUMS`) and the container image has a build provenance attestation: a statement signed through GitHub and recorded in a public transparency log, saying that this exact file was built by this repository's release workflow from the release's tag. The checksum file alone cannot show that, because it comes from the same place as the binaries.
 
 ```
-gh attestation verify zoneblick-v0.15.0-x86_64-unknown-linux-musl.tar.gz \
+gh attestation verify zoneblick-v0.15.1-x86_64-unknown-linux-musl.tar.gz \
   --repo cschweda/zoneblick \
   --signer-workflow cschweda/zoneblick/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.15.0
+  --source-ref refs/tags/v0.15.1
 
-gh attestation verify oci://ghcr.io/cschweda/zoneblick:0.15.0 --repo cschweda/zoneblick
+gh attestation verify oci://ghcr.io/cschweda/zoneblick:0.15.1 --repo cschweda/zoneblick
 ```
 
 The install script and the GitHub Action run the first form for you. The files are not signed with a project key, and the `.deb` and `.rpm` carry no package signature; the attestation is the verification. Releases up to 0.12.2 have none.
@@ -325,7 +325,7 @@ Data lives in the `zoneblick-data` volume. The image contains only the static bi
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.15.0`.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.15.1`.
 
 | System | File name ends in |
 |---|---|
@@ -337,12 +337,12 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check, of the author's zone; put yours in its place. Change `v0.15.0` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check, of the author's zone; put yours in its place. Change `v0.15.1` to install another release.
 
 **Linux**
 
 ```
-V=v0.15.0
+V=v0.15.1
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -355,7 +355,7 @@ zoneblick check metaincognita.com
 **macOS**
 
 ```
-V=v0.15.0
+V=v0.15.1
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -370,7 +370,7 @@ zoneblick check metaincognita.com
 **Windows (PowerShell)**
 
 ```
-$V = "v0.15.0"
+$V = "v0.15.1"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -415,7 +415,7 @@ You need a stable [Rust toolchain](https://rustup.rs), version 1.88 or later, an
 cargo install --git https://github.com/cschweda/zoneblick
 ```
 
-Add `--tag v0.15.0 --locked` to build exactly one release with the dependency versions it was tested with. This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
+Add `--tag v0.15.1 --locked` to build exactly one release with the dependency versions it was tested with. This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
 
 To install from a local checkout instead:
 
@@ -1147,7 +1147,7 @@ When the run fails, the document is shorter:
 The repository is also a GitHub Action, for checking a zone from a workflow, for example when a pull request changes a zone file:
 
 ```yaml
-- uses: cschweda/zoneblick@v0.15.0
+- uses: cschweda/zoneblick@v0.15.1
   with:
     zone: example.org
     expect: dns/example.org.zone   # optional
@@ -1268,8 +1268,8 @@ zoneblick reads data that other people control: every DNS answer, every page it 
 |---|---|
 | API | A token is always required, also on localhost and on a socket file (from 0.14.0). The daemon stores a hash of it and compares in constant time. Requests that change something must send JSON and must not come from another website. Every response forbids framing, content sniffing, referrers and caching. |
 | Web UI | One file compiled into the binary, with a content security policy; it loads nothing from other sites and writes data from the DNS into the page as text only. The token is kept for the browser session and "Sign out" forgets it. |
-| Transport | The daemon listens on localhost unless told otherwise. It can serve HTTPS itself (TLS 1.2 and 1.3; five seconds and eight handshakes per address), or listen on a socket file with mode `0660` in a directory nobody else can write to. After 0.15.0, both network listeners allow 1,024 connections, 64 per address, and close one on which nothing arrives for a minute. |
-| Hostile DNS data | A run has a deadline and a failed run alerts. Nameserver names, addresses, discovered names, signature checks (16 per record set, 32 keys per answer) and signature queries are capped; after 0.15.0, so are the records kept from one answer (64, and 16 KB) and from one run (32 MB). An answer without the question is refused. DNSSEC proofs are verified, not believed. |
+| Transport | The daemon listens on localhost unless told otherwise. It can serve HTTPS itself (TLS 1.2 and 1.3; five seconds and eight handshakes per address), or listen on a socket file with mode `0660` in a directory nobody else can write to. From 0.15.1, both network listeners allow 1,024 connections, 64 per address, and close one on which nothing arrives for a minute. |
+| Hostile DNS data | A run has a deadline and a failed run alerts. Nameserver names, addresses, discovered names, signature checks (16 per record set, 32 keys per answer) and signature queries are capped; from 0.15.1, so are the records kept from one answer (64, and 16 KB) and from one run (32 MB). An answer without the question is refused. DNSSEC proofs are verified, not believed. |
 | Output | Everything quoted from the DNS, a zone file or another daemon is made safe before it reaches a terminal, a CI log, a Slack or Discord message, the web UI or a spreadsheet (CSV formulas get a leading apostrophe). |
 | Outgoing requests | Pages are fetched from public addresses only; nothing is sent to loopback or link-local addresses; the address checked is the address connected to. No request follows a redirect. TLS certificates are verified. A provider credential goes to that provider's API host and nowhere else; a vantage token goes only over `https://`. Mail servers get `EHLO`, `STARTTLS` and `QUIT` under a 30-second deadline, and no mail. |
 | Secrets and data | The database and the token file are made readable by their owner only: by file mode on Unix, and, from 0.15.0, by an access list for the current user on Windows, set before anything is written. Credentials are read from files or the environment and are not written to the database, the log or a recorded fixture. `zoneblick token` reads the token from standard input so that it does not show in the process list. |
@@ -1287,7 +1287,7 @@ zoneblick reads data that other people control: every DNS answer, every page it 
 - Verify what you install: `gh attestation verify`, or `--require-attestation` on the install script.
 - On Windows before 0.15.0, put the data directory where other users cannot read; from 0.15.0 the token file and the database are limited to your user.
 
-**Limits of this analysis.** The audits are the project's own, not a third party's. 0.15.0 had a full audit on the day it came out (audit 3), which found one serious fault and nineteen smaller ones; the fixes are in the source and not yet in a release. Its Windows permissions fix has been run in CI only, not on a Windows machine with several users. The DNS and TLS libraries were fuzzed through zoneblick but not reviewed. zoneblick's DNSSEC verdicts cover the answers it asks for; it is not a general validator.
+**Limits of this analysis.** The audits are the project's own, not a third party's. 0.15.0 had a full audit on the day it came out (audit 3), which found one serious fault and nineteen smaller ones; the fixes are in 0.15.1. Its Windows permissions fix has been run in CI only, not on a Windows machine with several users. The DNS and TLS libraries were fuzzed through zoneblick but not reviewed. zoneblick's DNSSEC verdicts cover the answers it asks for; it is not a general validator.
 
 To report a security problem, open a GitHub security advisory on the repository.
 
@@ -1297,7 +1297,7 @@ This section is the record of every security audit of zoneblick, newest first. T
 
 | Audit | Version audited | Date | Found | Fixed in |
 |---|---|---|---|---|
-| [3](#audit-3-version-0150) | 0.15.0 | 2026-11-14 | 1 high, 6 medium, 13 low | the source, for 0.15.1; 1 medium and 3 low are open |
+| [3](#audit-3-version-0150) | 0.15.0 | 2026-11-14 | 1 high, 6 medium, 13 low | 0.15.1; 1 medium and 3 low are open |
 | [Review of the token change](#review-of-0140-the-mandatory-token) | 0.14.0 | 2026-11-14 | 2 low | 0.15.0 |
 | [2](#audit-2-version-0130) | 0.13.0 | 2026-11-14 | 2 high, 4 medium, 9 low | 0.13.1; the proxy finding fully in 0.14.0 |
 | [Commit reviews](#automated-review-of-each-commit) | every commit from 0.12.0 on | continuous | 15 medium | the next commit or release |
@@ -1315,7 +1315,7 @@ This section is the record of every security audit of zoneblick, newest first. T
 
 ### Open now
 
-Known, and not fixed. This list is current as of 2026-11-14, after the fixes of audit 3, which are in the source and not yet in a release. 0.14.0 closed the two items both audits had flagged (the API without a token behind a reverse proxy, and without a token for other local users) by making the token mandatory; 0.15.0 fixed the two findings of the review of 0.14.0 and three more items that stood here: SQLite's side files on Windows, dependencies never checked against advisories, and no warning for plain `http://` alert addresses.
+Known, and not fixed. This list is current as of 0.15.1, which has the fixes of audit 3. 0.14.0 closed the two items both audits had flagged (the API without a token behind a reverse proxy, and without a token for other local users) by making the token mandatory; 0.15.0 fixed the two findings of the review of 0.14.0 and three more items that stood here: SQLite's side files on Windows, dependencies never checked against advisories, and no warning for plain `http://` alert addresses.
 
 - **A token the daemon made is stored as it is**, in a file only the daemon's user and root can read (`api-token` in the data directory). Anyone who can read that file can use the API. Set `token_sha256` to keep only a hash.
 - **No limit on token guesses, on purpose**, and the stored hash is unsalted SHA-256. A limit that lets the right token through cannot slow guessing, and one per address would let anyone who can reach a daemon behind a reverse proxy lock its owner out, since every request then comes from the proxy's address. The defence is the token's length: the one the daemon makes has 256 random bits, and `zoneblick token` refuses one under 16 characters. A short or reused token of your own is still your risk.
@@ -1339,7 +1339,7 @@ Known, and not fixed. This list is current as of 2026-11-14, after the fixes of 
 
 ### Audit 3: version 0.15.0
 
-Audited on 2026-11-14, the day 0.15.0 came out with eleven deep checks that look outward. Four independent reviewers each took one area and one copy of the code, read it as an attacker, and proved what they could: the outward checks and the certificate reader; the daemon, its API and its files; the install script, the Action and the workflows; and the resolver, DNSSEC and every output path, to see whether the fixes of audits 1 and 2 still held. The fixes are in the source and will be in 0.15.1; **0.15.0 has every finding below.**
+Audited on 2026-11-14, the day 0.15.0 came out with eleven deep checks that look outward. Four independent reviewers each took one area and one copy of the code, read it as an attacker, and proved what they could: the outward checks and the certificate reader; the daemon, its API and its files; the install script, the Action and the workflows; and the resolver, DNSSEC and every output path, to see whether the fixes of audits 1 and 2 still held. The fixes are in 0.15.1; **0.15.0 has every finding below, so update.**
 
 **What the red team did**
 
@@ -1351,7 +1351,7 @@ Audited on 2026-11-14, the day 0.15.0 came out with eleven deep checks that look
 
 **What broke, and the fix**
 
-| Severity | Finding | Fix (in the source, for 0.15.1) |
+| Severity | Finding | Fix in 0.15.1 |
 |---|---|---|
 | High | **A nameserver could make zoneblick hold hundreds of megabytes.** Nothing limited the records in one answer. A 64 KB answer with compressed names unfolds to 3,000 records and most of a megabyte, for every name, type and server: 519 MB in three seconds at the most servers a zone may list, more with more names, and all of it then written to the database. The run deadline did not help; this takes seconds. | At most 64 records and 16 KB are kept from one answer, and 32 MB of record data in one run. The same answers now cost 16 KB each. |
 | Medium | **A finding that got worse was silent.** A certificate that "runs out in ten days" and one that "has run out" are the same finding, so the step from notice to critical opened no alert; and a mute put on the mild form covered the critical one. The same held for a delegation going from "one server lame" to "nobody serves it". | A rise in severity counts as opened again, in diffs and alerts, and lifts a mute. |
