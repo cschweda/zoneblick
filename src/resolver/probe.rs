@@ -153,6 +153,7 @@ pub async fn observe_zone(
         policy: Some(policy),
         deep: None,
         declared: None,
+        certificates: None,
     })
 }
 

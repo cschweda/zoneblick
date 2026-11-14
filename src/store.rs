@@ -493,14 +493,19 @@ impl Store {
                     finding.summary
                 ])?;
             }
-            if obs.deep.is_none() {
-                // A light run says nothing about the deep checks: their
-                // open findings carry over, and only a deep run resolves them.
-                let deep_ids: Vec<String> = crate::checks::CATALOG
-                    .iter()
-                    .filter(|c| c.deep)
-                    .map(|c| format!("'{}'", c.id))
-                    .collect();
+            // A light run says nothing about the deep checks, and a run
+            // that did not read certificate logs says nothing about the
+            // certificate checks: their open findings carry over, and only
+            // a run that makes those checks resolves them.
+            let deep_ids: Vec<String> = crate::checks::CATALOG
+                .iter()
+                .filter(|c| {
+                    (c.deep && obs.deep.is_none())
+                        || (crate::checks::needs_certificates(c.id) && obs.certificates.is_none())
+                })
+                .map(|c| format!("'{}'", c.id))
+                .collect();
+            if !deep_ids.is_empty() {
                 let carried = format!(
                     "zone_id = ?2 AND state IN ('open', 'muted') AND last_seen_run < ?1
                      AND check_id IN ({})",

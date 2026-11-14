@@ -15,7 +15,7 @@ use hickory_proto::rr::{Name, RecordType};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-use crate::observe::{ZoneObservation, is_ancestor_or_equal};
+use crate::observe::{Certificate, ZoneObservation, is_ancestor_or_equal};
 use crate::resolver::{Client, HttpOutcome, normalise_zone};
 
 /// At most this many discovered names are added per zone.
@@ -81,16 +81,96 @@ pub fn parse_ct(zone: &str, body: &str) -> Vec<String> {
     names.into_iter().take(CT_MAX_NAMES).collect()
 }
 
-/// Ask crt.sh for the names on a zone's certificates.
-pub async fn ct_names(client: &Client, zone: &str) -> Result<Vec<String>, String> {
+/// At most this many certificates are kept per zone.
+pub const CT_MAX_CERTIFICATES: usize = 2000;
+
+/// The certificates in a crt.sh JSON answer, with the names inside
+/// `zone` each is for. `None` when the answer is not a whole JSON
+/// document (crt.sh cuts large answers off), so that half a list is never
+/// taken for the whole.
+pub fn parse_ct_certificates(zone: &str, body: &str) -> Option<Vec<Certificate>> {
+    let doc: serde_json::Value = serde_json::from_str(body).ok()?;
+    let mut out = Vec::new();
+    for entry in doc.as_array()? {
+        let Some(not_after_unix) = entry["not_after"]
+            .as_str()
+            .and_then(crate::registration::parse_rfc3339)
+        else {
+            continue;
+        };
+        let mut names: BTreeSet<String> = BTreeSet::new();
+        for field in ["name_value", "common_name"] {
+            for line in entry[field].as_str().unwrap_or("").lines() {
+                let line = line.trim().to_ascii_lowercase();
+                let (wild, host) = match line.strip_prefix("*.") {
+                    Some(rest) => (true, rest),
+                    None => (false, line.as_str()),
+                };
+                let plain = !host.is_empty()
+                    && host.len() <= 253
+                    && host
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+                if !plain {
+                    continue;
+                }
+                if let Ok(name) = normalise_zone(host)
+                    && is_ancestor_or_equal(zone, &name)
+                {
+                    names.insert(if wild { format!("*.{name}") } else { name });
+                }
+            }
+        }
+        if names.is_empty() {
+            continue;
+        }
+        out.push(Certificate {
+            names: names.into_iter().collect(),
+            issuer: crate::resolver::iterate::printable(
+                entry["issuer_name"].as_str().unwrap_or(""),
+            ),
+            not_before_unix: entry["not_before"]
+                .as_str()
+                .and_then(crate::registration::parse_rfc3339),
+            not_after_unix,
+        });
+        if out.len() >= CT_MAX_CERTIFICATES {
+            break;
+        }
+    }
+    out.sort();
+    out.dedup();
+    Some(out)
+}
+
+/// What Certificate Transparency logs hold for a zone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CtFound {
+    /// The hostnames named on the zone's certificates.
+    pub names: Vec<String>,
+    /// The unexpired certificates themselves; `None` when the answer was
+    /// cut short.
+    pub certificates: Option<Vec<Certificate>>,
+}
+
+/// Ask crt.sh for the unexpired certificates of a zone.
+pub async fn ct_fetch(client: &Client, zone: &str) -> Result<CtFound, String> {
     match client
         .http_get_with(&ct_url(zone), CT_BODY_LIMIT, CT_TIMEOUT)
         .await
     {
         HttpOutcome::Error { message } => Err(format!("crt.sh: {message}")),
-        HttpOutcome::Response { status: 200, body } => Ok(parse_ct(zone, &body)),
+        HttpOutcome::Response { status: 200, body } => Ok(CtFound {
+            names: parse_ct(zone, &body),
+            certificates: parse_ct_certificates(zone, &body),
+        }),
         HttpOutcome::Response { status, .. } => Err(format!("crt.sh answered HTTP {status}")),
     }
+}
+
+/// Ask crt.sh for the names on a zone's certificates.
+pub async fn ct_names(client: &Client, zone: &str) -> Result<Vec<String>, String> {
+    ct_fetch(client, zone).await.map(|found| found.names)
 }
 
 /// At most this many names are taken from a DNS provider's record list.
@@ -328,6 +408,30 @@ mod tests {
             ["api.example.org.", "mail.example.org.", "www.example.org."]
         );
         assert!(parse_ct("example.org.", "not json at all").is_empty());
+    }
+
+    #[test]
+    fn certificates_are_read_from_a_crt_sh_answer() {
+        let body = r#"[{"issuer_name":"C=US, O=Let's Encrypt, CN=R11","common_name":"www.example.org",
+              "name_value":"www.example.org\nexample.org","not_before":"2023-11-01T00:00:00","not_after":"2023-11-14T22:13:20"},
+            {"issuer_name":"C=US, O=DigiCert Inc, CN=X","common_name":"*.Example.org",
+              "name_value":"*.example.org\nother.example.net","not_before":"bad","not_after":"2024-02-29T00:00:00"},
+            {"issuer_name":"x","common_name":"other.example.net","name_value":"other.example.net","not_after":"2024-02-29T00:00:00"},
+            {"issuer_name":"x","common_name":"a.example.org","name_value":"a.example.org","not_after":"never"}]"#;
+        let certs = parse_ct_certificates("example.org.", body).unwrap();
+        assert_eq!(certs.len(), 2);
+        assert_eq!(certs[0].names, ["*.example.org."]);
+        assert_eq!(
+            (certs[0].not_before_unix, certs[0].not_after_unix),
+            (None, 1_709_164_800)
+        );
+        assert_eq!(certs[1].names, ["example.org.", "www.example.org."]);
+        assert_eq!(certs[1].issuer, "C=US, O=Let's Encrypt, CN=R11");
+        assert_eq!(certs[1].not_after_unix, 1_700_000_000);
+        // A cut-off answer gives names but no certificate list.
+        let cut = &body[..body.len() - 40];
+        assert!(parse_ct_certificates("example.org.", cut).is_none());
+        assert!(!parse_ct("example.org.", cut).is_empty());
     }
 
     #[test]

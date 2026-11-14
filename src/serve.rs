@@ -215,6 +215,7 @@ async fn run_zone_inner(
 
     // More names from certificate logs, when the zone asks for that.
     let mut discovered = Vec::new();
+    let mut certificates = None;
     let mut provided: Vec<(&str, Vec<String>)> = Vec::new();
     let due = state
         .discovered_at
@@ -231,9 +232,14 @@ async fn run_zone_inner(
             .insert(zone.name.clone(), started);
     }
     if due && zone.discover.iter().any(|d| d == "ct") {
-        match crate::discover::ct_names(&client, &zone.name).await {
+        match crate::discover::ct_fetch(&client, &zone.name).await {
             Ok(found) => {
-                discovered = found.into_iter().filter(|n| !names.contains(n)).collect();
+                certificates = found.certificates;
+                discovered = found
+                    .names
+                    .into_iter()
+                    .filter(|n| !names.contains(n))
+                    .collect();
                 if !discovered.is_empty() {
                     log(&format!(
                         "{} found {} new names in certificate logs",
@@ -280,6 +286,7 @@ async fn run_zone_inner(
         .await
         .map_err(|e| e.to_string())?;
     obs.declared = declared;
+    obs.certificates = certificates;
     crate::resolver::add_dkim_selectors(client.clone(), &mut obs, &zone.dkim_selectors).await;
     // A deep run, when one is asked for or due for this zone.
     let deep_due = match state.config.deep_interval() {

@@ -4,6 +4,7 @@
 //! [`ZoneObservation`] and returns findings, so every check can be tested
 //! offline against hand-built or replayed observations.
 
+pub mod certificates;
 pub mod consistency;
 pub mod deep;
 pub mod delegation;
@@ -506,6 +507,18 @@ pub const CATALOG: &[CheckInfo] = &[
         true,
     ),
     check(
+        "CRT-01",
+        "Newest logged certificate of a name in use runs out within 14 days",
+        Severity::Notice,
+        true,
+    ),
+    check(
+        "CRT-02",
+        "Certificate issued by an authority the CAA records do not allow",
+        Severity::Warning,
+        true,
+    ),
+    check(
         "DRF-01",
         "Record set in the declared zone file is missing or differs",
         Severity::Warning,
@@ -611,6 +624,12 @@ const fn deep_check(id: &'static str, title: &'static str, severity: Severity) -
     }
 }
 
+/// True for a check that reads Certificate Transparency logs, which only
+/// some runs do.
+pub fn needs_certificates(check_id: &str) -> bool {
+    check_id.starts_with("CRT-")
+}
+
 /// True for a check that only a deep run makes.
 pub fn is_deep(check_id: &str) -> bool {
     CATALOG.iter().any(|c| c.deep && c.id == check_id)
@@ -665,6 +684,8 @@ const CHECKS: &[Check] = &[
     policy::tko_03_unregistered_target,
     policy::tko_04_spf_unregistered,
     policy::tko_05_wildcard,
+    certificates::crt_01_expiry,
+    certificates::crt_02_caa_mismatch,
     drift::drf_01_declared_differs,
     drift::drf_02_undeclared,
     deep::sec_06_denial,

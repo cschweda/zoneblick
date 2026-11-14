@@ -639,9 +639,14 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     // reported and the run goes on with the names it has.
     let mut discovered: Vec<String> = Vec::new();
     let mut notes = String::new();
+    let mut certificates = None;
     if args.discover.iter().any(|d| d == "ct") {
-        match crate::discover::ct_names(&client, &zone).await {
-            Ok(found) => {
+        match crate::discover::ct_fetch(&client, &zone).await {
+            Ok(crate::discover::CtFound {
+                names: found,
+                certificates: logged,
+            }) => {
+                certificates = logged;
                 let total = found.len();
                 discovered = found.into_iter().filter(|n| !names.contains(n)).collect();
                 notes = format!(
@@ -701,6 +706,7 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
         deep.previous_dnskeys = store.latest_dnskeys(&zone)?;
     }
     obs.declared = declared;
+    obs.certificates = certificates;
 
     // A zone transfer, when asked. Refusal is the usual answer.
     let mut transferred: Option<Vec<String>> = None;

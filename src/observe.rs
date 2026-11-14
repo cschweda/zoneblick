@@ -633,6 +633,19 @@ pub struct DeepObservation {
     pub registration: Option<Registration>,
 }
 
+/// One certificate logged for names in the zone, as Certificate
+/// Transparency logs list it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Certificate {
+    /// The names in the zone the certificate is for; a wildcard is kept
+    /// as `*.name.`.
+    pub names: Vec<String>,
+    /// The issuer's name, for example `C=US, O=Let's Encrypt, CN=R11`.
+    pub issuer: String,
+    pub not_before_unix: Option<u64>,
+    pub not_after_unix: u64,
+}
+
 /// Everything recorded about one zone in one run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ZoneObservation {
@@ -661,6 +674,10 @@ pub struct ZoneObservation {
     /// The deep probes. `None` for a light run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deep: Option<DeepObservation>,
+    /// The unexpired certificates logged for the zone, when the run read
+    /// Certificate Transparency logs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificates: Option<Vec<Certificate>>,
     /// The zone file the run was told to compare with, when it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared: Option<crate::zonefile::Declared>,
