@@ -81,13 +81,15 @@ pub fn parse_ct(zone: &str, body: &str) -> Vec<String> {
     names.into_iter().take(CT_MAX_NAMES).collect()
 }
 
-/// At most this many certificates are kept per zone.
+/// A zone with more logged certificates than this gets no certificate
+/// checks.
 pub const CT_MAX_CERTIFICATES: usize = 2000;
 
 /// The certificates in a crt.sh JSON answer, with the names inside
 /// `zone` each is for. `None` when the answer is not a whole JSON
-/// document (crt.sh cuts large answers off), so that half a list is never
-/// taken for the whole.
+/// document (crt.sh cuts large answers off) or holds more certificates
+/// than [`CT_MAX_CERTIFICATES`], so that half a list is never taken for
+/// the whole.
 pub fn parse_ct_certificates(zone: &str, body: &str) -> Option<Vec<Certificate>> {
     let doc: serde_json::Value = serde_json::from_str(body).ok()?;
     let mut out = Vec::new();
@@ -134,8 +136,10 @@ pub fn parse_ct_certificates(zone: &str, body: &str) -> Option<Vec<Certificate>>
                 .and_then(crate::registration::parse_rfc3339),
             not_after_unix,
         });
-        if out.len() >= CT_MAX_CERTIFICATES {
-            break;
+        // Part of a list must not pass for the whole: a renewal or an
+        // unexpected issuer could be in the part that was dropped.
+        if out.len() > CT_MAX_CERTIFICATES {
+            return None;
         }
     }
     out.sort();
@@ -428,6 +432,10 @@ mod tests {
         assert_eq!(certs[1].names, ["example.org.", "www.example.org."]);
         assert_eq!(certs[1].issuer, "C=US, O=Let's Encrypt, CN=R11");
         assert_eq!(certs[1].not_after_unix, 1_700_000_000);
+        // More certificates than the limit: no list rather than part of one.
+        let entry = r#"{"issuer_name":"x","common_name":"a.example.org","name_value":"a.example.org","not_after":"2024-02-29T00:00:00"}"#;
+        let many = format!("[{}]", vec![entry; CT_MAX_CERTIFICATES + 1].join(","));
+        assert!(parse_ct_certificates("example.org.", &many).is_none());
         // A cut-off answer gives names but no certificate list.
         let cut = &body[..body.len() - 40];
         assert!(parse_ct_certificates("example.org.", cut).is_none());
