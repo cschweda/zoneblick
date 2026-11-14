@@ -1,3 +1,5 @@
+![The zoneblick social card: "Know the moment your DNS drifts." Below it, a one-line description, a three-line record diff, the labels 40 checks every run, 32 deep checks, alerts, web UI and API, one binary and one SQLite file, and four nameservers of which one serves an older SOA serial](docs/og-image.png)
+
 # zoneblick
 
 [![CI](https://github.com/cschweda/zoneblick/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cschweda/zoneblick/actions/workflows/ci.yml)
@@ -19,8 +21,6 @@ A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver f
 - Design document: [DESIGN.md](DESIGN.md)
 - Who it is for, with the commands for each case: [Who it is for](#who-it-is-for)
 - How it is protected, and what is still open: [Security](#security)
-
-![The zoneblick social card: "Know the moment your DNS drifts." Below it, a one-line description, a three-line record diff, the labels 40 checks every run, 32 deep checks, alerts, web UI and API, one binary and one SQLite file, and four nameservers of which one serves an older SOA serial](docs/og-image.png)
 
 ## What it looks like
 
