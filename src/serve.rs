@@ -240,7 +240,6 @@ fn random_token() -> std::io::Result<String> {
 /// Read the token file, or make a token and write the file, readable by
 /// its owner only.
 pub fn load_or_make_token(path: &std::path::Path) -> std::io::Result<String> {
-    use std::io::Write;
     match std::fs::read_to_string(path) {
         Ok(text) => {
             let token = text.trim().to_string();
@@ -255,24 +254,9 @@ pub fn load_or_make_token(path: &std::path::Path) -> std::io::Result<String> {
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             let token = random_token()?;
-            let mut options = std::fs::OpenOptions::new();
-            options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options.mode(0o600);
-            }
-            let mut file = options.open(path)?;
-            // Windows has no file mode: narrow the permissions of the
-            // still empty file before the token goes into it.
-            #[cfg(windows)]
-            if let Err(e) = crate::private::restrict(path) {
-                log(&format!(
-                    "could not limit {} to the current user ({e}); other users of this machine may be able to read it",
-                    path.display()
-                ));
-            }
-            file.write_all(format!("{token}\n").as_bytes())?;
+            // Readable by its owner only from its first moment, on every
+            // system; if that cannot be had, no token is written.
+            crate::private::write_new(path, format!("{token}\n").as_bytes())?;
             log(&format!(
                 "made an API token; it is in {} (the web UI and the API ask for it)",
                 path.display()
