@@ -38,6 +38,7 @@ fn run_args(db: &Path, state: &str, names: &[&str], json: bool) -> RunArgs {
         json,
         deep: false,
         expect: None,
+        dkim_selectors: vec![],
         sarif: None,
         source: SourceArgs {
             record: None,

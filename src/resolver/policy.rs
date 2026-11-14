@@ -11,8 +11,8 @@ use super::iterate::{Resolver, printable};
 use super::probe::normalise_zone;
 use super::transport::{Client, HttpOutcome};
 use crate::observe::{
-    Lookup, MtaSts, PolicyObservation, QType, RecordObservation, ServiceProbe, SpfLookup,
-    SpfObservation, TargetResolution,
+    DkimSelector, Lookup, MailTransport, MtaSts, PolicyObservation, QType, RecordObservation,
+    ServiceProbe, SpfLookup, SpfObservation, TargetResolution,
 };
 use crate::signatures::Signature;
 
@@ -175,6 +175,95 @@ async fn fetch_mta_sts(client: &Client, zone: &str, record: String) -> MtaSts {
     out
 }
 
+/// The selector names the large mail services use. A key found under one
+/// of them is checked; a missing one means nothing.
+pub const COMMON_DKIM_SELECTORS: [&str; 8] = [
+    "default",
+    "google",
+    "selector1",
+    "selector2",
+    "k1",
+    "s1",
+    "s2",
+    "mail",
+];
+/// At most this many mail servers are asked for TLSA records.
+const MAX_TLSA: usize = 10;
+
+async fn dkim_lookup(
+    resolver: &Resolver,
+    zone: &str,
+    selector: &str,
+    asked_for: bool,
+) -> DkimSelector {
+    let name = if zone == "." {
+        format!("{selector}._domainkey.")
+    } else {
+        format!("{selector}._domainkey.{zone}")
+    };
+    DkimSelector {
+        selector: selector.to_string(),
+        asked_for,
+        lookup: resolver.lookup(&name, QType::Txt).await,
+    }
+}
+
+/// A DKIM selector as a label: letters, digits, hyphens and dots.
+pub fn valid_selector(selector: &str) -> bool {
+    !selector.is_empty()
+        && selector.len() <= 63
+        && selector
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !selector.starts_with('.')
+        && !selector.ends_with('.')
+}
+
+/// Look up the DKIM keys under the selectors the user named, and mark
+/// them as asked for, so a missing one is reported.
+pub async fn add_dkim_selectors(
+    client: std::sync::Arc<Client>,
+    obs: &mut crate::observe::ZoneObservation,
+    selectors: &[String],
+) {
+    let resolver = Resolver::new(client, obs.vantage);
+    let zone = obs.zone.clone();
+    let Some(policy) = &mut obs.policy else {
+        return;
+    };
+    for selector in selectors {
+        let selector = selector.to_ascii_lowercase();
+        if !valid_selector(&selector) {
+            continue;
+        }
+        let mail = policy.mail.get_or_insert_with(|| MailTransport {
+            tls_rpt: unasked(&zone, "_smtp._tls"),
+            bimi: unasked(&zone, "default._bimi"),
+            dkim: Vec::new(),
+            tlsa: Vec::new(),
+        });
+        match mail.dkim.iter_mut().find(|d| d.selector == selector) {
+            Some(known) => known.asked_for = true,
+            None => mail
+                .dkim
+                .push(dkim_lookup(&resolver, &zone, &selector, true).await),
+        }
+    }
+}
+
+/// A lookup that was not made, for a zone that takes no mail.
+fn unasked(zone: &str, label: &str) -> Lookup {
+    Lookup {
+        name: format!("{label}.{zone}"),
+        qtype: QType::Txt,
+        status: "failed".to_string(),
+        rdata: Vec::new(),
+        cname: None,
+        enclosing: None,
+        error: Some("not asked: the zone has no mail servers".to_string()),
+    }
+}
+
 /// Collect the apex mail and policy data of a zone.
 pub(crate) async fn collect_policy(
     resolver: &Resolver,
@@ -240,7 +329,34 @@ pub(crate) async fn collect_policy(
         Some(resolver.lookup(&sub("*"), QType::A).await)
     };
 
+    // Mail transport security: TLS reporting, the logo record, DKIM keys
+    // under the selector names most mail services use, and TLSA records
+    // for the mail servers. Only for a zone that takes mail.
+    let mail = if targets.iter().any(|t| t.rtype == "MX") {
+        let mut dkim = Vec::new();
+        for selector in COMMON_DKIM_SELECTORS {
+            dkim.push(dkim_lookup(resolver, zone, selector, false).await);
+        }
+        let mut tlsa = Vec::new();
+        for t in targets.iter().filter(|t| t.rtype == "MX").take(MAX_TLSA) {
+            tlsa.push(
+                resolver
+                    .lookup(&format!("_25._tcp.{}", t.target), QType::Tlsa)
+                    .await,
+            );
+        }
+        Some(MailTransport {
+            tls_rpt: resolver.lookup(&sub("_smtp._tls"), QType::Txt).await,
+            bimi: resolver.lookup(&sub("default._bimi"), QType::Txt).await,
+            dkim,
+            tlsa,
+        })
+    } else {
+        None
+    };
+
     PolicyObservation {
+        mail,
         services: Vec::new(),
         wildcard,
         apex_txt,

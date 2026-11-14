@@ -280,6 +280,7 @@ async fn run_zone_inner(
         .await
         .map_err(|e| e.to_string())?;
     obs.declared = declared;
+    crate::resolver::add_dkim_selectors(client.clone(), &mut obs, &zone.dkim_selectors).await;
     // A deep run, when one is asked for or due for this zone.
     let deep_due = match state.config.deep_interval() {
         Ok(Some(every)) => state

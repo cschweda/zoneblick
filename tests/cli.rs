@@ -16,6 +16,7 @@ fn args(zone: &str, replay: &str, json: bool) -> CheckArgs {
         zone: zone.to_string(),
         json,
         deep: false,
+        dkim_selectors: vec![],
         sarif: None,
         source: SourceArgs {
             record: None,
@@ -111,6 +112,7 @@ async fn record_then_replay_gives_the_same_report() {
         zone: "broken.example".to_string(),
         json: true,
         deep: false,
+        dkim_selectors: vec![],
         sarif: None,
         source: SourceArgs {
             record: None,
@@ -144,6 +146,7 @@ async fn live_check_of_example_com() {
         zone: "example.com".to_string(),
         json: true,
         deep: false,
+        dkim_selectors: vec![],
         sarif: None,
         source: SourceArgs::default(),
     };

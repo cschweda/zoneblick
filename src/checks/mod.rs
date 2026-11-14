@@ -8,6 +8,7 @@ pub mod consistency;
 pub mod deep;
 pub mod delegation;
 pub mod drift;
+pub mod mail;
 pub mod policy;
 pub mod registration;
 pub mod security;
@@ -451,6 +452,30 @@ pub const CATALOG: &[CheckInfo] = &[
         true,
     ),
     check(
+        "POL-06",
+        "No TLS reporting although TLS is required for mail, or the record is unusable",
+        Severity::Notice,
+        true,
+    ),
+    check(
+        "POL-07",
+        "TLSA record for a mail server cannot be used",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "POL-08",
+        "DKIM key missing, revoked, unreadable or too short",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "POL-09",
+        "BIMI record published but without effect",
+        Severity::Notice,
+        true,
+    ),
+    check(
         "TKO-01",
         "CNAME target does not resolve (NXDOMAIN)",
         Severity::Warning,
@@ -631,6 +656,10 @@ const CHECKS: &[Check] = &[
     policy::pol_03_caa,
     policy::pol_04_mta_sts,
     policy::pol_05_mx_target,
+    mail::pol_06_tls_reporting,
+    mail::pol_07_tlsa,
+    mail::pol_08_dkim,
+    mail::pol_09_bimi,
     policy::tko_01_dangling_cname,
     policy::tko_02_unclaimed_service,
     policy::tko_03_unregistered_target,

@@ -104,6 +104,7 @@ fn record_type(qtype: QType) -> RecordType {
         QType::Nsec3param => RecordType::NSEC3PARAM,
         QType::Cds => RecordType::CDS,
         QType::Cdnskey => RecordType::CDNSKEY,
+        QType::Tlsa => RecordType::TLSA,
     }
 }
 

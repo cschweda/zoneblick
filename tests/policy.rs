@@ -169,6 +169,7 @@ async fn a_run_can_discover_names_from_certificate_logs() {
         json: true,
         deep: false,
         expect: None,
+        dkim_selectors: vec![],
         sarif: None,
         source: SourceArgs {
             record: None,
@@ -272,6 +273,7 @@ async fn a_run_can_discover_names_at_digitalocean() {
             expect: None,
             db,
             json: true,
+            dkim_selectors: vec![],
             sarif: None,
             source: SourceArgs {
                 record: None,
@@ -339,6 +341,7 @@ async fn a_run_can_discover_names_at_other_dns_hosts() {
             expect: None,
             db,
             json: true,
+            dkim_selectors: vec![],
             sarif: None,
             source: SourceArgs {
                 record: None,
@@ -363,5 +366,109 @@ async fn a_run_can_discover_names_at_other_dns_hosts() {
     assert_eq!(
         doc["run"]["names"],
         serde_json::json!(["app.policy.example.", "blog.policy.example."])
+    );
+}
+
+#[tokio::test]
+async fn mail_transport_records_are_collected_and_checked() {
+    use hickory_proto::rr::RecordType;
+    use std::sync::Arc;
+    use zoneblick::observe::QType;
+    use zoneblick::resolver::{Client, add_dkim_selectors, observe_zone};
+
+    let mut world = policy_world();
+    let zone = POLICY_ZONE;
+    // usage 3, selector 1, matching 1, and a digest that is too short.
+    let tlsa = raw(
+        "_25._tcp.mx.policy.example.",
+        RecordType::TLSA,
+        vec![3, 1, 1, 0xab, 0xcd],
+    );
+    for server in [NS1, NS3] {
+        world.nxdomain(server, "_smtp._tls.policy.example.", QType::Txt, zone);
+        world.serve_name(
+            server,
+            zone,
+            "default._bimi.policy.example.",
+            &[txt(
+                "default._bimi.policy.example.",
+                "v=BIMI1; l=https://policy.example/logo.svg",
+            )],
+        );
+        world.serve_name(
+            server,
+            zone,
+            "google._domainkey.policy.example.",
+            &[txt("google._domainkey.policy.example.", "v=DKIM1; p=")],
+        );
+        world.nxdomain(server, "news._domainkey.policy.example.", QType::Txt, zone);
+        world.answer(
+            server,
+            "_25._tcp.mx.policy.example.",
+            QType::Tlsa,
+            std::slice::from_ref(&tlsa),
+        );
+    }
+    // The selector named by the user is looked up from the root again.
+    let selector = "news._domainkey.policy.example.";
+    world.delegate_tld(selector, QType::Txt);
+    world.referral(
+        TLD_SERVER,
+        selector,
+        QType::Txt,
+        &[
+            ns(zone, "ns1.policy.example."),
+            ns(zone, "ns2.policy.example."),
+        ],
+        &[
+            addr("ns1.policy.example.", NS1),
+            addr("ns2.policy.example.", NS3),
+        ],
+    );
+    let fixture = world.fixture(zone);
+    let client = Arc::new(Client::replay(&fixture));
+    let mut obs = observe_zone(client.clone(), zone, fixture.started_at_unix)
+        .await
+        .unwrap();
+    add_dkim_selectors(
+        client,
+        &mut obs,
+        &["News".to_string(), "google".to_string()],
+    )
+    .await;
+
+    let mail = obs.policy.as_ref().unwrap().mail.as_ref().unwrap();
+    assert_eq!(mail.tls_rpt.status, "nxdomain");
+    assert_eq!(mail.tlsa[0].rdata, ["3 1 1 abcd"]);
+    let asked: Vec<&str> = mail
+        .dkim
+        .iter()
+        .filter(|d| d.asked_for)
+        .map(|d| d.selector.as_str())
+        .collect();
+    assert_eq!(asked, ["google", "news"]);
+
+    let findings = run_all(&obs);
+    let mail_findings: Vec<(&str, Severity, &str)> = ids(&findings)
+        .into_iter()
+        .filter(|(id, _, _)| matches!(*id, "POL-06" | "POL-07" | "POL-08" | "POL-09"))
+        .collect();
+    assert_eq!(
+        mail_findings,
+        [
+            ("POL-07", Severity::Warning, "_25._tcp.mx.policy.example."),
+            (
+                "POL-08",
+                Severity::Warning,
+                "google._domainkey.policy.example."
+            ),
+            (
+                "POL-08",
+                Severity::Warning,
+                "news._domainkey.policy.example."
+            ),
+            ("POL-06", Severity::Notice, "_smtp._tls.policy.example."),
+            ("POL-09", Severity::Notice, "default._bimi.policy.example."),
+        ]
     );
 }

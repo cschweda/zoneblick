@@ -39,6 +39,7 @@ pub enum QType {
     Nsec3param,
     Cds,
     Cdnskey,
+    Tlsa,
 }
 
 impl QType {
@@ -68,6 +69,7 @@ impl QType {
             QType::Nsec3param => "NSEC3PARAM",
             QType::Cds => "CDS",
             QType::Cdnskey => "CDNSKEY",
+            QType::Tlsa => "TLSA",
         }
     }
 
@@ -86,6 +88,7 @@ impl QType {
             QType::Nsec3param,
             QType::Cds,
             QType::Cdnskey,
+            QType::Tlsa,
         ]
         .into_iter()
         .find(|t| t.as_str() == s)
@@ -469,6 +472,30 @@ pub struct ServiceProbe {
     pub unclaimed: bool,
 }
 
+/// One DKIM selector and the lookup of its key record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DkimSelector {
+    pub selector: String,
+    /// True when the user named the selector; false when it is one of the
+    /// common names that are tried unasked.
+    pub asked_for: bool,
+    /// The TXT lookup of `<selector>._domainkey.<zone>`.
+    pub lookup: Lookup,
+}
+
+/// The records that govern how mail to and from the zone is secured,
+/// beyond SPF, DMARC and MTA-STS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailTransport {
+    /// The TXT lookup of `_smtp._tls.<zone>` (TLS reporting).
+    pub tls_rpt: Lookup,
+    /// The TXT lookup of `default._bimi.<zone>` (the brand logo record).
+    pub bimi: Lookup,
+    pub dkim: Vec<DkimSelector>,
+    /// The TLSA lookup of `_25._tcp.<mail server>` for each MX target.
+    pub tlsa: Vec<Lookup>,
+}
+
 /// Mail and policy records, and where mail and alias targets lead.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyObservation {
@@ -489,6 +516,10 @@ pub struct PolicyObservation {
     /// them. Filled in by `run`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub services: Vec<ServiceProbe>,
+    /// TLS reporting, BIMI, DKIM keys and TLSA records. `None` in
+    /// observations built before they were collected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mail: Option<MailTransport>,
 }
 
 /// The answer to one deep probe.

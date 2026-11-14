@@ -275,6 +275,13 @@ pub struct CheckArgs {
     #[arg(long)]
     pub json: bool,
 
+    /// A DKIM selector your mail is signed with, such as `s1` for
+    /// `s1._domainkey.<zone>`. Its key is checked, and a missing key is
+    /// reported. Repeat for more. A few common selector names are always
+    /// tried.
+    #[arg(long = "dkim-selector", value_name = "NAME")]
+    pub dkim_selectors: Vec<String>,
+
     /// Also write the findings to this file in SARIF 2.1.0, the format
     /// code-scanning tools read.
     #[arg(long, value_name = "FILE")]
@@ -329,6 +336,13 @@ pub struct RunArgs {
     /// Print one JSON document instead of text.
     #[arg(long)]
     pub json: bool,
+
+    /// A DKIM selector your mail is signed with, such as `s1` for
+    /// `s1._domainkey.<zone>`. Its key is checked, and a missing key is
+    /// reported. Repeat for more. A few common selector names are always
+    /// tried.
+    #[arg(long = "dkim-selector", value_name = "NAME")]
+    pub dkim_selectors: Vec<String>,
 
     /// Also write the findings to this file in SARIF 2.1.0, the format
     /// code-scanning tools read.
@@ -558,6 +572,9 @@ async fn try_check(args: &CheckArgs, color: bool) -> Result<CommandOutput, CliEr
     let zone = normalise_zone(&args.zone)?;
     let (client, started_at, _) = make_client(&args.source, &zone)?;
     let mut observed = observe_zone(client.clone(), &zone, started_at).await;
+    if let Ok(obs) = &mut observed {
+        crate::resolver::add_dkim_selectors(client.clone(), obs, &args.dkim_selectors).await;
+    }
     if args.deep
         && let Ok(obs) = &mut observed
     {
@@ -670,6 +687,9 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     names.sort();
 
     let mut observed = observe_zone_records(client.clone(), &zone, started_at, &names).await;
+    if let Ok(obs) = &mut observed {
+        crate::resolver::add_dkim_selectors(client.clone(), obs, &args.dkim_selectors).await;
+    }
     if args.deep
         && let Ok(obs) = &mut observed
     {

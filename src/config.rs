@@ -237,6 +237,10 @@ pub struct ZoneConfig {
     /// A zone file the zone should match. Each difference is a finding.
     #[serde(default)]
     pub expect: Option<PathBuf>,
+    /// The DKIM selectors the zone's mail is signed with, such as "s1".
+    /// A missing key for one of them is reported.
+    #[serde(default)]
+    pub dkim_selectors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -404,6 +408,15 @@ impl Config {
                 }
             }
             zone.seeds = seeds;
+            if let Some(bad) = zone
+                .dkim_selectors
+                .iter()
+                .find(|s| !crate::resolver::policy::valid_selector(s))
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "zone {name}, dkim_selectors: \"{bad}\" is not a selector name"
+                )));
+            }
             for source in &zone.discover {
                 let provider = crate::providers::PROVIDERS.contains(&source.as_str());
                 if !provider && !matches!(source.as_str(), "ct" | "axfr") {

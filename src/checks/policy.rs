@@ -442,6 +442,7 @@ mod tests {
     fn sound() -> ZoneObservation {
         let mut obs = healthy();
         obs.policy = Some(PolicyObservation {
+            mail: None,
             wildcard: None,
             services: Vec::new(),
             apex_txt: lookup(ZONE, QType::Txt, "answer", &["\"v=spf1 mx -all\""]),

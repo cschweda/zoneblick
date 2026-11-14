@@ -18,6 +18,7 @@ pub mod signed;
 pub mod transport;
 
 pub use deep::add_deep;
+pub use policy::add_dkim_selectors;
 pub use probe::{name_in_zone, normalise_zone, observe_zone, observe_zone_records};
 pub use transport::{
     Client, Exchange, Fixture, HttpExchange, HttpOutcome, NetConfig, QuerySpec, RawOutcome,
