@@ -197,7 +197,9 @@ mod tests {
         {
             let listing = windows::listing(path);
             assert!(!listing.contains("(I)"), "inherited entry left: {listing}");
-            for broad in ["Users", "Everyone"] {
+            // Group names as icacls prints them. The path itself is under
+            // C:\Users, so the bare word would always be found.
+            for broad in ["BUILTIN\\Users", "Everyone", "Authenticated Users"] {
                 assert!(!listing.contains(broad), "{broad} has access: {listing}");
             }
         }
@@ -226,7 +228,7 @@ mod tests {
         let path = dir.join("secret");
         std::fs::write(&path, "x").unwrap();
         #[cfg(windows)]
-        assert!(windows::listing(&path).contains("Users"));
+        assert!(windows::listing(&path).contains("BUILTIN\\Users"));
         restrict(&path).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "x");
         assert_private(&path);
