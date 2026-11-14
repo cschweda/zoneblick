@@ -464,7 +464,7 @@ footer .grid{row-gap:24px}
         <h3 class="h3big">Deep checks, once a day.</h3>
         <p class="h3sub">Thirty-two more checks. Some take extra queries per nameserver; others look past your nameservers, at the registry, the routing table, public resolvers, blocklists and the servers your records point to. Each one was chosen because its result changes over time, so the history shows when a zone went wrong as well as that it is wrong.</p>
         <p class="tier"><b>Deep run</b><span>As often as you set, or on demand for a single zone with <span class="mono">--deep</span>.</span></p>
-        <p class="tier"><b>Working today</b><span>Twenty-one in v0.14.0. The eleven that look outward are in the source now and in the next release.</span></p>
+        <p class="tier"><b>Working today</b><span>All thirty-two. The eleven that look outward are new in v0.15.0.</span></p>
         <div class="checks four">
           <article>
             <div class="label">SEC 06&ndash;13</div>
@@ -608,18 +608,18 @@ curl -fsSL https://zoneblick.com/install.sh | sudo sh
 curl -fsSL https://zoneblick.com/install.sh | sh -s -- --prefix ~/.local --no-service
 
 <span class="c"># one exact release, refused unless its build provenance verifies</span>
-curl -fsSL https://zoneblick.com/install.sh | sh -s -- --version v0.14.0 --require-attestation</pre>
+curl -fsSL https://zoneblick.com/install.sh | sh -s -- --version v0.15.0 --require-attestation</pre>
           </article>
           <article>
             <h3>Debian, Ubuntu, Fedora, RHEL</h3>
             <p>A <span class="mono">.deb</span> and an <span class="mono">.rpm</span> for x86_64 and 64-bit ARM. They install the binary, the service and a starter config that upgrades never overwrite.</p>
 <pre tabindex="0"><span class="c"># Debian and Ubuntu (arm64 on ARM)</span>
-B=https://github.com/cschweda/zoneblick/releases/download/v0.14.0
-curl -fsSLO $B/zoneblick_0.14.0_amd64.deb
-sudo dpkg -i zoneblick_0.14.0_amd64.deb
+B=https://github.com/cschweda/zoneblick/releases/download/v0.15.0
+curl -fsSLO $B/zoneblick_0.15.0_amd64.deb
+sudo dpkg -i zoneblick_0.15.0_amd64.deb
 
 <span class="c"># Fedora and RHEL (aarch64 on ARM)</span>
-sudo rpm -i $B/zoneblick-0.14.0-1.x86_64.rpm</pre>
+sudo rpm -i $B/zoneblick-0.15.0-1.x86_64.rpm</pre>
           </article>
           <article>
             <h3>Homebrew</h3>
@@ -630,7 +630,7 @@ brew install zoneblick</pre>
           </article>
           <article class="wide">
             <h3>Download a binary</h3>
-            <p>Release <a href="https://github.com/cschweda/zoneblick/releases/tag/v0.14.0">v0.14.0</a> has ready-built binaries for Linux, macOS and Windows. Pick your system, paste the commands into a terminal, and the last line runs your first check. Each release also has a <span class="mono">SHA256SUMS</span> file; the <a href="https://github.com/cschweda/zoneblick#install">README</a> shows how to verify a download.</p>
+            <p>Release <a href="https://github.com/cschweda/zoneblick/releases/tag/v0.15.0">v0.15.0</a> has ready-built binaries for Linux, macOS and Windows. Pick your system, paste the commands into a terminal, and the last line runs your first check. Each release also has a <span class="mono">SHA256SUMS</span> file; the <a href="https://github.com/cschweda/zoneblick#install">README</a> shows how to verify a download.</p>
             <div class="tabs">
               <div class="tablist" role="tablist" aria-label="Operating system">
                 <button type="button" role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="true">Linux</button>
@@ -639,7 +639,7 @@ brew install zoneblick</pre>
               </div>
               <div class="panel on" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux">
                 <h4 class="ptitle">Linux</h4>
-<pre tabindex="0">V=v0.14.0
+<pre tabindex="0">V=v0.15.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -651,7 +651,7 @@ zoneblick check example.org</pre>
               </div>
               <div class="panel" role="tabpanel" id="panel-macos" aria-labelledby="tab-macos">
                 <h4 class="ptitle">macOS</h4>
-<pre tabindex="0">V=v0.14.0
+<pre tabindex="0">V=v0.15.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -665,7 +665,7 @@ zoneblick check example.org</pre>
               </div>
               <div class="panel" role="tabpanel" id="panel-windows" aria-labelledby="tab-windows">
                 <h4 class="ptitle">Windows (PowerShell)</h4>
-<pre tabindex="0">$V = "v0.14.0"
+<pre tabindex="0">$V = "v0.15.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -680,14 +680,14 @@ Expand-Archive zoneblick.zip -DestinationPath .
             <h3>Verify a download</h3>
             <p>Every release file and the container image carries a build provenance attestation: signed proof that this repository's release workflow built that exact file from the release's tag. The install script and the GitHub Action check it for you.</p>
 <pre tabindex="0">gh attestation verify \
-  zoneblick-v0.14.0-x86_64-unknown-linux-musl.tar.gz \
+  zoneblick-v0.15.0-x86_64-unknown-linux-musl.tar.gz \
   --repo cschweda/zoneblick \
-  --source-ref refs/tags/v0.14.0</pre>
+  --source-ref refs/tags/v0.15.0</pre>
           </article>
           <article>
             <h3>GitHub Action</h3>
             <p>Checks a zone from a workflow, for example when a pull request changes a zone file. Pinning the action pins the binary it runs.</p>
-<pre tabindex="0">- uses: cschweda/zoneblick@v0.14.0
+<pre tabindex="0">- uses: cschweda/zoneblick@v0.15.0
   with:
     zone: example.org
     expect: dns/example.org.zone
@@ -758,7 +758,7 @@ docker run --rm ghcr.io/cschweda/zoneblick \
           </article>
           <article>
             <h3>Sign in with the token</h3>
-            <p>New in v0.14.0. The API and the web UI always ask for a token, on localhost too. The daemon makes one on its first start; to choose your own, the config keeps only its hash.</p>
+            <p>Since v0.14.0. The API and the web UI always ask for a token, on localhost too. The daemon makes one on its first start; to choose your own, the config keeps only its hash.</p>
 <pre tabindex="0"><span class="c"># the token the daemon made</span>
 sudo cat /var/lib/zoneblick/api-token
 zoneblick token --show zoneblick.toml
@@ -777,8 +777,8 @@ zoneblick plan example.org \
   --file example.org.zone --offline</pre>
           </article>
         </div>
-        <p class="status"><b>Early days</b><span>v0.14.0 is an early pre-release. All forty light checks, stored runs, baselines, zone-file comparison and <span class="mono">zoneblick plan</span> for a file before it is deployed, discovery from certificate logs, zone transfers and five DNS hosts, muting, export, the daemon, alerts, a weekly digest, metrics and the web UI work today. All twenty-one deep checks of v0.14.0 work too, including the DNSSEC chain of trust from the root with verified proofs of absence, mail-server certificates against TLSA records, and the domain's registration. Eleven more deep checks are in the source and will be in the next release: delegated names that nobody serves, the domains your nameservers and mail servers depend on, the certificates really served, route origin validation, public resolvers, blocklists, SPF and DMARC strength, and lookalike domains. Release files carry a build provenance that the install script verifies. Parts that talk to outside services (DNS host APIs, chat alerts, email) are tested against recorded answers, not the live services.</span></p>
-        <p class="status"><b>Security audits</b><span>Two red team and blue team audits so far, of 0.12.0 and 0.13.0, plus an automated review of every commit. The second found two serious problems and thirteen smaller ones, all fixed by v0.14.0, which also makes the API token mandatory. The <a href="https://github.com/cschweda/zoneblick#security">README</a> says how each part is protected and keeps the full record: what broke, what held, and what is still open.</span></p>
+        <p class="status"><b>Early days</b><span>v0.15.0 is an early pre-release. All forty light checks, stored runs, baselines, zone-file comparison and <span class="mono">zoneblick plan</span> for a file before it is deployed, discovery from certificate logs, zone transfers and five DNS hosts, muting, export, the daemon, alerts, a weekly digest, metrics and the web UI work today. All thirty-two deep checks work too, including the DNSSEC chain of trust from the root with verified proofs of absence, mail-server certificates against TLSA records, and the domain's registration. Eleven of them are new in v0.15.0: delegated names that nobody serves, the domains your nameservers and mail servers depend on, the certificates really served, route origin validation, public resolvers, blocklists, SPF and DMARC strength, and lookalike domains. Release files carry a build provenance that the install script verifies. Parts that talk to outside services (DNS host APIs, chat alerts, email) are tested against recorded answers, not the live services.</span></p>
+        <p class="status"><b>Security audits</b><span>Two red team and blue team audits so far, of 0.12.0 and 0.13.0, plus an automated review of every commit. The second found two serious problems and thirteen smaller ones, all fixed by v0.14.0, which also makes the API token mandatory. The eleven deep checks new in v0.15.0 have not been audited yet. The <a href="https://github.com/cschweda/zoneblick#security">README</a> says how each part is protected and keeps the full record: what broke, what held, and what is still open.</span></p>
       </div>
     </div>
   </section>
