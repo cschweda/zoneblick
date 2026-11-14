@@ -127,6 +127,7 @@ fn build(addresses: [&[&str]; 2], vantage: Vantage) -> ZoneObservation {
         deep: None,
         declared: None,
         certificates: None,
+        vantages: Vec::new(),
     }
 }
 

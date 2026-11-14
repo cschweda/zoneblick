@@ -174,6 +174,7 @@ pub async fn observe_zone(
         deep: None,
         declared: None,
         certificates: None,
+        vantages: Vec::new(),
     })
 }
 

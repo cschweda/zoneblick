@@ -27,5 +27,6 @@ pub mod runner;
 pub mod serve;
 pub mod signatures;
 pub mod store;
+pub mod vantage;
 pub mod verify;
 pub mod zonefile;

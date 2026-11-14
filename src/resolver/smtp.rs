@@ -15,6 +15,24 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use sha2::{Digest, Sha256, Sha512};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+/// The whole exchange must end within this, however slowly the server
+/// feeds it: a server that sends one byte every few seconds would
+/// otherwise keep the connection, and a thread, for many minutes.
+const DEADLINE: Duration = Duration::from_secs(30);
+
+/// Give the next read or write on `stream` the time that is left before
+/// `deadline`, at most [`TIMEOUT`]. Fails once the deadline has passed.
+fn arm(stream: &TcpStream, deadline: std::time::Instant) -> Result<(), String> {
+    let left = deadline.saturating_duration_since(std::time::Instant::now());
+    if left.is_zero() {
+        return Err("the server took too long".to_string());
+    }
+    let limit = Some(left.min(TIMEOUT));
+    stream
+        .set_read_timeout(limit)
+        .and_then(|()| stream.set_write_timeout(limit))
+        .map_err(|e| e.to_string())
+}
 /// A reply longer than this is not SMTP.
 const MAX_REPLY_LINES: usize = 60;
 const MAX_LINE: u64 = 2048;
@@ -71,9 +89,13 @@ impl ServerCertVerifier for AnyCertificate {
 }
 
 /// Read one SMTP reply: its code and its lines, without the code.
-fn reply(reader: &mut impl BufRead) -> Result<(u16, Vec<String>), String> {
+fn reply(
+    reader: &mut BufReader<TcpStream>,
+    deadline: std::time::Instant,
+) -> Result<(u16, Vec<String>), String> {
     let mut lines = Vec::new();
     for _ in 0..MAX_REPLY_LINES {
+        arm(reader.get_ref(), deadline)?;
         let mut line = String::new();
         let n = reader
             .by_ref()
@@ -103,20 +125,20 @@ fn reply(reader: &mut impl BufRead) -> Result<(u16, Vec<String>), String> {
 /// presents, its own first, as DER. Blocking; call from a blocking task.
 pub fn starttls_certificates(addr: SocketAddr, host: &str) -> Result<Vec<Vec<u8>>, String> {
     let io = |e: std::io::Error| e.to_string();
+    let deadline = std::time::Instant::now() + DEADLINE;
     let stream = TcpStream::connect_timeout(&addr, TIMEOUT).map_err(io)?;
-    stream.set_read_timeout(Some(TIMEOUT)).map_err(io)?;
-    stream.set_write_timeout(Some(TIMEOUT)).map_err(io)?;
+    arm(&stream, deadline)?;
     let mut reader = BufReader::new(stream.try_clone().map_err(io)?);
     let mut writer = stream;
 
-    let (code, _) = reply(&mut reader)?;
+    let (code, _) = reply(&mut reader, deadline)?;
     if code != 220 {
         return Err(format!("the server greeted with {code}, not 220"));
     }
     writer
         .write_all(b"EHLO zoneblick.invalid\r\n")
         .map_err(io)?;
-    let (code, extensions) = reply(&mut reader)?;
+    let (code, extensions) = reply(&mut reader, deadline)?;
     if code != 250 {
         return Err(format!("EHLO was answered with {code}"));
     }
@@ -127,7 +149,7 @@ pub fn starttls_certificates(addr: SocketAddr, host: &str) -> Result<Vec<Vec<u8>
         return Err(NO_STARTTLS.to_string());
     }
     writer.write_all(b"STARTTLS\r\n").map_err(io)?;
-    let (code, _) = reply(&mut reader)?;
+    let (code, _) = reply(&mut reader, deadline)?;
     if code != 220 {
         return Err(format!("STARTTLS was answered with {code}"));
     }
@@ -149,6 +171,7 @@ pub fn starttls_certificates(addr: SocketAddr, host: &str) -> Result<Vec<Vec<u8>
     let mut tls =
         rustls::ClientConnection::new(Arc::new(config), name).map_err(|e| e.to_string())?;
     while tls.is_handshaking() {
+        arm(&writer, deadline)?;
         tls.complete_io(&mut writer)
             .map_err(|e| format!("the TLS handshake failed: {e}"))?;
     }

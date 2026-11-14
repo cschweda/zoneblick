@@ -765,6 +765,9 @@ pub struct ZoneObservation {
     /// Certificate Transparency logs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub certificates: Option<Vec<Certificate>>,
+    /// What other vantage points last saw, when any are configured.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vantages: Vec<crate::vantage::VantageView>,
     /// The zone file the run was told to compare with, when it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared: Option<crate::zonefile::Declared>,

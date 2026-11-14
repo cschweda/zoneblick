@@ -36,6 +36,37 @@ pub struct Config {
     pub retention: RetentionConfig,
     #[serde(default)]
     pub providers: ProvidersConfig,
+    /// Other zoneblick daemons whose view of each zone is compared with
+    /// this one's.
+    #[serde(default, rename = "vantage")]
+    pub vantages: Vec<VantageConfig>,
+}
+
+/// Another zoneblick daemon, somewhere else on the network.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VantageConfig {
+    /// A short name for messages, such as "frankfurt".
+    pub name: String,
+    /// The address of its API, such as https://zoneblick-fra.example.org.
+    pub url: String,
+    /// A file holding its API token, when it needs one.
+    #[serde(default)]
+    pub token_file: Option<PathBuf>,
+}
+
+impl VantageConfig {
+    /// Read the token. The error names the file, never its contents.
+    pub fn token(&self) -> Result<Option<String>, String> {
+        match &self.token_file {
+            None => Ok(None),
+            Some(path) => TokenFileConfig {
+                token_file: path.clone(),
+            }
+            .token()
+            .map(Some),
+        }
+    }
 }
 
 /// Credentials for DNS hosting providers, for `discover`.
@@ -373,6 +404,27 @@ impl Config {
         config.deep_interval()?;
         config.digest_interval()?;
         config.run_timeout()?;
+        for v in &config.vantages {
+            let plain = v.url.starts_with("http://");
+            if !v.url.starts_with("https://") && !plain {
+                return Err(ConfigError::Invalid(format!(
+                    "[[vantage]] {}: url must start with https:// or http://",
+                    v.name
+                )));
+            }
+            // A token must not cross the network in the clear.
+            if plain && v.token_file.is_some() {
+                return Err(ConfigError::Invalid(format!(
+                    "[[vantage]] {}: a token is only sent over https://",
+                    v.name
+                )));
+            }
+            if v.name.is_empty() || v.name.len() > 40 {
+                return Err(ConfigError::Invalid(
+                    "[[vantage]] name must be 1 to 40 characters".to_string(),
+                ));
+            }
+        }
         for (section, chat) in [
             ("slack", &config.alerts.slack),
             ("discord", &config.alerts.discord),

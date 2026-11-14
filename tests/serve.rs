@@ -781,3 +781,62 @@ async fn a_run_that_does_not_finish_is_stopped_and_alerted_once() {
     assert_eq!(ui["zones"][0]["error"], Value::Null);
     assert!(ui["zones"][0]["last_run_id"].as_i64().unwrap() >= 1);
 }
+
+#[tokio::test]
+async fn a_run_is_compared_with_another_vantage_point() {
+    // The vantage point: a daemon that has only seen the zone's old state.
+    let old = fixture("drift.example.before.json");
+    let far = AppState::with_store(
+        config(""),
+        Store::open_in_memory().unwrap(),
+        Arc::new(move |_| Arc::new(Client::replay(&old))),
+    );
+    let zone = far.config.zones[0].clone();
+    run_zone(&far, &zone, "test").await.unwrap();
+    let far_url = serve(router(far)).await;
+
+    let (status, report) = get(&format!("{far_url}/api/v1/vantage?zone=drift.example")).await;
+    assert_eq!(status, 200);
+    assert_eq!(report["zone"], "drift.example.");
+    assert!(report["sets"].as_array().unwrap().len() > 3);
+    assert_eq!(report["servers"].as_array().unwrap().len(), 2);
+
+    // Here: the zone's new state, plus one vantage point that is down.
+    let new = fixture("drift.example.after.json");
+    let extra = format!(
+        "[[vantage]]\nname = \"far\"\nurl = \"{far_url}\"\n[[vantage]]\nname = \"gone\"\nurl = \"http://127.0.0.1:9\"\n"
+    );
+    let here = AppState::with_store(
+        config(&extra),
+        Store::open_in_memory().unwrap(),
+        Arc::new(move |_| Arc::new(Client::replay(&new))),
+    );
+    run_zone(&here, &zone, "test").await.unwrap();
+    let base = serve(router(here)).await;
+    let (_, findings) = get(&format!("{base}/api/v1/findings?state=open")).await;
+    let mut got: Vec<(String, String)> = findings["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["check_id"].as_str().unwrap().starts_with("VAN"))
+        .map(|f| {
+            (
+                f["check_id"].as_str().unwrap().to_string(),
+                f["name"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    got.sort();
+    let expect = |id: &str, name: &str| (id.to_string(), name.to_string());
+    assert_eq!(
+        got,
+        [
+            expect("VAN-01", "api.drift.example."),
+            expect("VAN-01", "drift.example."),
+            expect("VAN-01", "shop.drift.example."),
+            expect("VAN-01", "staging.drift.example."),
+            expect("VAN-03", "drift.example."),
+        ],
+        "{findings}"
+    );
+}

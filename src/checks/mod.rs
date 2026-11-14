@@ -13,6 +13,7 @@ pub mod mail;
 pub mod policy;
 pub mod registration;
 pub mod security;
+pub mod vantage;
 
 use std::net::IpAddr;
 
@@ -546,6 +547,24 @@ pub const CATALOG: &[CheckInfo] = &[
         Severity::Warning,
         true,
     ),
+    check(
+        "VAN-01",
+        "A record set is answered differently from another vantage point",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "VAN-02",
+        "A nameserver answers from some vantage points and not from others",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "VAN-03",
+        "A vantage point gave nothing to compare with",
+        Severity::Notice,
+        true,
+    ),
     deep_check(
         "SEC-06",
         "No valid proof that a missing name is missing",
@@ -721,6 +740,9 @@ const CHECKS: &[Check] = &[
     certificates::crt_02_caa_mismatch,
     drift::drf_01_declared_differs,
     drift::drf_02_undeclared,
+    vantage::van_01_records_differ,
+    vantage::van_02_reachability,
+    vantage::van_03_unavailable,
     deep::sec_06_denial,
     deep::sec_07_nsec3_parameters,
     deep::sec_08_rollover,

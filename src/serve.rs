@@ -444,6 +444,20 @@ async fn run_zone_inner(
         .map_err(|e| e.to_string())?;
     obs.declared = declared;
     obs.certificates = certificates;
+    for v in &state.config.vantages {
+        let view = match v.token() {
+            Ok(token) => {
+                crate::vantage::fetch(&state.http, &v.name, &v.url, token.as_deref(), &zone.name)
+                    .await
+            }
+            Err(e) => crate::vantage::VantageView {
+                name: v.name.clone(),
+                report: None,
+                error: Some(e),
+            },
+        };
+        obs.vantages.push(view);
+    }
     crate::resolver::add_dkim_selectors(client.clone(), &mut obs, &zone.dkim_selectors).await;
     // A deep run, when one is asked for or due for this zone.
     let deep_due = match state.config.deep_interval() {
@@ -825,6 +839,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/ui", get(api_ui))
         .route("/ui/diff", get(api_ui_diff))
         .route("/metrics", get(api_metrics))
+        .route("/vantage", get(api_vantage))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         // Health needs no token, so a load balancer or uptime check can use it.
         .route("/health", get(api_health));
@@ -1087,6 +1102,33 @@ async fn api_diff(
         (from, to)
     };
     Ok(Json(store.diff(&zone, from, to, &ignore)?))
+}
+
+/// This daemon's latest run of a zone, in the short form another
+/// zoneblick daemon compares its own run with.
+async fn api_vantage(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ZoneQuery>,
+) -> Result<Json<crate::vantage::VantageReport>, ApiError> {
+    let zone = required_zone(&query)?;
+    let store = state.store();
+    let run = store.runs(&zone)?.pop().ok_or_else(|| {
+        ApiError(
+            StatusCode::NOT_FOUND,
+            "unknown_run",
+            format!("{zone} has no stored run"),
+        )
+    })?;
+    let data = store.load_run(&zone, run)?;
+    let view = store.latest_run_view(&zone)?;
+    Ok(Json(crate::vantage::VantageReport {
+        zone,
+        run_started_unix: run.started_at_unix,
+        sets: crate::vantage::sets_of(&data.records),
+        servers: view
+            .map(|v| crate::vantage::servers_of(&v.probes))
+            .unwrap_or_default(),
+    }))
 }
 
 /// The change list between any two runs of a zone, as the UI shows it.
