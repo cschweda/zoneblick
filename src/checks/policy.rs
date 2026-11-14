@@ -569,6 +569,75 @@ mod tests {
     }
 
     /// A zone with sound mail and policy records.
+    #[test]
+    fn service_records_and_reverse_names_are_checked() {
+        let mut gone = lookup("sip.gone.test.", QType::A, "nxdomain", &[]);
+        gone.enclosing = Some("test.".to_string());
+        let mut missing = lookup("old.example.test.", QType::A, "nxdomain", &[]);
+        missing.enclosing = Some("example.test.".to_string());
+        let mut obs = sound();
+        pol(&mut obs).targets = vec![
+            target("_sip._tcp.example.test.", "SRV", "sip.gone.test.", gone),
+            target("example.test.", "HTTPS", "old.example.test.", missing),
+            target(
+                "_imap._tcp.example.test.",
+                "SRV",
+                "mail.example.test.",
+                lookup("mail.example.test.", QType::A, "answer", &["192.0.2.25"]),
+            ),
+            // Reverse names: one that points back, one that does not, one
+            // whose host has no address.
+            target(
+                "25.2.0.192.in-addr.arpa.",
+                "PTR",
+                "mail.example.test.",
+                lookup("mail.example.test.", QType::A, "answer", &["192.0.2.25"]),
+            ),
+            target(
+                "26.2.0.192.in-addr.arpa.",
+                "PTR",
+                "mail.example.test.",
+                lookup("mail.example.test.", QType::A, "answer", &["192.0.2.25"]),
+            ),
+            target(
+                "27.2.0.192.in-addr.arpa.",
+                "PTR",
+                "ghost.example.test.",
+                lookup("ghost.example.test.", QType::A, "nodata", &[]),
+            ),
+        ];
+        let found: Vec<(String, Severity, String)> = tko_06_service_target(&obs)
+            .into_iter()
+            .chain(rev_01_forward_confirmation(&obs))
+            .map(|f| (f.check_id, f.severity, f.name))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "TKO-06".to_string(),
+                    Severity::Critical,
+                    "_sip._tcp.example.test.".to_string()
+                ),
+                (
+                    "TKO-06".to_string(),
+                    Severity::Warning,
+                    "example.test.".to_string()
+                ),
+                (
+                    "REV-01".to_string(),
+                    Severity::Notice,
+                    "26.2.0.192.in-addr.arpa.".to_string()
+                ),
+                (
+                    "REV-01".to_string(),
+                    Severity::Notice,
+                    "27.2.0.192.in-addr.arpa.".to_string()
+                ),
+            ]
+        );
+    }
+
     fn sound() -> ZoneObservation {
         let mut obs = healthy();
         obs.policy = Some(PolicyObservation {
