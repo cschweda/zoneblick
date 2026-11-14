@@ -97,7 +97,7 @@ esac
 # for. If the answer about releases says it is, the answer is wrong or
 # forged, and following it would put back a release with known faults.
 # Raised when a release is out; see "Releasing" in the README.
-FLOOR="v0.15.0"
+FLOOR="v0.15.1"
 as_number() {
   echo "$1" | sed 's/^v//' | awk -F. '{ printf "%d%05d%05d", $1, $2, $3 }'
 }
