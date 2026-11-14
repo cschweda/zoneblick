@@ -496,7 +496,17 @@ impl Store {
                  ON CONFLICT (zone_id, fingerprint) DO UPDATE SET
                      severity = ?5, summary = ?6, evidence_json = ?7,
                      last_seen_run = ?8,
-                     state = CASE state WHEN 'muted' THEN 'muted' ELSE 'open' END",
+                     state = CASE
+                         -- A mute covers the finding as it was accepted.
+                         -- When it comes back worse, it is open again.
+                         WHEN state = 'muted' AND
+                              (CASE ?5 WHEN 'critical' THEN 0 WHEN 'warning' THEN 1
+                                       WHEN 'notice' THEN 2 ELSE 3 END)
+                            < (CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1
+                                             WHEN 'notice' THEN 2 ELSE 3 END)
+                         THEN 'open'
+                         WHEN state = 'muted' THEN 'muted'
+                         ELSE 'open' END",
             )?;
             let mut link = tx.prepare(
                 "INSERT OR IGNORE INTO run_findings (run_id, finding_id, severity, summary)
@@ -1519,6 +1529,50 @@ mod tests {
         // Discovered names are checked like any other, and can be forgotten.
         assert_eq!(store.names(ZONE).unwrap().len(), 2);
         assert!(store.forget_name(ZONE, "www.example.test.").unwrap());
+    }
+
+    #[test]
+    fn a_muted_finding_that_gets_worse_is_open_again() {
+        use crate::observe::{DeepObservation, ServedTls};
+        let mut store = Store::open_in_memory().unwrap();
+        // A web certificate with `days` left when the run is made.
+        let serving = |at: u64, days: i64| {
+            let mut obs = obs_with("192.0.2.10", at);
+            obs.deep = Some(DeepObservation {
+                served_tls: vec![ServedTls {
+                    role: "web".to_string(),
+                    host: ZONE.to_string(),
+                    address: Some("9.9.9.9".parse().unwrap()),
+                    starttls: None,
+                    not_after_unix: Some((at as i64 + days * 86_400 + 60) as u64),
+                    names: vec![ZONE.trim_end_matches('.').to_string()],
+                    error: None,
+                }],
+                ..Default::default()
+            });
+            obs
+        };
+        let day = 86_400;
+        save(&mut store, &serving(100 * day, 10));
+        let rows = store.finding_rows(Some(ZONE), Some("open")).unwrap();
+        let tls: Vec<_> = rows.iter().filter(|r| r.check_id == "TLS-01").collect();
+        assert_eq!(tls.len(), 1);
+        assert_eq!(tls[0].severity, Severity::Notice);
+        let print = tls[0].fingerprint.clone();
+        store.set_muted(ZONE, &print, true).unwrap();
+        // Still a notice the next day: the mute holds.
+        save(&mut store, &serving(101 * day, 9));
+        assert!(store.muted(ZONE).unwrap().contains(&print));
+        // Run out: the same finding, now critical. The mute is lifted,
+        // and the diff reports it as opened.
+        save(&mut store, &serving(112 * day, -1));
+        assert!(!store.muted(ZONE).unwrap().contains(&print));
+        let rows = store.finding_rows(Some(ZONE), Some("open")).unwrap();
+        let row = rows.iter().find(|r| r.fingerprint == print).unwrap();
+        assert_eq!(row.severity, Severity::Critical);
+        let runs = store.runs(ZONE).unwrap();
+        let d = store.diff(ZONE, runs[1], runs[2], &[]).unwrap();
+        assert!(d.findings_opened.iter().any(|f| f.fingerprint == print));
     }
 
     #[test]

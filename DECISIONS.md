@@ -270,3 +270,14 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - Blocklists: Spamhaus ZEN and DBL, SpamCop. Answers in 127.255.255.0/24 are Spamhaus refusing the query and count as no answer. A mail server on the PBL is not a finding.
 - Lookalikes are deliberately few (at most 60, no keyboard neighbours, no other alphabets): each costs lookups at the top-level domain's servers, and a long list of honest neighbours would only be muted.
 - TLS and SMTP connections are made only by a live run, never when replaying a fixture, like the TLSA certificate check before them.
+
+## After 0.15.0: fixes from the third audit
+
+- One answer keeps at most 64 records and 16 KB, one run at most 32 MB of record data. What is dropped is the end of the sorted set, so the same answer gives the same stored set. No real record set is near these limits; a zone that exceeds them is compared on the part that is kept.
+- A finding whose severity rises counts as opened again (diff, alerts) and a mute on it is lifted. The fingerprint is unchanged, so its history stays one finding.
+- A key set of more than 32 keys under a DS record is "bogus", not "unknown". The limit exists so that keys are not all tried; it must not double as a way to silence SEC-13.
+- Every outward probe has its own time limit and writes into its own part of the deep observation, so a probe that is cut off keeps what it had. `--deep` on the command line has a ten-minute limit.
+- Both network listeners count connections (1,024 in all, 64 per address) and close a connection on which nothing arrives for 60 seconds. This is an idle limit, not a header deadline: axum's `serve` gives no access to hyper's own. The unix socket is left alone; only local users in the daemon's group reach it.
+- The daemon refuses a data directory that group or others can write to. `/tmp` is such a directory; that is intended.
+- `install.sh` has a `FLOOR`: the oldest release it accepts as "the newest". It is raised by hand after a release is published; a test keeps it from running ahead of the crate version.
+- Not changed: LAL-01 still looks at MX records only; a record no server answers with authority still drops out of the diff silently; a dropped deep phase is still only logged.

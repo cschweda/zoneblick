@@ -84,6 +84,26 @@ if [ -z "$VERSION" ]; then
   [ -n "$VERSION" ] || fail "could not find the newest release; pass --version vX.Y.Z"
 fi
 case "$VERSION" in v*) ;; *) VERSION="v$VERSION" ;; esac
+# A version is "v", digits and dots, whoever supplied it: the option, or
+# the answer about the newest release. Nothing else reaches a file name,
+# an address or another command.
+case "$VERSION" in
+  *[!0-9.v]*) fail "'$VERSION' is not a version; expected something like v0.15.0" ;;
+  v[0-9]*.[0-9]*.[0-9]*) ;;
+  *) fail "'$VERSION' is not a version; expected something like v0.15.0" ;;
+esac
+
+# The newest release cannot be older than the one this script was written
+# for. If the answer about releases says it is, the answer is wrong or
+# forged, and following it would put back a release with known faults.
+# Raised when a release is out; see "Releasing" in the README.
+FLOOR="v0.15.0"
+as_number() {
+  echo "$1" | sed 's/^v//' | awk -F. '{ printf "%d%05d%05d", $1, $2, $3 }'
+}
+if [ -z "$ASKED_VERSION" ] && [ "$(as_number "$VERSION")" -lt "$(as_number "$FLOOR")" ]; then
+  fail "the newest release was reported as $VERSION, which is older than $FLOOR; nothing was installed. Pass --version to install an older release on purpose"
+fi
 
 name="zoneblick-$VERSION-$target"
 base="https://github.com/$REPO/releases/download/$VERSION"
@@ -126,7 +146,13 @@ case "$UNATTESTED" in
     elif [ "$ATTEST" = "require" ]; then
       fail "--require-attestation needs the GitHub CLI (gh), signed in; nothing was installed"
     else
-      say "Warning: build provenance not checked (needs the GitHub CLI, gh, signed in); only the checksum was verified"
+      say ""
+      say "WARNING: the build provenance of this download was NOT checked."
+      say "  Only its checksum was verified, and the checksum comes from the same"
+      say "  place as the download: it shows the file is whole, not who built it."
+      say "  To check where it was built, install the GitHub CLI (gh), sign in, and"
+      say "  run this script again with --require-attestation."
+      say ""
     fi
     ;;
 esac
@@ -148,6 +174,11 @@ setup_service() {
   if ! id zoneblick >/dev/null 2>&1; then
     useradd --system --home-dir /var/lib/zoneblick --shell /usr/sbin/nologin zoneblick
   fi
+  # Nothing here may be a link: this runs as root, and a link would send
+  # the ownership change or the new config file somewhere else.
+  for path in /etc/zoneblick /var/lib/zoneblick /etc/zoneblick/zoneblick.toml /etc/systemd/system/zoneblick.service; do
+    [ ! -L "$path" ] || fail "$path is a symbolic link; remove it and run the script again"
+  done
   mkdir -p /etc/zoneblick /var/lib/zoneblick
   chown zoneblick:zoneblick /var/lib/zoneblick
   chmod 700 /var/lib/zoneblick

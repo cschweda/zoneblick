@@ -601,6 +601,9 @@ fn write_sarif(path: Option<&Path>, report: &Report) -> Result<(), CliError> {
 }
 
 /// Run `zoneblick check`. `color` asks for ANSI colours in text output.
+/// How long the deep phase of `check --deep` and `run --deep` may take.
+const DEEP_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+
 pub async fn check(args: &CheckArgs, color: bool) -> CommandOutput {
     match try_check(args, color).await {
         Ok(output) => output,
@@ -618,7 +621,18 @@ async fn try_check(args: &CheckArgs, color: bool) -> Result<CommandOutput, CliEr
     if args.deep
         && let Ok(obs) = &mut observed
     {
-        crate::resolver::add_deep(client.clone(), obs).await;
+        // A daemon gives the deep phase half the run's time; the command
+        // line gives it this long. Without a limit, a zone that answers
+        // slowly enough could keep the command running for good.
+        if tokio::time::timeout(DEEP_LIMIT, crate::resolver::add_deep(client.clone(), obs))
+            .await
+            .is_err()
+        {
+            eprintln!(
+                "zoneblick: the deep checks did not finish in {} minutes and were left out",
+                DEEP_LIMIT.as_secs() / 60
+            );
+        }
     }
     save_recording(&args.source, &client, &zone, started_at)?;
 
@@ -750,7 +764,18 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     if args.deep
         && let Ok(obs) = &mut observed
     {
-        crate::resolver::add_deep(client.clone(), obs).await;
+        // A daemon gives the deep phase half the run's time; the command
+        // line gives it this long. Without a limit, a zone that answers
+        // slowly enough could keep the command running for good.
+        if tokio::time::timeout(DEEP_LIMIT, crate::resolver::add_deep(client.clone(), obs))
+            .await
+            .is_err()
+        {
+            eprintln!(
+                "zoneblick: the deep checks did not finish in {} minutes and were left out",
+                DEEP_LIMIT.as_secs() / 60
+            );
+        }
     }
     save_recording(&args.source, &client, &zone, started_at)?;
     let mut obs = observed?;

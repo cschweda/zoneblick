@@ -176,7 +176,9 @@ pub fn not_public(address: std::net::IpAddr) -> Option<&'static str> {
                 let embeds_ipv4 = (s[0] == 0x0064 && s[1] == 0xff9b)
                     || s[0] == 0x2002
                     || (s[0] == 0x2001 && s[1] == 0)
-                    || (s[..6].iter().all(|x| *x == 0) && (s[6] != 0 || s[7] > 1));
+                    || (s[..6].iter().all(|x| *x == 0) && (s[6] != 0 || s[7] > 1))
+                    // ::ffff:0:a.b.c.d, the form a stateless translator uses.
+                    || (s[..4].iter().all(|x| *x == 0) && s[4] == 0xffff && s[5] == 0);
                 embeds_ipv4.then_some("IPv4-embedding")
             }
         })

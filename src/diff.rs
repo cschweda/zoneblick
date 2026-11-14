@@ -482,11 +482,23 @@ pub fn diff_with(
     let prints = |run: &RunData| -> BTreeSet<String> {
         run.findings.iter().map(|f| f.fingerprint.clone()).collect()
     };
-    let (fb, fa) = (prints(from), prints(to));
+    let fa = prints(to);
+    // A finding counts as opened when it is new, and also when it was
+    // there before in a milder form: a certificate that "runs out in ten
+    // days" and one that "has run out" are the same finding, and the
+    // second must not pass in silence because the first was reported.
+    let before: std::collections::BTreeMap<&str, Severity> = from
+        .findings
+        .iter()
+        .map(|f| (f.fingerprint.as_str(), f.severity))
+        .collect();
     let mut findings_opened: Vec<StoredFinding> = to
         .findings
         .iter()
-        .filter(|f| !fb.contains(&f.fingerprint))
+        .filter(|f| match before.get(f.fingerprint.as_str()) {
+            None => true,
+            Some(earlier) => f.severity < *earlier,
+        })
         .cloned()
         .collect();
     let mut findings_resolved: Vec<StoredFinding> = from
@@ -798,5 +810,31 @@ mod tests {
             (d.summary.findings_opened, d.summary.findings_resolved),
             (1, 1)
         );
+    }
+
+    #[test]
+    fn a_finding_that_gets_worse_counts_as_opened_again() {
+        let finding = |severity: Severity| StoredFinding {
+            severity,
+            check_id: "TLS-01".to_string(),
+            name: ZONE.to_string(),
+            summary: "x".to_string(),
+            fingerprint: "same".to_string(),
+        };
+        let at = |id: i64, severity: Severity| {
+            let mut r = run(id, vec![]);
+            r.findings = vec![finding(severity)];
+            r
+        };
+        // Notice to critical: opened, and the diff says something changed.
+        let d = diff(&at(1, Severity::Notice), &at(2, Severity::Critical), &[]);
+        assert_eq!(d.findings_opened.len(), 1);
+        assert_eq!(d.findings_opened[0].severity, Severity::Critical);
+        assert!(d.changed && d.findings_resolved.is_empty());
+        // The same severity, or a milder one, is not news.
+        let d = diff(&at(1, Severity::Warning), &at(2, Severity::Warning), &[]);
+        assert!(d.findings_opened.is_empty() && !d.changed);
+        let d = diff(&at(1, Severity::Critical), &at(2, Severity::Notice), &[]);
+        assert!(d.findings_opened.is_empty() && !d.changed);
     }
 }

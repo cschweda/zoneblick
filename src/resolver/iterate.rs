@@ -325,6 +325,8 @@ impl Resolver {
                     .collect();
                 out.rdata.sort();
                 out.rdata.dedup();
+                // The answering server decides how much it sends.
+                super::probe::cap_rdata(&mut out.rdata);
                 out.status = if out.rdata.is_empty() && out.cname.is_none() {
                     "nodata"
                 } else {

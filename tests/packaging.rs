@@ -74,3 +74,23 @@ fn the_systemd_unit_matches_the_install_script() {
         assert!(script.contains(&line), "install.sh lacks: {line}");
     }
 }
+
+/// The install script refuses a "newest release" older than its floor.
+/// The floor must be a real version and never ahead of this crate: a
+/// floor above the newest published release would refuse every install.
+#[test]
+fn the_install_script_floor_is_a_version_not_ahead_of_the_crate() {
+    let script = read("install.sh");
+    let floor = script
+        .lines()
+        .find_map(|l| l.strip_prefix("FLOOR=\"v"))
+        .and_then(|l| l.strip_suffix('"'))
+        .expect("install.sh sets FLOOR");
+    let parts = |v: &str| -> Vec<u32> { v.split('.').map(|n| n.parse().unwrap()).collect() };
+    let (floor, this) = (parts(floor), parts(env!("CARGO_PKG_VERSION")));
+    assert_eq!(floor.len(), 3);
+    assert!(
+        floor <= this,
+        "FLOOR {floor:?} is ahead of the crate {this:?}"
+    );
+}

@@ -521,7 +521,13 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
     deep.record_signatures = super::chain::record_signatures(&client, obs).await;
     deep.mail_tls = mail_certificates(&client, obs).await;
     deep.registration = crate::registration::collect(&client, obs).await;
-    super::exposure::add_exposure(&client, obs, &mut deep).await;
+    // The probes that look outward have a time limit of their own, and
+    // what they had found when it ran out is kept.
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(super::exposure::TOTAL_SECONDS),
+        super::exposure::add_exposure(&client, obs, &mut deep),
+    )
+    .await;
     obs.deep = Some(deep);
 }
 

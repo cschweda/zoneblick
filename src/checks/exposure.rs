@@ -602,7 +602,7 @@ pub fn blk_01_blocklisted(obs: &ZoneObservation) -> Vec<Finding> {
             let meaning = blocklist_meaning(&lookup.list, code);
             // The policy list names addresses that should not send mail
             // directly. For a server that only receives it, that is no fault.
-            if meaning.starts_with("Spamhaus PBL") && lookup.role.starts_with("mail server") {
+            if meaning.starts_with("Spamhaus PBL") && !lookup.role.contains("SPF record") {
                 continue;
             }
             if !subjects.contains(&lookup.subject) {

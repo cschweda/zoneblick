@@ -286,6 +286,11 @@ fn certificate_time(tag: u8, content: &[u8]) -> Option<u64> {
         (0x18, 14) => (digits[..4].parse().ok()?, &digits[4..]),
         _ => return None,
     };
+    // A date before 1970 cannot be counted in seconds since then. Such a
+    // certificate ran out long ago, which the earliest time says as well.
+    if year < 1970 {
+        return Some(0);
+    }
     crate::registration::parse_rfc3339(&format!(
         "{year:04}-{}-{}T{}:{}:{}Z",
         &rest[..2],
@@ -559,6 +564,9 @@ mod tests {
             Some(1_700_000_000)
         );
         assert_eq!(certificate_time(0x17, b"2311142213Z"), None);
+        // 1950 to 1969: long run out, and still a date.
+        assert_eq!(certificate_time(0x17, b"650101000000Z"), Some(0));
+        assert_eq!(certificate_time(0x18, b"19010101000000Z"), Some(0));
         assert_eq!(certificate_time(0x17, b"23111422132aZ"), None);
         assert_eq!(certificate_time(0x18, b"20231114221320"), None);
     }

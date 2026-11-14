@@ -459,11 +459,16 @@ async fn trusted_keys(
         ));
     }
     let raw = raw_rdata(&msg, zone, RecordType::DNSKEY);
+    // More keys than any real zone publishes. They are not all tried,
+    // since that is how a zone makes a checker burn its time. The set is
+    // called broken, not "unknown": a zone that has a DS record and a key
+    // set nobody can check does not validate, and padding a forged key
+    // set past the limit must not be a way to keep this check quiet.
     if raw.len() > crate::verify::MAX_KEYS {
         return Err((
-            "unknown",
+            "bogus",
             format!(
-                "{zone} publishes {} keys, more than zoneblick will check ({})",
+                "{zone} publishes {} keys, more than zoneblick will check ({}); a key set like this cannot be validated",
                 raw.len(),
                 crate::verify::MAX_KEYS
             ),

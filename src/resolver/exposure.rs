@@ -40,17 +40,91 @@ const MAX_BLOCKLIST_ADDRESSES: usize = 10;
 const MAX_REPORT_DOMAINS: usize = 4;
 const MAX_LOOKALIKES: usize = 60;
 
-/// Run the probes and put what they find into `deep`.
+/// How long each probe may take. A name in the zone, or a lookalike
+/// domain somebody registered for the purpose, can lead a lookup through
+/// a long chain of servers that never answer; without a limit one such
+/// name would hold up everything after it.
+const SUBZONE_SECONDS: u64 = 40;
+const REPORT_SECONDS: u64 = 15;
+const BLOCKLIST_SECONDS: u64 = 25;
+const LOOKALIKE_SECONDS: u64 = 45;
+const RESOLVER_SECONDS: u64 = 15;
+const ROUTE_SECONDS: u64 = 25;
+const DEPENDENCY_SECONDS: u64 = 30;
+const TLS_SECONDS: u64 = 90;
+/// All of them together, whatever the single limits add up to.
+pub const TOTAL_SECONDS: u64 = 300;
+
+/// Values quoted from an answer someone else controls: at most this
+/// many, each cut to this length (the rule from the second audit).
+const MAX_QUOTED_VALUES: usize = 20;
+const MAX_QUOTED_LENGTH: usize = 200;
+
+/// Keep a list of values from outside to a size fit to store and show.
+pub fn clip(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .take(MAX_QUOTED_VALUES)
+        .map(|v| {
+            if v.chars().count() > MAX_QUOTED_LENGTH {
+                let cut: String = v.chars().take(MAX_QUOTED_LENGTH).collect();
+                format!("{cut}...")
+            } else {
+                v
+            }
+        })
+        .collect()
+}
+
+/// Run one probe for at most `seconds`. What it had put into its output
+/// by then is kept.
+async fn within(seconds: u64, probe: impl std::future::Future<Output = ()>) {
+    let _ = tokio::time::timeout(Duration::from_secs(seconds), probe).await;
+}
+
+/// Run the probes and put what they find into `deep`. Each has its own
+/// time limit and fills its own part, so one that is held up costs only
+/// its own result.
 pub async fn add_exposure(client: &Arc<Client>, obs: &ZoneObservation, deep: &mut DeepObservation) {
     let resolver = Resolver::new(client.clone(), obs.vantage);
-    deep.subzones = subzones(&resolver, obs).await;
-    deep.dmarc_reports = dmarc_reports(&resolver, obs).await;
-    deep.blocklists = blocklists(&resolver, obs).await;
-    deep.lookalikes = lookalikes(&resolver, obs).await;
-    deep.resolvers = resolvers(client, obs).await;
-    deep.routes = routes(client, deep).await;
-    deep.dependencies = dependencies(client, obs, deep).await;
-    deep.served_tls = served_tls(client, &resolver, obs).await;
+    within(
+        SUBZONE_SECONDS,
+        subzones(&resolver, obs, &mut deep.subzones),
+    )
+    .await;
+    within(
+        REPORT_SECONDS,
+        dmarc_reports(&resolver, obs, &mut deep.dmarc_reports),
+    )
+    .await;
+    within(
+        BLOCKLIST_SECONDS,
+        blocklists(&resolver, obs, &mut deep.blocklists),
+    )
+    .await;
+    within(
+        LOOKALIKE_SECONDS,
+        lookalikes(&resolver, obs, &mut deep.lookalikes),
+    )
+    .await;
+    within(
+        RESOLVER_SECONDS,
+        resolvers(client, obs, &mut deep.resolvers),
+    )
+    .await;
+    let origins = deep.origins.clone();
+    within(ROUTE_SECONDS, routes(client, &origins, &mut deep.routes)).await;
+    let own = deep.registration.as_ref().map(|r| r.domain.clone());
+    within(
+        DEPENDENCY_SECONDS,
+        dependencies(client, obs, own, &mut deep.dependencies),
+    )
+    .await;
+    within(
+        TLS_SECONDS,
+        served_tls(client, &resolver, obs, &mut deep.served_tls),
+    )
+    .await;
 }
 
 // ---------------------------------------------------------------------
@@ -74,12 +148,12 @@ fn subzone_candidates(obs: &ZoneObservation) -> Vec<String> {
 
 /// Find the names the zone hands to other nameservers, and ask each of
 /// those nameservers whether it serves the name.
-async fn subzones(resolver: &Resolver, obs: &ZoneObservation) -> Vec<Subzone> {
+async fn subzones(resolver: &Resolver, obs: &ZoneObservation, out: &mut Vec<Subzone>) {
     let Some((_, server)) = responding_servers(&obs.probes)
         .into_iter()
         .find(|(_, a)| obs.vantage.can_reach(a))
     else {
-        return Vec::new();
+        return;
     };
     let mut cuts: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for name in subzone_candidates(obs) {
@@ -101,22 +175,38 @@ async fn subzones(resolver: &Resolver, obs: &ZoneObservation) -> Vec<Subzone> {
         } else {
             &msg.authorities
         };
+        // One answer can carry NS records under many owner names. Only
+        // the delegation nearest the zone is real (what lies below it is
+        // the other servers' business), so one answer gives one cut.
+        let mut nearest: Option<String> = None;
         for record in records {
-            if let RData::NS(target) = &record.data {
+            if let RData::NS(_) = &record.data {
                 let owner = norm(&record.name);
                 if owner != obs.zone
                     && is_ancestor_or_equal(&obs.zone, &owner)
                     && is_ancestor_or_equal(&owner, &name)
+                    && nearest.as_ref().is_none_or(|n| owner.len() < n.len())
                 {
-                    cuts.entry(owner).or_default().insert(norm(&target.0));
+                    nearest = Some(owner);
                 }
             }
         }
-        if cuts.len() >= MAX_SUBZONES {
+        let Some(cut) = nearest else {
+            continue;
+        };
+        if cuts.len() >= MAX_SUBZONES && !cuts.contains_key(&cut) {
             break;
         }
+        let servers = cuts.entry(cut.clone()).or_default();
+        for record in records {
+            if let RData::NS(target) = &record.data
+                && norm(&record.name) == cut
+                && servers.len() < MAX_SUBZONE_SERVERS
+            {
+                servers.insert(norm(&target.0));
+            }
+        }
     }
-    let mut out = Vec::new();
     for (name, ns) in cuts {
         let mut servers = Vec::new();
         for ns_name in ns.into_iter().take(MAX_SUBZONE_SERVERS) {
@@ -124,7 +214,6 @@ async fn subzones(resolver: &Resolver, obs: &ZoneObservation) -> Vec<Subzone> {
         }
         out.push(Subzone { name, servers });
     }
-    out
 }
 
 async fn subzone_server(
@@ -231,20 +320,20 @@ pub fn dmarc_record(obs: &ZoneObservation) -> Option<String> {
 /// A domain that receives another domain's DMARC reports must say so in
 /// a record of its own (RFC 7489, 7.1). Look that record up for every
 /// destination outside the zone.
-async fn dmarc_reports(resolver: &Resolver, obs: &ZoneObservation) -> Vec<Lookup> {
+async fn dmarc_reports(resolver: &Resolver, obs: &ZoneObservation, out: &mut Vec<Lookup>) {
     let Some(record) = dmarc_record(obs) else {
-        return Vec::new();
+        return;
     };
-    let mut out = Vec::new();
     for domain in report_domains(&record)
         .into_iter()
         .filter(|d| !is_ancestor_or_equal(&obs.zone, d) && !is_ancestor_or_equal(d, &obs.zone))
         .take(MAX_REPORT_DOMAINS)
     {
         let name = format!("{}_report._dmarc.{domain}", obs.zone);
-        out.push(resolver.lookup(&name, QType::Txt).await);
+        let mut lookup = resolver.lookup(&name, QType::Txt).await;
+        lookup.rdata = clip(lookup.rdata);
+        out.push(lookup);
     }
-    out
 }
 
 // ---------------------------------------------------------------------
@@ -279,8 +368,18 @@ fn mail_addresses(obs: &ZoneObservation) -> Vec<(std::net::Ipv4Addr, String)> {
     };
     let mut out: Vec<(std::net::Ipv4Addr, String)> = Vec::new();
     let mut add = |address: std::net::Ipv4Addr, role: String| {
-        if not_public(IpAddr::V4(address)).is_none() && !out.iter().any(|(a, _)| *a == address) {
-            out.push((address, role));
+        if not_public(IpAddr::V4(address)).is_some() {
+            return;
+        }
+        // An address can be a mail server and a sender at once; both
+        // count, since some lists matter only for senders.
+        match out.iter_mut().find(|(a, _)| *a == address) {
+            Some((_, roles)) if !roles.contains(&role) => {
+                roles.push_str(" and ");
+                roles.push_str(&role);
+            }
+            Some(_) => {}
+            None => out.push((address, role)),
         }
     };
     for target in policy.targets.iter().filter(|t| t.rtype == "MX") {
@@ -312,7 +411,7 @@ pub fn blocklist_answer(lookup: &Lookup) -> (Vec<String>, Option<String>) {
             if codes.iter().any(|c| c.starts_with("127.255.255.")) {
                 (Vec::new(), Some("the list refused the query".to_string()))
             } else {
-                (codes, None)
+                (codes.into_iter().take(8).collect(), None)
             }
         }
         "nxdomain" | "nodata" => (Vec::new(), None),
@@ -325,8 +424,7 @@ pub fn blocklist_answer(lookup: &Lookup) -> (Vec<String>, Option<String>) {
     }
 }
 
-async fn blocklists(resolver: &Resolver, obs: &ZoneObservation) -> Vec<BlocklistLookup> {
-    let mut out = Vec::new();
+async fn blocklists(resolver: &Resolver, obs: &ZoneObservation, out: &mut Vec<BlocklistLookup>) {
     for (address, role) in mail_addresses(obs) {
         let o = address.octets();
         for list in ADDRESS_BLOCKLISTS {
@@ -357,7 +455,6 @@ async fn blocklists(resolver: &Resolver, obs: &ZoneObservation) -> Vec<Blocklist
             error,
         });
     }
-    out
 }
 
 // ---------------------------------------------------------------------
@@ -450,8 +547,7 @@ pub fn lookalike_candidates(zone: &str) -> Vec<(String, &'static str)> {
 }
 
 /// Which lookalikes are registered, and whether they take mail.
-async fn lookalikes(resolver: &Resolver, obs: &ZoneObservation) -> Vec<Lookalike> {
-    let mut out = Vec::new();
+async fn lookalikes(resolver: &Resolver, obs: &ZoneObservation, out: &mut Vec<Lookalike>) {
     for (domain, kind) in lookalike_candidates(&obs.zone) {
         let ns = resolver.lookup(&domain, QType::Ns).await;
         if !ns.exists() {
@@ -464,13 +560,15 @@ async fn lookalikes(resolver: &Resolver, obs: &ZoneObservation) -> Vec<Lookalike
             .into_iter()
             .filter(|r| r.split_whitespace().nth(1) != Some("."))
             .collect();
+        // The lookalike's owner writes these records; a few are enough.
+        let mut mx = clip(mx);
+        mx.truncate(5);
         out.push(Lookalike {
             domain,
             kind: kind.to_string(),
             mx,
         });
     }
-    out
 }
 
 // ---------------------------------------------------------------------
@@ -510,11 +608,10 @@ async fn ask_resolver(
 /// Ask each public resolver for the zone's SOA record, as any user's
 /// computer would. After a SERVFAIL, ask again with validation switched
 /// off: an answer then means the resolver rejects the zone's DNSSEC.
-async fn resolvers(client: &Client, obs: &ZoneObservation) -> Vec<ResolverView> {
+async fn resolvers(client: &Client, obs: &ZoneObservation, out: &mut Vec<ResolverView>) {
     if !obs.vantage.ipv4 {
-        return Vec::new();
+        return;
     }
-    let mut out = Vec::new();
     for (operator, octets) in PUBLIC_RESOLVERS {
         let address = IpAddr::from(octets);
         let mut view = ResolverView {
@@ -538,7 +635,6 @@ async fn resolvers(client: &Client, obs: &ZoneObservation) -> Vec<ResolverView> 
         }
         out.push(view);
     }
-    out
 }
 
 // ---------------------------------------------------------------------
@@ -566,9 +662,13 @@ pub fn parse_route_status(body: &str) -> Result<String, String> {
     }
 }
 
-async fn routes(client: &Client, deep: &DeepObservation) -> Vec<RouteOrigin> {
+async fn routes(
+    client: &Client,
+    origins: &[crate::observe::AddressOrigin],
+    out: &mut Vec<RouteOrigin>,
+) {
     let mut seen: BTreeMap<(String, u32), Vec<IpAddr>> = BTreeMap::new();
-    for origin in &deep.origins {
+    for origin in origins {
         // An address announced by several networks at once is left out:
         // there is no single origin to judge.
         if let (Some(prefix), [asn]) = (&origin.prefix, origin.asns.as_slice()) {
@@ -577,7 +677,6 @@ async fn routes(client: &Client, deep: &DeepObservation) -> Vec<RouteOrigin> {
                 .push(origin.address);
         }
     }
-    let mut out = Vec::new();
     for ((prefix, asn), addresses) in seen.into_iter().take(MAX_ROUTES) {
         let (status, error) = match client
             .http_get_with(
@@ -602,7 +701,6 @@ async fn routes(client: &Client, deep: &DeepObservation) -> Vec<RouteOrigin> {
             error,
         });
     }
-    out
 }
 
 // ---------------------------------------------------------------------
@@ -629,7 +727,12 @@ fn outside_hosts(obs: &ZoneObservation) -> Vec<(String, String)> {
             ));
         }
     }
-    out.retain(|(name, _)| !is_ancestor_or_equal(&obs.zone, name));
+    // A name with anything but letters, digits, hyphens and dots is left
+    // out: it goes into the address of a request to the registry, where
+    // a "?" or "/" would change what is asked.
+    out.retain(|(name, _)| {
+        !is_ancestor_or_equal(&obs.zone, name) && super::policy::plain_host(name)
+    });
     out
 }
 
@@ -638,9 +741,9 @@ fn outside_hosts(obs: &ZoneObservation) -> Vec<(String, String)> {
 async fn dependencies(
     client: &Client,
     obs: &ZoneObservation,
-    deep: &DeepObservation,
-) -> Vec<Dependency> {
-    let own = deep.registration.as_ref().map(|r| r.domain.clone());
+    own: Option<String>,
+    out: &mut Vec<Dependency>,
+) {
     // Grouped by the last two labels: one registry question per group.
     let mut groups: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
     for (name, role) in outside_hosts(obs) {
@@ -660,7 +763,6 @@ async fn dependencies(
             entry.1.push(role);
         }
     }
-    let mut out = Vec::new();
     for (key, (name, used_by)) in groups.into_iter().take(MAX_DEPENDENCIES) {
         // `example.net.` first; under an ending such as `co.uk.` the
         // registry has no record of that, and the next name is tried.
@@ -675,7 +777,6 @@ async fn dependencies(
             });
         }
     }
-    out
 }
 
 // ---------------------------------------------------------------------
@@ -733,9 +834,14 @@ fn read_chain(entry: &mut ServedTls, result: Result<Vec<Vec<u8>>, String>) {
 /// when the certificate runs out and which names it is for. Only a live
 /// run does this, and only to public addresses. No mail is sent and no
 /// page is asked for.
-async fn served_tls(client: &Client, resolver: &Resolver, obs: &ZoneObservation) -> Vec<ServedTls> {
+async fn served_tls(
+    client: &Client,
+    resolver: &Resolver,
+    obs: &ZoneObservation,
+    out: &mut Vec<ServedTls>,
+) {
     if !client.is_live() {
-        return Vec::new();
+        return;
     }
     let mut targets: Vec<(ServedTls, u16)> = Vec::new();
     if let Some(policy) = &obs.policy {
@@ -766,7 +872,6 @@ async fn served_tls(client: &Client, resolver: &Resolver, obs: &ZoneObservation)
         targets.push((entry, 443));
     }
     let mut tasks = JoinSet::new();
-    let mut out = Vec::new();
     for (mut entry, port) in targets {
         let Some(address) = entry.address else {
             entry
@@ -804,7 +909,6 @@ async fn served_tls(client: &Client, resolver: &Resolver, obs: &ZoneObservation)
         }
     }
     out.sort_by(|a, b| (&a.role, &a.host).cmp(&(&b.role, &b.host)));
-    out
 }
 
 #[cfg(test)]

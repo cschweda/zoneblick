@@ -240,6 +240,30 @@ fn random_token() -> std::io::Result<String> {
 /// Read the token file, or make a token and write the file, readable by
 /// its owner only.
 pub fn load_or_make_token(path: &std::path::Path) -> std::io::Result<String> {
+    // In a directory other users can write to, the file found here may
+    // be one of theirs, holding a token they know. And a link would have
+    // the token read from, or written to, somewhere else.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let dir = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => std::path::Path::new("."),
+        };
+        if let Ok(meta) = std::fs::metadata(dir)
+            && meta.mode() & 0o022 != 0
+        {
+            return Err(std::io::Error::other(format!(
+                "the data directory {} can be written to by other users; make it writable by the daemon's user only (chmod 700)",
+                dir.display()
+            )));
+        }
+        if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(std::io::Error::other(
+                "the token file is a symbolic link; remove it to have a new token made",
+            ));
+        }
+    }
     match std::fs::read_to_string(path) {
         Ok(text) => {
             let token = text.trim().to_string();
@@ -835,6 +859,9 @@ pub async fn serve(
         let listener = crate::tls::TlsListener::new(listener, config, cert, key, log)?;
         started(&format!("https://{addr}"));
         let job = tokio::spawn(scheduler(state.clone(), every));
+        // Slots and an idle limit for every connection, on top of the
+        // handshake limits the TLS listener has of its own.
+        let listener = crate::guard::GuardedListener::new(listener, Default::default());
         let result = axum::serve(listener, router(state))
             .with_graceful_shutdown(shutdown)
             .await;
@@ -843,6 +870,9 @@ pub async fn serve(
     }
     started(&format!("http://{addr}"));
     let job = tokio::spawn(scheduler(state.clone(), every));
+    // A plain listener has no limits of its own: without these, one
+    // client could open connections, send nothing, and keep them all.
+    let listener = crate::guard::GuardedListener::new(listener, Default::default());
     let result = axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown)
         .await;
@@ -1199,12 +1229,12 @@ async fn api_findings(
         None => None,
     };
     if let Some(s) = &query.state
-        && !matches!(s.as_str(), "open" | "resolved")
+        && !matches!(s.as_str(), "open" | "muted" | "resolved")
     {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
             "invalid_state",
-            "state must be 'open' or 'resolved'".to_string(),
+            "state must be 'open', 'muted' or 'resolved'".to_string(),
         ));
     }
     let rows = state

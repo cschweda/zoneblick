@@ -133,6 +133,9 @@ pub fn parse_rdap(domain: &str, url: &str, body: &str) -> Result<Registration, S
         .collect();
     status.sort();
     status.dedup();
+    // The registry's server writes these; keep them to a size fit to
+    // store and to quote in a finding.
+    let status = crate::resolver::exposure::clip(status);
 
     let expires_unix = doc["events"]
         .as_array()
@@ -158,7 +161,8 @@ pub fn parse_rdap(domain: &str, url: &str, body: &str) -> Result<Registration, S
                     .flatten()
             })
         })
-        .map(printable);
+        .map(printable)
+        .map(|name| crate::resolver::exposure::clip(vec![name]).remove(0));
 
     let nameservers: BTreeSet<String> = doc["nameservers"]
         .as_array()

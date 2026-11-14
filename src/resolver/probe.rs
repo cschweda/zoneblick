@@ -298,8 +298,22 @@ pub async fn observe_zone_records(
             }
         }
     }
+    // Whoever serves the zone decides how large each answer is. Each is
+    // capped where it is read; this caps what a whole run may hold, so
+    // that many servers times many names cannot add up to gigabytes.
+    let mut held = 0usize;
     while let Some(joined) = tasks.join_next().await {
-        records.push(joined.expect("record task does not panic"));
+        let mut record = joined.expect("record task does not panic");
+        if let RecordOutcome::Answer(answer) = &record.outcome {
+            held += answer.rdata.iter().map(String::len).sum::<usize>();
+            if held > MAX_RUN_RECORD_BYTES {
+                record.outcome = RecordOutcome::Malformed {
+                    message: "left out: the run already holds as much record data as it may"
+                        .to_string(),
+                };
+            }
+        }
+        records.push(record);
     }
     records.sort();
     obs.records = records;
@@ -364,6 +378,30 @@ async fn ask_record(
     }
 }
 
+/// At most this many records, and this much text, are kept from one
+/// answer. A 64 KB answer with compressed names can carry thousands of
+/// records that unfold to most of a megabyte; no real record set is
+/// anywhere near these limits.
+pub(crate) const MAX_ANSWER_RECORDS: usize = 64;
+pub(crate) const MAX_ANSWER_BYTES: usize = 16 * 1024;
+/// At most this much record text is kept in one run.
+const MAX_RUN_RECORD_BYTES: usize = 32 * 1024 * 1024;
+
+/// Keep a sorted record set within the limits. What is dropped is the
+/// end of the sorted list, so the same answer always gives the same set.
+pub(crate) fn cap_rdata(rdata: &mut Vec<String>) {
+    rdata.truncate(MAX_ANSWER_RECORDS);
+    let mut bytes = 0;
+    let keep = rdata
+        .iter()
+        .take_while(|r| {
+            bytes += r.len();
+            bytes <= MAX_ANSWER_BYTES
+        })
+        .count();
+    rdata.truncate(keep);
+}
+
 /// Reduce a raw outcome to a record outcome. `Err(true)` means the response
 /// was truncated and should be retried over TCP.
 fn record_outcome(spec: &QuerySpec, raw: RawOutcome) -> Result<RecordOutcome, bool> {
@@ -391,6 +429,7 @@ fn record_outcome(spec: &QuerySpec, raw: RawOutcome) -> Result<RecordOutcome, bo
     }
     rdata.sort();
     rdata.dedup();
+    cap_rdata(&mut rdata);
     Ok(RecordOutcome::Answer(RecordAnswer {
         rcode: rcode_name(msg.metadata.response_code),
         authoritative: msg.metadata.authoritative,

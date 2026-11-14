@@ -17,6 +17,7 @@ pub mod diff;
 pub mod digest;
 pub mod discover;
 pub mod dnssec;
+pub mod guard;
 pub mod observe;
 pub mod output;
 pub mod plan;
