@@ -188,6 +188,9 @@ pub struct ZoneConfig {
     /// nameservers for a zone transfer.
     #[serde(default)]
     pub discover: Vec<String>,
+    /// A zone file the zone should match. Each difference is a finding.
+    #[serde(default)]
+    pub expect: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

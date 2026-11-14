@@ -275,6 +275,11 @@ pub struct CheckArgs {
     #[arg(long)]
     pub json: bool,
 
+    /// Also write the findings to this file in SARIF 2.1.0, the format
+    /// code-scanning tools read.
+    #[arg(long, value_name = "FILE")]
+    pub sarif: Option<PathBuf>,
+
     #[command(flatten)]
     pub source: SourceArgs,
 }
@@ -309,6 +314,12 @@ pub struct RunArgs {
     #[arg(long)]
     pub deep: bool,
 
+    /// Compare what the nameservers serve with this zone file (the
+    /// standard format BIND uses and most DNS hosts export). Every name in
+    /// the file is checked, and each difference is a finding.
+    #[arg(long, value_name = "FILE")]
+    pub expect: Option<PathBuf>,
+
     /// The database file. Created when it does not exist.
     #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
     pub db: PathBuf,
@@ -316,6 +327,11 @@ pub struct RunArgs {
     /// Print one JSON document instead of text.
     #[arg(long)]
     pub json: bool,
+
+    /// Also write the findings to this file in SARIF 2.1.0, the format
+    /// code-scanning tools read.
+    #[arg(long, value_name = "FILE")]
+    pub sarif: Option<PathBuf>,
 
     #[command(flatten)]
     pub source: SourceArgs,
@@ -520,6 +536,14 @@ fn read_fixture(path: &PathBuf) -> Result<Fixture, CliError> {
     })
 }
 
+fn write_sarif(path: Option<&Path>, report: &Report) -> Result<(), CliError> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    std::fs::write(path, crate::output::sarif::render(report))
+        .map_err(|e| CliError::Usage(format!("cannot write {}: {e}", path.display())))
+}
+
 /// Run `zoneblick check`. `color` asks for ANSI colours in text output.
 pub async fn check(args: &CheckArgs, color: bool) -> CommandOutput {
     match try_check(args, color).await {
@@ -542,6 +566,7 @@ async fn try_check(args: &CheckArgs, color: bool) -> Result<CommandOutput, CliEr
     let obs = observed?;
     let findings = run_all(&obs);
     let report = Report::new(obs, findings);
+    write_sarif(args.sarif.as_deref(), &report)?;
     let stdout = if args.json {
         json::render(&report)
     } else {
@@ -579,6 +604,15 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
         let name = name_in_zone(&zone, input)?;
         store.forget_name(&zone, &name)?;
         names.retain(|n| *n != name);
+    }
+    let declared = match &args.expect {
+        Some(path) => Some(crate::zonefile::load(&zone, path).map_err(CliError::Usage)?),
+        None => None,
+    };
+    for name in declared.iter().flat_map(|d| d.names(&zone)) {
+        if !names.contains(&name) {
+            names.push(name);
+        }
     }
     let (client, started_at, replaying) = make_client(&args.source, &zone)?;
 
@@ -642,6 +676,7 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
     if let Some(deep) = &mut obs.deep {
         deep.previous_dnskeys = store.latest_dnskeys(&zone)?;
     }
+    obs.declared = declared;
 
     // A zone transfer, when asked. Refusal is the usual answer.
     let mut transferred: Option<Vec<String>> = None;
@@ -697,6 +732,7 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
         queries,
     };
     let report = Report::new(obs, findings);
+    write_sarif(args.sarif.as_deref(), &report)?;
     let exit_code = report.exit_code;
     let stdout = if args.json {
         json::render(&RunDocument {

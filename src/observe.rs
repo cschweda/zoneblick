@@ -630,6 +630,9 @@ pub struct ZoneObservation {
     /// The deep probes. `None` for a light run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deep: Option<DeepObservation>,
+    /// The zone file the run was told to compare with, when it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared: Option<crate::zonefile::Declared>,
 }
 
 impl ZoneObservation {

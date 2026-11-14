@@ -193,6 +193,23 @@ async fn run_zone_inner(
             names.push(name);
         }
     }
+    // The zone file to compare with is read again for every run, so an
+    // edit to it takes effect without a restart.
+    let declared = match &zone.expect {
+        Some(path) => match crate::zonefile::load(&zone.name, path) {
+            Ok(declared) => Some(declared),
+            Err(e) => {
+                log(&format!("{} zone file not used: {e}", zone.name));
+                None
+            }
+        },
+        None => None,
+    };
+    for name in declared.iter().flat_map(|d| d.names(&zone.name)) {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
     let client = (state.client_factory)(&zone.name);
     let started = now_unix();
 
@@ -264,6 +281,7 @@ async fn run_zone_inner(
     let mut obs = observe_zone_records(client.clone(), &zone.name, started, &names)
         .await
         .map_err(|e| e.to_string())?;
+    obs.declared = declared;
     // A deep run, when one is asked for or due for this zone.
     let deep_due = match state.config.deep_interval() {
         Ok(Some(every)) => state

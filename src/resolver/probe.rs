@@ -152,6 +152,7 @@ pub async fn observe_zone(
         dnssec: Some(dnssec),
         policy: Some(policy),
         deep: None,
+        declared: None,
     })
 }
 

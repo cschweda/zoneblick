@@ -125,6 +125,7 @@ fn build(addresses: [&[&str]; 2], vantage: Vantage) -> ZoneObservation {
         dnssec: None,
         policy: None,
         deep: None,
+        declared: None,
     }
 }
 

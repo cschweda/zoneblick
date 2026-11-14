@@ -37,6 +37,8 @@ fn run_args(db: &Path, state: &str, names: &[&str], json: bool) -> RunArgs {
         db: db.to_path_buf(),
         json,
         deep: false,
+        expect: None,
+        sarif: None,
         source: SourceArgs {
             record: None,
             replay: Some(fixture(&format!("drift.example.{state}.json"))),
@@ -455,4 +457,51 @@ async fn a_zone_is_added_with_names_and_removed() {
     let out = zones_edit(&ZonesAction::Remove(edit(&[])));
     assert_eq!(out.stdout, "Removed drift.example. and its 1 runs.\n");
     assert_eq!(zones_edit(&ZonesAction::Remove(edit(&[]))).exit_code, 3);
+}
+
+#[tokio::test]
+async fn a_run_is_compared_with_a_zone_file() {
+    let db = db("expect");
+    let file = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("expect.zone");
+    std::fs::write(
+        &file,
+        "$ORIGIN drift.example.\n$TTL 300\n@ MX 10 mail\n@ TXT \"v=spf1 mx -all\"\n@ CAA 0 issue \"ca.example\"\n\
+         www A 192.0.2.10\nshop A 192.0.2.21\nstaging A 192.0.2.40\n",
+    )
+    .unwrap();
+    // Only `api` is named; the other names come from the file.
+    let mut args = run_args(&db, "before", &["api"], true);
+    args.expect = Some(file.clone());
+    let out = run(&args, false).await;
+    let doc: Value = serde_json::from_str(&out.stdout).unwrap();
+    let drift: Vec<(&str, &str, &str)> = doc["report"]["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["check_id"].as_str().unwrap().starts_with("DRF"))
+        .map(|f| {
+            (
+                f["check_id"].as_str().unwrap(),
+                f["name"].as_str().unwrap(),
+                f["evidence"]["rtype"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        drift,
+        [
+            ("DRF-01", "shop.drift.example.", "A"),
+            ("DRF-01", "staging.drift.example.", "A"),
+            ("DRF-02", "api.drift.example.", "CNAME"),
+        ],
+        "{}",
+        out.stdout
+    );
+    assert_eq!(doc["run"]["names"].as_array().unwrap().len(), 4);
+
+    // A file that cannot be read stops the run before any query.
+    args.expect = Some(file.with_extension("missing"));
+    let out = run(&args, false).await;
+    assert_eq!(out.exit_code, 3);
+    assert!(out.stdout.contains("cannot read"), "{}", out.stdout);
 }

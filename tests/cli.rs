@@ -16,6 +16,7 @@ fn args(zone: &str, replay: &str, json: bool) -> CheckArgs {
         zone: zone.to_string(),
         json,
         deep: false,
+        sarif: None,
         source: SourceArgs {
             record: None,
             replay: Some(fixture(replay)),
@@ -110,6 +111,7 @@ async fn record_then_replay_gives_the_same_report() {
         zone: "broken.example".to_string(),
         json: true,
         deep: false,
+        sarif: None,
         source: SourceArgs {
             record: None,
             replay: Some(recorded),
@@ -142,10 +144,27 @@ async fn live_check_of_example_com() {
         zone: "example.com".to_string(),
         json: true,
         deep: false,
+        sarif: None,
         source: SourceArgs::default(),
     };
     let out = check(&live, false).await;
     assert_ne!(out.exit_code, 3, "{}", out.stdout);
     let doc: Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(doc["delegation_path"][0]["from_zone"], ".");
+}
+
+#[tokio::test]
+async fn findings_are_also_written_as_sarif() {
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("broken.sarif");
+    let _ = std::fs::remove_file(&path);
+    let mut a = args("broken.example", "broken.example.json", false);
+    a.sarif = Some(path.clone());
+    let out = check(&a, false).await;
+    assert!(out.stdout.starts_with("zoneblick check broken.example."));
+    let doc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(doc["version"], "2.1.0");
+    let results = doc["runs"][0]["results"].as_array().unwrap();
+    assert!(!results.is_empty());
+    assert!(results.iter().any(|r| r["level"] == "error"));
 }

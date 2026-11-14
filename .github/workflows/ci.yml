@@ -9,10 +9,12 @@ on:
     paths-ignore:
       - "docs/**"
       - "**.md"
+      - "Formula/**"
   pull_request:
     paths-ignore:
       - "docs/**"
       - "**.md"
+      - "Formula/**"
   workflow_dispatch:
 
 permissions:

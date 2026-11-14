@@ -154,7 +154,7 @@ pub fn parse_rdap(domain: &str, url: &str, body: &str) -> Result<Registration, S
                     .flatten()
             })
         })
-        .map(|name| printable(name));
+        .map(printable);
 
     let nameservers: BTreeSet<String> = doc["nameservers"]
         .as_array()

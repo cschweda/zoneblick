@@ -409,6 +409,25 @@ pub fn evidence_lines(evidence: &Evidence) -> Vec<String> {
         Evidence::ServerBehaviour { details, .. } | Evidence::ZoneDetail { details } => {
             details.clone()
         }
+        Evidence::Drift {
+            declared,
+            served,
+            source,
+            ..
+        } => {
+            let show = |v: &[String]| {
+                if v.is_empty() {
+                    "(nothing)".to_string()
+                } else {
+                    v.join(", ")
+                }
+            };
+            vec![
+                format!("zone file: {}", show(declared)),
+                format!("served:    {}", show(served)),
+                format!("file: {source}"),
+            ]
+        }
         Evidence::WildcardAlias { wildcard, target } => {
             vec![format!("{wildcard}  CNAME  {target}")]
         }

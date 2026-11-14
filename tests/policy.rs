@@ -168,6 +168,8 @@ async fn a_run_can_discover_names_from_certificate_logs() {
         db: db.clone(),
         json: true,
         deep: false,
+        expect: None,
+        sarif: None,
         source: SourceArgs {
             record: None,
             replay: Some(fixture.clone()),
@@ -267,8 +269,10 @@ async fn a_run_can_discover_names_at_digitalocean() {
             forget_names: vec![],
             discover: vec!["digitalocean".to_string()],
             deep: false,
+            expect: None,
             db,
             json: true,
+            sarif: None,
             source: SourceArgs {
                 record: None,
                 replay: Some(fixture),

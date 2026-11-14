@@ -8,6 +8,8 @@
 # build needs a C compiler. The Linux builds link statically against musl,
 # which needs the musl-tools package for its C compiler wrapper.
 # Linux and macOS archives are .tar.gz; the Windows archive is a .zip.
+# The Linux builds are also packaged as .deb and .rpm, and the .deb is
+# installed on the runner to check that the service starts.
 
 name: release
 
@@ -17,6 +19,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/release.yml"
+      - "packaging/**"
       - "Cargo.toml"
       - "Cargo.lock"
   workflow_dispatch:
@@ -117,12 +120,42 @@ jobs:
             tar -C dist -czf "dist/${name}.tar.gz" "${name}"
           fi
           rm -r "dist/${name}"
+      - name: Build the .deb and .rpm packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y rpm
+          version="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          fi
+          target="${{ matrix.target }}"
+          packaging/build-packages.sh "$version" "${target%%-*}" \
+            "target/${target}/release/zoneblick" dist
+          dpkg-deb --info dist/*.deb
+          rpm -qip dist/*.rpm
+          rpm -qlp dist/*.rpm
+      - name: Install the .deb and check the service starts
+        if: runner.os == 'Linux'
+        run: |
+          sudo dpkg -i dist/*.deb
+          /usr/bin/zoneblick --version
+          # The starter config has no zones; the daemon still serves.
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS http://127.0.0.1:8053/api/v1/health; then break; fi
+            sleep 1
+          done
+          systemctl is-active zoneblick
+          curl -fsS http://127.0.0.1:8053/api/v1/health | grep -q '"ok"'
+          sudo dpkg -r zoneblick
+          if systemctl is-active zoneblick; then echo "::error::still running after removal"; exit 1; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: zoneblick-${{ matrix.target }}
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
           retention-days: 7
 
@@ -141,7 +174,7 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: |
-          sha256sum *.tar.gz *.zip > SHA256SUMS
+          sha256sum *.tar.gz *.zip *.deb *.rpm > SHA256SUMS
           cat SHA256SUMS
       - name: Create the release
         env:
@@ -150,12 +183,62 @@ jobs:
         run: |
           prerelease=""
           case "$GITHUB_REF_NAME" in v0.*|*-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/SHA256SUMS \
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --title "zoneblick $GITHUB_REF_NAME" \
             --generate-notes \
             --verify-tag \
             $prerelease
+
+  formula:
+    name: update the Homebrew formula
+    if: github.ref_type == 'tag'
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: Write Formula/zoneblick.rb for this release and push it to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS --dir "$RUNNER_TEMP"
+          packaging/formula.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/SHA256SUMS" > Formula/zoneblick.rb
+          ruby -c Formula/zoneblick.rb
+          if git diff --quiet -- Formula/zoneblick.rb; then
+            echo "the formula is already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/zoneblick.rb
+          git commit -m "Homebrew formula for ${GITHUB_REF_NAME}"
+          git push origin HEAD:main
+
+  action:
+    name: run the GitHub Action against example.com
+    if: github.ref_type == 'tag'
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Installs the release just published and makes one live check of a
+      # zone reserved for examples. Findings do not fail it; a failed run does.
+      - uses: ./
+        id: zoneblick
+        with:
+          zone: example.com
+          version: ${{ github.ref_name }}
+          fail-on: never
+          sarif: zoneblick.sarif
+      - name: The SARIF file was written
+        run: |
+          jq -e '.version == "2.1.0"' zoneblick.sarif
+          echo "exit code: ${{ steps.zoneblick.outputs.exit-code }}"
 
   image:
     name: publish container image

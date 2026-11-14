@@ -195,9 +195,20 @@ fn chat_text(bold: &str, title: &str, text: &str) -> String {
     format!("{bold}{}{bold}\n```\n{body}\n```", title.replace('*', ""))
 }
 
+/// Slack reads `<...>` as links and mentions (`<!channel>`), and record
+/// data comes from the DNS, so the three characters Slack treats as
+/// markup are sent as entities.
+fn slack_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 /// The body of a Slack incoming-webhook message.
 pub fn slack_body(title: &str, text: &str) -> serde_json::Value {
-    serde_json::json!({ "text": chat_text("*", title, text) })
+    serde_json::json!({
+        "text": chat_text("*", &slack_escape(title), &slack_escape(text)),
+    })
 }
 
 /// The body of a Discord webhook message. Mentions are switched off.
@@ -409,6 +420,11 @@ mod tests {
         assert_eq!(
             slack["text"],
             "*zoneblick: example.test. 1 new finding*\n```\nOPENED 'x'\n```"
+        );
+        let loud = slack_body("t", "OPENED TXT <!channel> a&b <https://x.test|y>");
+        assert_eq!(
+            loud["text"],
+            "*t*\n```\nOPENED TXT &lt;!channel&gt; a&amp;b &lt;https://x.test|y&gt;\n```"
         );
         let long = "é".repeat(5000);
         let discord = discord_body("t", &long);

@@ -7,6 +7,7 @@
 pub mod consistency;
 pub mod deep;
 pub mod delegation;
+pub mod drift;
 pub mod policy;
 pub mod registration;
 pub mod security;
@@ -223,6 +224,14 @@ pub enum Evidence {
     ZoneDetail {
         details: Vec<String>,
     },
+    Drift {
+        rtype: String,
+        /// What the zone file says, and what the nameservers serve.
+        declared: Vec<String>,
+        served: Vec<String>,
+        /// The zone file.
+        source: String,
+    },
     WildcardAlias {
         /// The wildcard record's name, `*.<zone>`.
         wildcard: String,
@@ -285,6 +294,7 @@ impl Finding {
             Evidence::ServerBehaviour { address, .. } => address.to_string(),
             Evidence::ZoneDetail { .. } => String::new(),
             Evidence::UnclaimedService { service, .. } => service.clone(),
+            Evidence::Drift { rtype, .. } => rtype.clone(),
         };
         format!("{}|{}|{}", self.check_id, self.name, detail)
     }
@@ -470,6 +480,18 @@ pub const CATALOG: &[CheckInfo] = &[
         Severity::Notice,
         true,
     ),
+    check(
+        "DRF-01",
+        "Record set in the declared zone file is missing or differs",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "DRF-02",
+        "Record set is served but is not in the declared zone file",
+        Severity::Warning,
+        true,
+    ),
     deep_check(
         "SEC-06",
         "No valid proof that a missing name is missing",
@@ -614,6 +636,8 @@ const CHECKS: &[Check] = &[
     policy::tko_03_unregistered_target,
     policy::tko_04_spf_unregistered,
     policy::tko_05_wildcard,
+    drift::drf_01_declared_differs,
+    drift::drf_02_undeclared,
     deep::sec_06_denial,
     deep::sec_07_nsec3_parameters,
     deep::sec_08_rollover,

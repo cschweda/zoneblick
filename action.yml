@@ -1,0 +1,96 @@
+# A GitHub Action that checks a DNS zone with zoneblick.
+#
+#   - uses: cschweda/zoneblick@v0.12.0
+#     with:
+#       zone: example.org
+#       expect: dns/example.org.zone   # optional: a zone file to compare with
+#
+# It downloads the release binary for the runner (Linux or macOS), checks
+# its SHA-256, runs `zoneblick run`, and fails the job by `fail-on`.
+# Check only zones you control.
+
+name: zoneblick
+description: Check a DNS zone you control - delegation, consistency, DNSSEC, mail policy, takeover exposure and drift from a zone file.
+branding:
+  icon: eye
+  color: blue
+
+inputs:
+  zone:
+    description: The zone to check, for example example.org.
+    required: true
+  names:
+    description: Names in the zone to check as well, separated by spaces, such as "www mail".
+    default: ""
+  expect:
+    description: A zone file in the repository that the zone should match. Each difference is a finding.
+    default: ""
+  deep:
+    description: Set to "true" to make the deep checks too.
+    default: "false"
+  fail-on:
+    description: >-
+      When the job fails: "critical" (a critical finding), "findings" (any
+      finding) or "never" (only when the run itself fails).
+    default: critical
+  sarif:
+    description: Where to write the findings as SARIF, for upload to code scanning. Empty for none.
+    default: ""
+  db:
+    description: The database file. Restore it with actions/cache to see what changed since the last run.
+    default: ""
+  version:
+    description: The zoneblick release to use, such as v0.12.0. Default is the release this action was pinned to, or the newest.
+    default: ""
+
+outputs:
+  exit-code:
+    description: "zoneblick's exit code: 0 clean, 1 findings, 2 critical findings, 3 the run failed."
+    value: ${{ steps.run.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install zoneblick
+      shell: bash
+      env:
+        WANTED: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        version="$WANTED"
+        case "$ACTION_REF" in v[0-9]*.[0-9]*.[0-9]*) [ -n "$version" ] || version="$ACTION_REF" ;; esac
+        dir="$RUNNER_TEMP/zoneblick-bin"
+        mkdir -p "$dir"
+        sh "$ACTION_PATH/install.sh" --no-service --prefix "$dir" ${version:+--version "$version"}
+        echo "$dir/bin" >> "$GITHUB_PATH"
+    - name: Check the zone
+      id: run
+      shell: bash
+      env:
+        ZONE: ${{ inputs.zone }}
+        NAMES: ${{ inputs.names }}
+        EXPECT: ${{ inputs.expect }}
+        DEEP: ${{ inputs.deep }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        SARIF: ${{ inputs.sarif }}
+        DB: ${{ inputs.db }}
+      run: |
+        args=(run "$ZONE" --db "${DB:-$RUNNER_TEMP/zoneblick.sqlite}")
+        for name in $NAMES; do args+=(--name "$name"); done
+        if [ -n "$EXPECT" ]; then args+=(--expect "$EXPECT"); fi
+        if [ "$DEEP" = "true" ]; then args+=(--deep); fi
+        if [ -n "$SARIF" ]; then args+=(--sarif "$SARIF"); fi
+        code=0
+        zoneblick "${args[@]}" || code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        case "$FAIL_ON" in
+          never) limit=3 ;;
+          findings) limit=1 ;;
+          critical) limit=2 ;;
+          *) echo "::error::fail-on must be critical, findings or never"; exit 1 ;;
+        esac
+        if [ "$code" -ge "$limit" ]; then
+          echo "::error::zoneblick exited with $code for $ZONE"
+          exit 1
+        fi
