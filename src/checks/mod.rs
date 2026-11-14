@@ -8,6 +8,7 @@ pub mod consistency;
 pub mod deep;
 pub mod delegation;
 pub mod policy;
+pub mod registration;
 pub mod security;
 
 use std::net::IpAddr;
@@ -531,6 +532,26 @@ pub const CATALOG: &[CheckInfo] = &[
         "SOA contact is at a domain that takes no mail",
         Severity::Notice,
     ),
+    deep_check(
+        "REG-01",
+        "Domain registration has run out, or runs out within 30 days",
+        Severity::Warning,
+    ),
+    deep_check(
+        "REG-02",
+        "Domain has no transfer lock at the registry",
+        Severity::Notice,
+    ),
+    deep_check(
+        "REG-03",
+        "Registry holds the domain, or is about to delete it",
+        Severity::Critical,
+    ),
+    deep_check(
+        "REG-04",
+        "Registry record lists other nameservers than the parent zone serves",
+        Severity::Notice,
+    ),
 ];
 
 const fn deep_check(id: &'static str, title: &'static str, severity: Severity) -> CheckInfo {
@@ -607,6 +628,10 @@ const CHECKS: &[Check] = &[
     deep::soa_01_timers,
     deep::soa_02_mname,
     deep::soa_03_rname,
+    registration::reg_01_expiry,
+    registration::reg_02_transfer_lock,
+    registration::reg_03_hold,
+    registration::reg_04_nameservers,
 ];
 
 /// Run every Phase 0 check. Findings come back in a stable order: by

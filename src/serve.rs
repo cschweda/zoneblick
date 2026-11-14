@@ -351,11 +351,59 @@ fn prune(state: &Arc<AppState>) {
     }
 }
 
+/// Where the store keeps the time the last digest went out.
+const DIGEST_KEY: &str = "digest_sent_at";
+
+/// Send the digest when one is due. The first time the daemon runs with
+/// the digest switched on, the clock starts; nothing is sent yet.
+async fn digest(state: &Arc<AppState>) {
+    let Ok(Some(every)) = state.config.digest_interval() else {
+        return;
+    };
+    let now = now_unix();
+    let composed = {
+        let store = state.store();
+        let last = store
+            .meta(DIGEST_KEY)
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<u64>().ok());
+        match last {
+            None => {
+                let _ = store.set_meta(DIGEST_KEY, &now.to_string());
+                return;
+            }
+            Some(last) if now < last + every.as_secs() => return,
+            Some(last) => {
+                let _ = store.set_meta(DIGEST_KEY, &now.to_string());
+                crate::digest::compose(&store, last, now)
+            }
+        }
+    };
+    let digest = match composed {
+        Ok(digest) => digest,
+        Err(e) => return log(&format!("the digest could not be written: {e}")),
+    };
+    let out = alerts::Outgoing {
+        severity: digest.severity,
+        title: &digest.title,
+        text: &digest.text,
+        json: serde_json::to_value(&digest).unwrap_or_default(),
+    };
+    for (sink, result) in alerts::send_outgoing(&out, &state.config.alerts, &state.http).await {
+        match result {
+            Ok(()) => log(&format!("digest sent by {sink}")),
+            Err(e) => log(&format!("digest by {sink} failed: {e}")),
+        }
+    }
+}
+
 /// The scheduler: check every zone at startup, then once per interval.
 async fn scheduler(state: Arc<AppState>, every: Duration) {
     loop {
         run_all_zones(&state, "schedule").await;
         prune(&state);
+        digest(&state).await;
         *state.next_run_unix.lock().expect("lock") = Some(now_unix() + every.as_secs());
         tokio::time::sleep(every).await;
     }
@@ -525,6 +573,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/findings/unmute", axum::routing::post(api_unmute))
         .route("/diff", get(api_diff))
         .route("/ui", get(api_ui))
+        .route("/metrics", get(api_metrics))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         // Health needs no token, so a load balancer or uptime check can use it.
         .route("/health", get(api_health));
@@ -561,6 +610,114 @@ async fn api_health() -> Json<serde_json::Value> {
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
     }))
+}
+
+/// A label value in the Prometheus text format.
+fn label(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+/// The state of every zone in the Prometheus text format.
+pub fn metrics_text(state: &AppState) -> Result<String, StoreError> {
+    let store = state.store();
+    let mut out = String::new();
+    let mut family = |name: &str, kind: &str, help: &str, rows: Vec<(String, String)>| {
+        out.push_str(&format!("# HELP {name} {help}\n# TYPE {name} {kind}\n"));
+        for (labels, value) in rows {
+            out.push_str(&format!("{name}{labels} {value}\n"));
+        }
+    };
+    family(
+        "zoneblick_info",
+        "gauge",
+        "The running version.",
+        vec![(
+            format!("{{version=\"{}\"}}", env!("CARGO_PKG_VERSION")),
+            "1".to_string(),
+        )],
+    );
+    let zones = store.zones()?;
+    let errors = state.errors.lock().expect("lock").clone();
+    let mut findings = Vec::new();
+    let mut last_run = Vec::new();
+    let mut runs = Vec::new();
+    let mut names = Vec::new();
+    let mut failed = Vec::new();
+    for z in &zones {
+        let zone = format!("zone=\"{}\"", label(&z.zone));
+        let rows = store.finding_rows(Some(&z.zone), Some("open"))?;
+        for severity in Severity::ALL {
+            let n = rows.iter().filter(|r| r.severity == severity).count();
+            findings.push((
+                format!("{{{zone},severity=\"{}\"}}", severity.as_str()),
+                n.to_string(),
+            ));
+        }
+        if let Some(run) = z.last_run {
+            last_run.push((format!("{{{zone}}}"), run.started_at_unix.to_string()));
+        }
+        runs.push((format!("{{{zone}}}"), z.runs.to_string()));
+        names.push((format!("{{{zone}}}"), z.names.to_string()));
+        failed.push((
+            format!("{{{zone}}}"),
+            u8::from(errors.contains_key(&z.zone)).to_string(),
+        ));
+    }
+    // A configured zone whose every run has failed is not in the store.
+    for z in &state.config.zones {
+        if !zones.iter().any(|s| s.zone == z.name) {
+            failed.push((
+                format!("{{zone=\"{}\"}}", label(&z.name)),
+                u8::from(errors.contains_key(&z.name)).to_string(),
+            ));
+        }
+    }
+    family(
+        "zoneblick_open_findings",
+        "gauge",
+        "Open findings by zone and severity; muted findings are not counted.",
+        findings,
+    );
+    family(
+        "zoneblick_last_run_timestamp_seconds",
+        "gauge",
+        "When the latest stored run of the zone started.",
+        last_run,
+    );
+    family(
+        "zoneblick_stored_runs",
+        "gauge",
+        "Runs of the zone kept in the database.",
+        runs,
+    );
+    family(
+        "zoneblick_names",
+        "gauge",
+        "Names checked in the zone besides the apex.",
+        names,
+    );
+    family(
+        "zoneblick_last_run_failed",
+        "gauge",
+        "1 when the zone's most recent run failed, 0 otherwise.",
+        failed,
+    );
+    Ok(out)
+}
+
+async fn api_metrics(State(state): State<Arc<AppState>>) -> Result<Response, ApiError> {
+    let text = metrics_text(&state)?;
+    Ok((
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        text,
+    )
+        .into_response())
 }
 
 async fn api_zones(

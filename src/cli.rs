@@ -82,6 +82,13 @@ pub enum Command {
     /// does this by itself after every round of checks.
     Prune(PruneArgs),
 
+    /// Summarise every stored zone over a period: runs made, findings
+    /// open now, and findings opened and resolved in the period.
+    ///
+    /// The daemon sends the same summary on a schedule when the config
+    /// file sets `digest` under `[alerts]`.
+    Digest(DigestArgs),
+
     /// Run the daemon: check every zone in the config file on a schedule,
     /// send alerts when something changes, and serve the API and web UI.
     Serve(ServeArgs),
@@ -129,6 +136,21 @@ pub struct BaselineArgs {
     /// The database file.
     #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
     pub db: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct DigestArgs {
+    /// How far back the summary reaches, for example 7d.
+    #[arg(long, value_name = "TIME", default_value = "7d")]
+    pub since: String,
+
+    /// The database file.
+    #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
+    pub db: PathBuf,
+
+    /// Print one JSON document instead of text.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -976,6 +998,29 @@ pub fn prune(args: &PruneArgs) -> CommandOutput {
             ..Default::default()
         },
         Err(e) => failed("", false, &e),
+    }
+}
+
+/// Run `zoneblick digest`.
+pub fn digest(args: &DigestArgs) -> CommandOutput {
+    let result = (|| -> Result<String, CliError> {
+        let since = crate::config::parse_duration(&args.since)
+            .map_err(|e| CliError::Usage(e.to_string().replace("configuration error: ", "")))?;
+        let store = open_existing(&args.db)?;
+        let now = now_unix();
+        let digest = crate::digest::compose(&store, now.saturating_sub(since.as_secs()), now)?;
+        Ok(if args.json {
+            json::render(&digest)
+        } else {
+            format!("{}\n{}\n", digest.title, digest.text)
+        })
+    })();
+    match result {
+        Ok(stdout) => CommandOutput {
+            stdout,
+            ..Default::default()
+        },
+        Err(e) => failed("", args.json, &e),
     }
 }
 

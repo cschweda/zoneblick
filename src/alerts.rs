@@ -167,6 +167,62 @@ pub fn compose(outcome: &RunOutcome) -> Option<Alert> {
     })
 }
 
+/// What goes out to the sinks: an alert about one run, or a digest.
+pub struct Outgoing<'a> {
+    pub severity: Severity,
+    pub title: &'a str,
+    /// Plain text, one item per line.
+    pub text: &'a str,
+    /// The JSON document a webhook receives.
+    pub json: serde_json::Value,
+}
+
+/// Chat services cut long messages off; stay well inside their limits.
+const CHAT_TEXT_LIMIT: usize = 1700;
+
+/// The text for a chat message: the title in bold, the lines in a code
+/// block. Backticks in the text cannot close the block.
+fn chat_text(bold: &str, title: &str, text: &str) -> String {
+    let mut body: String = text.replace('`', "'");
+    if body.len() > CHAT_TEXT_LIMIT {
+        let mut cut = CHAT_TEXT_LIMIT;
+        while !body.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        body.truncate(cut);
+        body.push_str("\n...");
+    }
+    format!("{bold}{}{bold}\n```\n{body}\n```", title.replace('*', ""))
+}
+
+/// The body of a Slack incoming-webhook message.
+pub fn slack_body(title: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({ "text": chat_text("*", title, text) })
+}
+
+/// The body of a Discord webhook message. Mentions are switched off.
+pub fn discord_body(title: &str, text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "content": chat_text("**", title, text),
+        "allowed_mentions": { "parse": [] },
+    })
+}
+
+async fn post_json(
+    http: &reqwest::Client,
+    url: &str,
+    body: &serde_json::Value,
+) -> Result<(), String> {
+    http.post(url)
+        .json(body)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map(|_| ())
+        // The address of a chat webhook is a secret; keep it out of logs.
+        .map_err(|e| e.without_url().to_string())
+}
+
 /// Send an alert to every configured sink. Returns one result per sink; a
 /// failing sink does not stop the others.
 pub async fn send(
@@ -174,30 +230,48 @@ pub async fn send(
     config: &AlertsConfig,
     http: &reqwest::Client,
 ) -> Vec<(&'static str, Result<(), String>)> {
+    let out = Outgoing {
+        severity: alert.severity,
+        title: &alert.title,
+        text: &alert.text,
+        json: serde_json::to_value(alert).unwrap_or_default(),
+    };
+    send_outgoing(&out, config, http).await
+}
+
+/// Send one message to every configured sink.
+pub async fn send_outgoing(
+    out: &Outgoing<'_>,
+    config: &AlertsConfig,
+    http: &reqwest::Client,
+) -> Vec<(&'static str, Result<(), String>)> {
     let mut results = Vec::new();
     if let Some(webhook) = &config.webhook {
-        let result = http
-            .post(&webhook.url)
-            .json(alert)
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-            .map(|_| ())
-            .map_err(|e| e.to_string());
-        results.push(("webhook", result));
+        results.push(("webhook", post_json(http, &webhook.url, &out.json).await));
+    }
+    if let Some(slack) = &config.slack {
+        let body = slack_body(out.title, out.text);
+        results.push(("slack", post_json(http, &slack.webhook_url, &body).await));
+    }
+    if let Some(discord) = &config.discord {
+        let body = discord_body(out.title, out.text);
+        results.push((
+            "discord",
+            post_json(http, &discord.webhook_url, &body).await,
+        ));
     }
     if let Some(ntfy) = &config.ntfy {
-        let priority = match alert.severity {
+        let priority = match out.severity {
             Severity::Critical => "5",
             Severity::Warning => "4",
             _ => "3",
         };
         let mut request = http
             .post(&ntfy.url)
-            .header("Title", &alert.title)
+            .header("Title", out.title)
             .header("Priority", priority)
             .header("Tags", "dns")
-            .body(alert.text.clone());
+            .body(out.text.to_string());
         if let Some(token) = &ntfy.token {
             request = request.bearer_auth(token);
         }
@@ -210,12 +284,12 @@ pub async fn send(
         results.push(("ntfy", result));
     }
     if let Some(email) = &config.email {
-        results.push(("email", send_email(alert, email).await));
+        results.push(("email", send_email(out.title, out.text, email).await));
     }
     results
 }
 
-async fn send_email(alert: &Alert, config: &EmailConfig) -> Result<(), String> {
+async fn send_email(title: &str, text: &str, config: &EmailConfig) -> Result<(), String> {
     use lettre::message::header::ContentType;
     use lettre::transport::smtp::authentication::Credentials;
     use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
@@ -228,9 +302,9 @@ async fn send_email(alert: &Alert, config: &EmailConfig) -> Result<(), String> {
                 .map_err(|e| format!("from address: {e}"))?,
         )
         .to(config.to.parse().map_err(|e| format!("to address: {e}"))?)
-        .subject(alert.title.clone())
+        .subject(title.to_string())
         .header(ContentType::TEXT_PLAIN)
-        .body(alert.text.clone())
+        .body(text.to_string())
         .map_err(|e| e.to_string())?;
 
     let builder = match config.tls.as_str() {
@@ -327,6 +401,21 @@ mod tests {
         assert_eq!(Report::new(obs.clone(), findings).findings.len(), 1);
         let alert = compose(&outcome_of(&mut store, obs)).unwrap();
         assert_eq!(alert.findings_opened.len(), 1);
+    }
+
+    #[test]
+    fn chat_messages_are_bounded_and_cannot_break_out() {
+        let slack = slack_body("zoneblick: *example.test.* 1 new finding", "OPENED `x`");
+        assert_eq!(
+            slack["text"],
+            "*zoneblick: example.test. 1 new finding*\n```\nOPENED 'x'\n```"
+        );
+        let long = "é".repeat(5000);
+        let discord = discord_body("t", &long);
+        let content = discord["content"].as_str().unwrap();
+        assert!(content.len() < 2000, "{}", content.len());
+        assert!(content.starts_with("**t**\n```\n") && content.ends_with("\n...\n```"));
+        assert_eq!(discord["allowed_mentions"]["parse"], serde_json::json!([]));
     }
 
     #[test]

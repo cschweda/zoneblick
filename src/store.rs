@@ -19,7 +19,7 @@ use crate::observe::{
 };
 
 /// Version of the database layout, kept in SQLite's `user_version`.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 /// Changes to the layout since version 1, in order. Entry `i` takes a
 /// database from version `i + 1` to `i + 2`. A new database is created at
@@ -34,6 +34,11 @@ const MIGRATIONS: &[&str] = &[
          zone_id    INTEGER PRIMARY KEY REFERENCES zones(id),
          run_id     INTEGER NOT NULL REFERENCES runs(id),
          pinned_at  INTEGER NOT NULL
+     );",
+    // 5: small values the daemon keeps between restarts.
+    "CREATE TABLE meta (
+         key    TEXT PRIMARY KEY,
+         value  TEXT NOT NULL
      );",
 ];
 
@@ -290,6 +295,24 @@ impl Store {
             .ok_or_else(|| StoreError::UnknownZone {
                 zone: zone.to_string(),
             })
+    }
+
+    /// A small value kept between restarts, such as when the last digest
+    /// went out.
+    pub fn meta(&self, key: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<(), StoreError> {
+        self.conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
     }
 
     /// The names remembered for a zone, besides the apex. Empty for a zone
@@ -1542,6 +1565,7 @@ mod tests {
                 rname_address: None,
                 previous_dnskeys: None,
                 origins: Vec::new(),
+                registration: None,
             });
             obs
         };

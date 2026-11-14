@@ -199,6 +199,21 @@ pub struct AlertsConfig {
     pub webhook: Option<WebhookConfig>,
     #[serde(default)]
     pub ntfy: Option<NtfyConfig>,
+    #[serde(default)]
+    pub slack: Option<ChatConfig>,
+    #[serde(default)]
+    pub discord: Option<ChatConfig>,
+    /// How often a summary of every zone is sent to the same places, for
+    /// example "7d". Left out or "off": never.
+    #[serde(default)]
+    pub digest: Option<String>,
+}
+
+/// An incoming webhook of a chat service (Slack or Discord).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatConfig {
+    pub webhook_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -292,6 +307,19 @@ impl Config {
         config.interval()?;
         config.retention.limits()?;
         config.deep_interval()?;
+        config.digest_interval()?;
+        for (section, chat) in [
+            ("slack", &config.alerts.slack),
+            ("discord", &config.alerts.discord),
+        ] {
+            if let Some(chat) = chat
+                && !chat.webhook_url.starts_with("https://")
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "[alerts.{section}] webhook_url must start with https://"
+                )));
+            }
+        }
         let bind = config.bind_addr()?;
         if !bind.ip().is_loopback() && config.server.token_sha256.is_none() {
             return Err(ConfigError::Invalid(format!(
@@ -359,6 +387,14 @@ impl Config {
     /// How often a deep run is made; `None` when deep runs are off.
     pub fn deep_interval(&self) -> Result<Option<Duration>, ConfigError> {
         match self.schedule.deep.as_deref() {
+            None | Some("off") => Ok(None),
+            Some(text) => parse_duration(text).map(Some),
+        }
+    }
+
+    /// How often the digest is sent; `None` when it is off.
+    pub fn digest_interval(&self) -> Result<Option<Duration>, ConfigError> {
+        match self.alerts.digest.as_deref() {
             None | Some("off") => Ok(None),
             Some(text) => parse_duration(text).map(Some),
         }
@@ -472,6 +508,32 @@ smtp_host = "smtp.example.org"
                 "[server]\nbind = \"0.0.0.0:8053\"\ntoken_sha256 = \"{hash}\""
             ))
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn chat_alerts_and_the_digest() {
+        let config = Config::parse(
+            r#"
+[alerts]
+digest = "7d"
+[alerts.slack]
+webhook_url = "https://hooks.slack.com/services/T/B/x"
+[alerts.discord]
+webhook_url = "https://discord.com/api/webhooks/1/x"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.digest_interval().unwrap(),
+            Some(Duration::from_secs(7 * 86_400))
+        );
+        assert!(config.alerts.slack.is_some() && config.alerts.discord.is_some());
+        assert_eq!(Config::parse("").unwrap().digest_interval().unwrap(), None);
+        let err = |text: &str| Config::parse(text).unwrap_err().to_string();
+        assert!(err("[alerts]\ndigest = \"weekly\"").contains("not a length of time"));
+        assert!(
+            err("[alerts.slack]\nwebhook_url = \"http://hooks.slack.com/x\"").contains("https://")
         );
     }
 

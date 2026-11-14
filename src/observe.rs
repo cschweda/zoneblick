@@ -563,6 +563,24 @@ pub struct AddressOrigin {
     pub prefix: Option<String>,
 }
 
+/// What the registry says about the registered domain a zone is in, read
+/// over RDAP.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Registration {
+    /// The registered domain: the zone itself, or the one it is under.
+    pub domain: String,
+    /// The RDAP address that answered.
+    pub url: Option<String>,
+    /// Status values, lowercase, for example `client transfer prohibited`.
+    pub status: Vec<String>,
+    pub expires_unix: Option<u64>,
+    pub registrar: Option<String>,
+    /// The nameservers the registry lists, sorted.
+    pub nameservers: Vec<String>,
+    /// Why nothing could be read, when nothing could.
+    pub error: Option<String>,
+}
+
 /// What a deep run collects on top of a light one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeepObservation {
@@ -579,6 +597,9 @@ pub struct DeepObservation {
     /// Which network announces each nameserver address.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub origins: Vec<AddressOrigin>,
+    /// The domain's registration, from the registry's RDAP service.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration: Option<Registration>,
 }
 
 /// Everything recorded about one zone in one run.

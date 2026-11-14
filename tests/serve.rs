@@ -528,3 +528,62 @@ async fn a_deep_run_is_made_when_asked_or_due() {
     assert!(Config::parse("[schedule]\ndeep = \"sometimes\"\n").is_err());
     assert!(Config::parse("[schedule]\ndeep = \"off\"\n").is_ok());
 }
+
+#[tokio::test]
+async fn metrics_are_served_in_the_prometheus_text_format() {
+    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
+    let zone = state.config.zones[0].clone();
+    assert_eq!(run_zone(&state, &zone, "test").await, Ok(1));
+    assert_eq!(run_zone(&state, &zone, "test").await, Ok(2));
+    let base = serve(router(state)).await;
+
+    let r = reqwest::Client::new()
+        .get(format!("{base}/api/v1/metrics"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+    assert!(
+        r.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("text/plain")
+    );
+    let text = r.text().await.unwrap();
+    for line in [
+        "# TYPE zoneblick_open_findings gauge",
+        "zoneblick_open_findings{zone=\"drift.example.\",severity=\"warning\"} 1",
+        "zoneblick_open_findings{zone=\"drift.example.\",severity=\"critical\"} 0",
+        "zoneblick_stored_runs{zone=\"drift.example.\"} 2",
+        "zoneblick_names{zone=\"drift.example.\"} 4",
+        "zoneblick_last_run_failed{zone=\"drift.example.\"} 0",
+    ] {
+        assert!(
+            text.lines().any(|l| l == line),
+            "missing {line} in:\n{text}"
+        );
+    }
+    assert!(text.contains("zoneblick_last_run_timestamp_seconds{zone=\"drift.example.\"} "));
+    assert!(text.starts_with("# HELP zoneblick_info "));
+}
+
+#[tokio::test]
+async fn metrics_need_the_token_when_one_is_set() {
+    let hash = token_hash("s3cret-token");
+    let state = AppState::with_store(
+        config(&format!("[server]\ntoken_sha256 = \"{hash}\"")),
+        Store::open_in_memory().unwrap(),
+        drifting(),
+    );
+    let base = serve(router(state)).await;
+    let url = format!("{base}/api/v1/metrics");
+    let http = reqwest::Client::new();
+    assert_eq!(http.get(&url).send().await.unwrap().status().as_u16(), 401);
+    let ok = http
+        .get(&url)
+        .bearer_auth("s3cret-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok.status().as_u16(), 200);
+}

@@ -797,6 +797,7 @@ mod tests {
             rname_address: None,
             previous_dnskeys: None,
             origins: Vec::new(),
+            registration: None,
         });
         obs
     }

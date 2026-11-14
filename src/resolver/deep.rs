@@ -463,6 +463,7 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
         rname_address: None,
         previous_dnskeys: None,
         origins,
+        registration: None,
     };
     if let Some(soa) = soa {
         let mut lookup = resolver.lookup(&soa.mname, QType::A).await;
@@ -482,6 +483,7 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
             deep.rname_domain = Some(domain);
         }
     }
+    deep.registration = crate::registration::collect(&client, obs).await;
     obs.deep = Some(deep);
 }
 
