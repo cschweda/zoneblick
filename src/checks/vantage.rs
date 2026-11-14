@@ -14,9 +14,7 @@ use crate::vantage::{servers_of, sets_of};
 /// called stale and not compared.
 const STALE_SECS: u64 = 86_400;
 
-fn fresh<'a>(
-    obs: &'a ZoneObservation,
-) -> impl Iterator<Item = (&'a str, &'a crate::vantage::VantageReport)> {
+fn fresh(obs: &ZoneObservation) -> impl Iterator<Item = (&str, &crate::vantage::VantageReport)> {
     obs.vantages.iter().filter_map(|v| {
         let report = v.report.as_ref()?;
         (obs.started_at_unix.abs_diff(report.run_started_unix) <= STALE_SECS)
