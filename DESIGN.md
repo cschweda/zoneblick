@@ -1,6 +1,6 @@
 # zoneblick — High-Level Design
 
-**Author:** Christopher Schweda · **Date:** 2026-11-13 · **Status:** Draft v0.2 (adds deep checks) · License question settled · `SVC` group proposed 2026-11-14
+**Author:** Christopher Schweda · **Date:** 2026-11-13 · **Status:** Draft v0.2 (adds deep checks) · License question settled · `SVC` and `IPV` groups proposed 2026-11-14
 
 > *zoneblick* — *zone* + German *Blick* (a look, a glance). A self-hosted watchdog for DNS zones.
 
@@ -282,6 +282,59 @@ SVC-06 is the one with no equivalent elsewhere in the tool. When a server cannot
 - A QUIC connection to prove HTTP/3 works. That needs a QUIC client and belongs in a separate tool.
 - GREASE ECH, and anything about serving or publishing ECH configurations.
 - A finding for "this zone could use ECH and does not".
+
+### Proposed: IPv6 readiness (`IPV`)
+
+**Status:** proposed 2026-11-14, not built. Written against the code as of 0.14.0.
+
+#### Why
+
+A growing share of clients have no IPv4 address of their own and reach IPv4 through a translator, or not at all. A name that looks fine from a dual-stack connection can fail for them, and the failure hides behind fallback: the browser quietly retries over IPv4, so nobody notices that the IPv6 side is broken.
+
+That makes these faults a good fit for the selection rule. An IPv6 address that stops answering after a firewall change appears over time and stays unseen until something looks for it.
+
+#### What exists already
+
+- CON-04 reports a nameserver that does not answer on its published IPv6 address.
+- TLS-01 already opens a connection to port 443 of each name in a deep run and reads the certificate.
+- A machine without working IPv6 skips the IPv6 checks, and the report says so in one `info` finding. This group follows the same rule.
+
+#### Checks
+
+| ID | Check | Severity | Run level |
+|---|---|---|---|
+| IPV-01 | A name has an A record and no AAAA record | notice | light |
+| IPV-02 | An AAAA record holds an address no client can use: loopback, private, IPv4-mapped, or a retired transition range | warning | light |
+| IPV-03 | The zone cannot be resolved over IPv6 alone: at some level of the delegation no nameserver is reachable over IPv6 | warning | light |
+| IPV-04 | An AAAA record is published and nothing accepts a connection there on port 443 or 80 | warning | deep |
+| IPV-05 | The name serves a different certificate over IPv6 than over IPv4 | warning | deep |
+| IPV-06 | The name gives a different HTTP status or redirect over IPv6 than over IPv4 | warning | deep |
+| IPV-07 | A connection over IPv6 takes much longer to open than one over IPv4 | notice | deep |
+| IPV-08 | A large response stalls over IPv6 and not over IPv4, which points to a path that drops "packet too big" messages | warning | deep |
+
+IPV-01 is a notice and can be muted for a whole zone. Many zones have no IPv6 by choice.
+
+IPV-04 is the most useful of the group. A published address that does not answer is worse than no address at all: every IPv6-capable client tries it first and waits before falling back.
+
+IPV-05 and IPV-06 compare the two address families and nothing else, so a site that is broken on both is left to TLS-01. Rotating names, which zoneblick already learns, are compared by certificate names and status, not by address.
+
+#### What it needs
+
+- **No new dependency** for IPV-01 to IPV-07. The resolver, the TLS client and the connection limits are in the build.
+- **IPV-03** needs the resolver to walk the delegation a second time using IPv6 transport only.
+- **IPV-08** needs control over packet size on the socket and behaves differently per operating system. It is the hard one and comes last; it may ship for Linux first.
+- **Connections** follow the same limits, deadlines and private-address rules as TLS-01.
+
+#### Build order
+
+1. IPV-01 and IPV-02: rules over records the store already holds.
+2. IPV-03: the IPv6-only walk.
+3. IPV-04 to IPV-07: one extra connection per address family beside TLS-01's.
+4. IPV-08.
+
+#### Out of scope: whole pages
+
+Loading a page in a browser and reporting every resource it pulls in, with and without a NAT64 translator, is a separate tool. It needs a browser, works on URLs and third-party hosts, not zones, and serves the person building the site. It will share zoneblick's resolver code and live in its own repository.
 
 ## 6. Data model and drift
 
