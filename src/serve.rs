@@ -620,10 +620,29 @@ pub async fn serve(
         {
             std::fs::remove_file(&path).map_err(failed)?;
         }
-        let listener = tokio::net::UnixListener::bind(&path).map_err(failed)?;
+        // The socket is made inside a directory only this user can enter,
+        // given its permissions there, and then moved into place. That
+        // way it is never reachable with the wider permissions a new
+        // socket file starts out with.
+        use std::os::unix::fs::DirBuilderExt;
+        let nursery = path.with_extension(format!("new-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&nursery);
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&nursery)
+            .map_err(failed)?;
+        let made = nursery.join("s");
+        let listener = tokio::net::UnixListener::bind(&made).map_err(failed);
         // The owner and the group may connect; nobody else. This is what
         // keeps other local users out, with or without a token.
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o660)).map_err(failed)?;
+        let placed = listener.and_then(|listener| {
+            std::fs::set_permissions(&made, std::fs::Permissions::from_mode(0o660))
+                .and_then(|()| std::fs::rename(&made, &path))
+                .map_err(failed)
+                .map(|()| listener)
+        });
+        let _ = std::fs::remove_dir_all(&nursery);
+        let listener = placed?;
         started(&format!("the socket file {}", path.display()));
         if state.config.server.token_sha256.is_none() {
             log("no API token is set; the API is open to users who may open the socket file");

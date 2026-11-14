@@ -488,6 +488,56 @@ pub(crate) async fn cname_targets(
     out
 }
 
+/// Resolve what the SRV, HTTPS, SVCB and PTR records of a stored run
+/// point at. A target of `.` means "no service here" (SRV) or "this name
+/// itself" (HTTPS, SVCB), and is left alone. For a PTR record the lookup
+/// is for the address family of the reverse zone, so the answer can be
+/// compared with the address the record's own name stands for.
+pub(crate) async fn service_targets(
+    resolver: &Resolver,
+    records: &[RecordObservation],
+) -> Vec<TargetResolution> {
+    let mut wanted: BTreeSet<(String, &'static str, String)> = BTreeSet::new();
+    for rec in records {
+        let (rtype, field) = match rec.qtype {
+            QType::Srv => ("SRV", 3),
+            QType::Https => ("HTTPS", 1),
+            QType::Svcb => ("SVCB", 1),
+            QType::Ptr => ("PTR", 0),
+            _ => continue,
+        };
+        let Some(answer) = rec.outcome.answer().filter(|a| a.authoritative) else {
+            continue;
+        };
+        for rdata in &answer.rdata {
+            let Some(target) = rdata.split_whitespace().nth(field) else {
+                continue;
+            };
+            if target == "." {
+                continue;
+            }
+            if let Ok(target) = normalise_zone(target) {
+                wanted.insert((rec.name.clone(), rtype, target));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (owner, rtype, target) in wanted.into_iter().take(MAX_TARGETS) {
+        if rtype == "PTR" && owner.ends_with(".ip6.arpa.") {
+            out.push(TargetResolution {
+                lookup: resolver.lookup(&target, QType::Aaaa).await,
+                owner,
+                rtype: rtype.to_string(),
+                target,
+                has_ipv6_only: false,
+            });
+        } else {
+            out.push(resolve_target(resolver, &owner, rtype, &target).await);
+        }
+    }
+    out
+}
+
 /// At most this many hostnames are fetched per run.
 const MAX_SERVICE_PROBES: usize = 20;
 

@@ -284,7 +284,7 @@ pub async fn observe_zone_records(
 
     let mut tasks = JoinSet::new();
     for name in &all_names {
-        for qtype in QType::SWEEP {
+        for qtype in QType::sweep_for(name, &zone) {
             // A CNAME cannot exist at a zone apex.
             if qtype == QType::Cname && *name == zone {
                 continue;
@@ -309,6 +309,9 @@ pub async fn observe_zone_records(
         policy
             .targets
             .extend(cname_targets(&resolver, &obs.records).await);
+        policy
+            .targets
+            .extend(super::policy::service_targets(&resolver, &obs.records).await);
         policy.services = service_probes(&resolver, &client, &policy.targets).await;
     }
     Ok(obs)
@@ -409,6 +412,8 @@ fn rdata_raw_text(data: &RData) -> String {
         RData::NS(n) => norm(&n.0),
         RData::CNAME(c) => norm(&c.0),
         RData::MX(mx) => format!("{} {}", mx.preference, norm(&mx.exchange)),
+        RData::PTR(p) => norm(&p.0),
+        RData::SRV(s) => format!("{} {} {} {}", s.priority, s.weight, s.port, norm(&s.target)),
         RData::TXT(txt) => txt
             .txt_data
             .iter()

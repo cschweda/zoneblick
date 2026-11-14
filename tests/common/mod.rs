@@ -105,6 +105,10 @@ fn record_type(qtype: QType) -> RecordType {
         QType::Cds => RecordType::CDS,
         QType::Cdnskey => RecordType::CDNSKEY,
         QType::Tlsa => RecordType::TLSA,
+        QType::Srv => RecordType::SRV,
+        QType::Https => RecordType::HTTPS,
+        QType::Svcb => RecordType::SVCB,
+        QType::Ptr => RecordType::PTR,
     }
 }
 
@@ -356,7 +360,7 @@ impl World {
     /// Everything a server says about one name: the given records, and
     /// "no such data" for every other type a stored run asks about.
     pub fn serve_name(&mut self, server: &str, zone: &str, owner: &str, records: &[Record]) {
-        for qtype in QType::SWEEP {
+        for qtype in QType::sweep_for(owner, zone) {
             let matching: Vec<Record> = records
                 .iter()
                 .filter(|r| r.record_type() == record_type(qtype))

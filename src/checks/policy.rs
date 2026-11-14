@@ -296,6 +296,117 @@ pub fn tko_01_dangling_cname(obs: &ZoneObservation) -> Vec<Finding> {
         .collect()
 }
 
+/// TKO-06: an SRV, HTTPS or SVCB record names a target that does not
+/// exist. Clients of the service are sent to a name someone else may be
+/// able to create; when its whole domain is unregistered, anyone can.
+pub fn tko_06_service_target(obs: &ZoneObservation) -> Vec<Finding> {
+    policy(obs)
+        .iter()
+        .flat_map(|p| &p.targets)
+        .filter(|t| matches!(t.rtype.as_str(), "SRV" | "HTTPS" | "SVCB"))
+        .filter(|t| t.lookup.status == "nxdomain")
+        .map(|t| {
+            let (severity, summary) = match t.lookup.unregistered_domain() {
+                Some(domain) => (
+                    Severity::Critical,
+                    format!(
+                        "the {} record of {} points at {}, in the unregistered domain {domain}",
+                        t.rtype, t.owner, t.target
+                    ),
+                ),
+                None => (
+                    Severity::Warning,
+                    format!(
+                        "the {} record of {} points at {}, which does not exist",
+                        t.rtype, t.owner, t.target
+                    ),
+                ),
+            };
+            dangling(
+                "TKO-06", severity, summary, &t.owner, &t.rtype, &t.target, &t.lookup,
+            )
+        })
+        .collect()
+}
+
+/// The address a name in a reverse zone stands for: `4.3.2.1.in-addr.arpa.`
+/// is 1.2.3.4, and 32 nibbles under `ip6.arpa.` are an IPv6 address.
+pub(crate) fn reverse_address(name: &str) -> Option<std::net::IpAddr> {
+    if let Some(rest) = name.strip_suffix(".in-addr.arpa.") {
+        let octets: Vec<u8> = rest
+            .split('.')
+            .rev()
+            .map(|o| o.parse::<u8>().ok())
+            .collect::<Option<_>>()?;
+        let octets: [u8; 4] = octets.try_into().ok()?;
+        return Some(std::net::IpAddr::from(octets));
+    }
+    let rest = name.strip_suffix(".ip6.arpa.")?;
+    let nibbles: Vec<u8> = rest
+        .split('.')
+        .rev()
+        .map(|n| match n.len() {
+            1 => u8::from_str_radix(n, 16).ok(),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    if nibbles.len() != 32 {
+        return None;
+    }
+    let mut bytes = [0u8; 16];
+    for (i, pair) in nibbles.chunks(2).enumerate() {
+        bytes[i] = pair[0] << 4 | pair[1];
+    }
+    Some(std::net::IpAddr::from(bytes))
+}
+
+/// REV-01: a PTR record names a host that does not resolve back to the
+/// address the record is for. Mail servers and some login checks want the
+/// two directions to agree.
+pub fn rev_01_forward_confirmation(obs: &ZoneObservation) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for t in policy(obs)
+        .iter()
+        .flat_map(|p| &p.targets)
+        .filter(|t| t.rtype == "PTR")
+    {
+        let Some(address) = reverse_address(&t.owner) else {
+            continue;
+        };
+        let forward: Vec<std::net::IpAddr> = t
+            .lookup
+            .rdata
+            .iter()
+            .filter_map(|r| r.parse().ok())
+            .collect();
+        let problem = if t.lookup.is_empty_answer() {
+            format!("{} has no address record for this family", t.target)
+        } else if t.lookup.exists() && !forward.contains(&address) {
+            format!(
+                "{} resolves to {}, not to {address}",
+                t.target,
+                t.lookup.rdata.join(", ")
+            )
+        } else {
+            // It matches, or the forward lookup failed and says nothing.
+            continue;
+        };
+        findings.push(Finding::new(
+            "REV-01",
+            Severity::Notice,
+            &t.owner,
+            format!(
+                "the PTR record for {address} names {}, which does not point back at it",
+                t.target
+            ),
+            Evidence::ZoneDetail {
+                details: vec![format!("{}  PTR  {}", t.owner, t.target), problem],
+            },
+        ));
+    }
+    findings
+}
+
 /// TKO-02: a hostname is an alias of a hosting service, and the service
 /// answers that nobody has claimed the site. Anyone with an account there
 /// can claim it and serve this hostname.
@@ -405,6 +516,25 @@ pub fn tko_05_wildcard(obs: &ZoneObservation) -> Vec<Finding> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reverse_names_are_read_as_addresses() {
+        let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+        assert_eq!(
+            reverse_address("4.3.2.192.in-addr.arpa."),
+            Some(ip("192.2.3.4"))
+        );
+        let v6 = "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.";
+        assert_eq!(reverse_address(v6), Some(ip("2001:db8::1")));
+        for bad in [
+            "3.2.192.in-addr.arpa.",
+            "x.3.2.192.in-addr.arpa.",
+            "1.0.ip6.arpa.",
+            "www.example.org.",
+        ] {
+            assert_eq!(reverse_address(bad), None, "{bad}");
+        }
+    }
+
     use super::*;
     use crate::checks::testkit::*;
     use crate::observe::{MtaSts, QType, SpfLookup, SpfObservation};

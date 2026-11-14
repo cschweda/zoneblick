@@ -472,6 +472,54 @@ async fn a_missing_ds_record_must_be_proven_by_the_parent() {
     assert_eq!(link.status, "unknown", "{link:?}");
     assert!(link.detail.unwrap().contains("no proof that there is none"));
 
+    // A record signed for a wildcard and expanded to this name says
+    // nothing about the name itself: its signature does not count.
+    let link = chain_without_ds(|inception, expiration| {
+        let nsec = nsec_rdata(false);
+        let mut sig = rrsig_for(
+            SIGNED_ZONE,
+            47,
+            20,
+            true,
+            inception,
+            expiration,
+            "example.",
+            std::slice::from_ref(&nsec),
+        );
+        sig[3] = 1;
+        vec![
+            raw(SIGNED_ZONE, RecordType::NSEC, nsec),
+            raw(SIGNED_ZONE, RecordType::RRSIG, sig),
+        ]
+    })
+    .await;
+    assert_eq!(link.status, "bogus", "{link:?}");
+
+    // A record without the NS bit is not about a delegation.
+    let link = chain_without_ds(|inception, expiration| {
+        let mut nsec = zoneblick::verify::name_wire("signee.example.");
+        nsec.extend([0, 6, 0, 0, 0, 0, 0, 0x03]);
+        vec![
+            raw(SIGNED_ZONE, RecordType::NSEC, nsec.clone()),
+            raw(
+                SIGNED_ZONE,
+                RecordType::RRSIG,
+                rrsig_for(
+                    SIGNED_ZONE,
+                    47,
+                    20,
+                    true,
+                    inception,
+                    expiration,
+                    "example.",
+                    std::slice::from_ref(&nsec),
+                ),
+            ),
+        ]
+    })
+    .await;
+    assert_eq!(link.status, "unknown", "{link:?}");
+
     // An unsigned record.
     let link =
         chain_without_ds(|_, _| vec![raw(SIGNED_ZONE, RecordType::NSEC, nsec_rdata(false))]).await;

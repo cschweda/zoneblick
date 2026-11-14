@@ -517,6 +517,10 @@ pub(crate) fn record_type(qtype: QType) -> RecordType {
         QType::Cds => RecordType::CDS,
         QType::Cdnskey => RecordType::CDNSKEY,
         QType::Tlsa => RecordType::TLSA,
+        QType::Srv => RecordType::SRV,
+        QType::Https => RecordType::HTTPS,
+        QType::Svcb => RecordType::SVCB,
+        QType::Ptr => RecordType::PTR,
     }
 }
 

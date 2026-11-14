@@ -511,6 +511,18 @@ pub const CATALOG: &[CheckInfo] = &[
         true,
     ),
     check(
+        "TKO-06",
+        "SRV, HTTPS or SVCB record points at a name that does not exist",
+        Severity::Warning,
+        true,
+    ),
+    check(
+        "REV-01",
+        "PTR record names a host that does not point back at the address",
+        Severity::Notice,
+        true,
+    ),
+    check(
         "CRT-01",
         "Newest logged certificate of a name in use runs out within 14 days",
         Severity::Notice,
@@ -698,6 +710,8 @@ const CHECKS: &[Check] = &[
     policy::tko_03_unregistered_target,
     policy::tko_04_spf_unregistered,
     policy::tko_05_wildcard,
+    policy::tko_06_service_target,
+    policy::rev_01_forward_confirmation,
     certificates::crt_01_expiry,
     certificates::crt_02_caa_mismatch,
     drift::drf_01_declared_differs,

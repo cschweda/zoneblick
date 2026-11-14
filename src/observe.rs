@@ -40,6 +40,10 @@ pub enum QType {
     Cds,
     Cdnskey,
     Tlsa,
+    Srv,
+    Https,
+    Svcb,
+    Ptr,
 }
 
 impl QType {
@@ -53,6 +57,24 @@ impl QType {
         QType::Txt,
         QType::Caa,
     ];
+
+    /// The types asked for one name in a stored run: the basic sweep, and
+    /// those that only make sense for some names. HTTPS records sit beside
+    /// address records; SRV and SVCB live at `_service` names; PTR in the
+    /// reverse zones.
+    pub fn sweep_for(name: &str, zone: &str) -> Vec<QType> {
+        let mut types = QType::SWEEP.to_vec();
+        let underscore = name.starts_with('_');
+        if underscore {
+            types.extend([QType::Srv, QType::Svcb]);
+        } else {
+            types.push(QType::Https);
+        }
+        if zone.ends_with(".arpa.") {
+            types.push(QType::Ptr);
+        }
+        types
+    }
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -70,6 +92,10 @@ impl QType {
             QType::Cds => "CDS",
             QType::Cdnskey => "CDNSKEY",
             QType::Tlsa => "TLSA",
+            QType::Srv => "SRV",
+            QType::Https => "HTTPS",
+            QType::Svcb => "SVCB",
+            QType::Ptr => "PTR",
         }
     }
 
@@ -89,6 +115,10 @@ impl QType {
             QType::Cds,
             QType::Cdnskey,
             QType::Tlsa,
+            QType::Srv,
+            QType::Https,
+            QType::Svcb,
+            QType::Ptr,
         ]
         .into_iter()
         .find(|t| t.as_str() == s)
