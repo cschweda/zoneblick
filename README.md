@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs or by zone transfer, compare against a pinned baseline, mute findings you have accepted, export findings as JSON or CSV, and thin out old runs by itself. All 26 checks of the v1 design are built, DNSSEC signatures are verified, and all 14 deep checks are available with `--deep`. The current release, `v0.11.0`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 35 checks for every run and 20 more with `--deep`, which also follows the DNSSEC chain of trust from the root and watches the domain's registration. The current release, `v0.12.0`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -52,7 +52,7 @@ On every platform:
 
 ## Install
 
-There are four ways to install zoneblick: the install script, a binary download, Docker, or building from source.
+There are several ways to install zoneblick: the install script, a `.deb` or `.rpm` package, Homebrew, a binary download, Docker, or building from source. For CI there is a [GitHub Action](#github-action).
 
 ### Install script (Linux and macOS)
 
@@ -66,11 +66,35 @@ On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick`
 
 | Option | Effect |
 |---|---|
-| `--version v0.11.0` | Install that release instead of the newest |
+| `--version v0.12.0` | Install that release instead of the newest |
 | `--prefix DIR` | Install the binary to `DIR/bin` |
 | `--no-service` | Binary only; no user, config or service |
 
 Pass options after `sh -s --`, for example `curl -fsSL https://zoneblick.com/install.sh | sh -s -- --no-service`.
+
+### Debian, Ubuntu, Fedora and RHEL packages
+
+Each release has a `.deb` and an `.rpm` for x86_64 and ARM 64-bit on the [releases page](https://github.com/cschweda/zoneblick/releases). They install the same things as the install script run as root: the binary in `/usr/bin`, the `zoneblick` user and service, a starter config at `/etc/zoneblick/zoneblick.toml` that upgrades never overwrite, and the data directory.
+
+```
+# Debian and Ubuntu (use arm64 on ARM)
+curl -fsSLO https://github.com/cschweda/zoneblick/releases/download/v0.12.0/zoneblick_0.12.0_amd64.deb
+sudo dpkg -i zoneblick_0.12.0_amd64.deb
+
+# Fedora and RHEL (use aarch64 on ARM)
+sudo rpm -i https://github.com/cschweda/zoneblick/releases/download/v0.12.0/zoneblick-0.12.0-1.x86_64.rpm
+```
+
+There is no package repository, so updates are not automatic: install the newer package over the old one. The `.deb` is installed and started on a GitHub runner as part of every release build. The `.rpm` is built and its contents listed there, but it has not been installed on a real Fedora or RHEL system.
+
+### Homebrew (macOS and Linux)
+
+```
+brew tap cschweda/zoneblick https://github.com/cschweda/zoneblick
+brew install zoneblick
+```
+
+The formula, [`Formula/zoneblick.rb`](Formula/zoneblick.rb), installs the release binary and checks its SHA-256; nothing is compiled. The release workflow rewrites it for each new release. It has passed a syntax check only: it has not been installed with `brew` yet.
 
 ### Docker
 
@@ -92,7 +116,7 @@ Then open `http://127.0.0.1:8053` and enter the token. The container listens on 
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.11.0`.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.12.0`.
 
 | System | File name ends in |
 |---|---|
@@ -104,12 +128,12 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.11.0` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.12.0` to install another release.
 
 **Linux**
 
 ```
-V=v0.11.0
+V=v0.12.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -122,7 +146,7 @@ zoneblick check example.org
 **macOS**
 
 ```
-V=v0.11.0
+V=v0.12.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -137,7 +161,7 @@ zoneblick check example.org
 **Windows (PowerShell)**
 
 ```
-$V = "v0.11.0"
+$V = "v0.12.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -182,7 +206,7 @@ You need a stable [Rust toolchain](https://rustup.rs), version 1.88 or later, an
 cargo install --git https://github.com/cschweda/zoneblick
 ```
 
-This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
+Add `--tag v0.12.0 --locked` to build exactly one release with the dependency versions it was tested with. This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
 
 To install from a local checkout instead:
 
@@ -345,22 +369,45 @@ zoneblick run example.org --discover ct
 zoneblick run example.org --discover axfr
 ```
 
-`--discover digitalocean` is for zones hosted at DigitalOcean: it reads the zone's record list from DigitalOcean's API and checks the names in this run. `zoneblick run` takes the API token from the environment variable `ZONEBLICK_DIGITALOCEAN_TOKEN`; the daemon reads it from the file named in the config:
+When the zone is hosted at Cloudflare, Amazon Route 53, Gandi, Hetzner or DigitalOcean, `--discover` can read the zone's record list from that host's API and check the names in the same run:
+
+| Source | `zoneblick run` reads the credential from | Config section for the daemon |
+|---|---|---|
+| `cloudflare` | `ZONEBLICK_CLOUDFLARE_TOKEN` (an API token with Zone Read and DNS Read) | `[providers.cloudflare] token_file` |
+| `route53` | `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (and `AWS_SESSION_TOKEN` when set) | `[providers.route53] credentials_file` |
+| `gandi` | `ZONEBLICK_GANDI_TOKEN` (a personal access token) | `[providers.gandi] token_file` |
+| `hetzner` | `ZONEBLICK_HETZNER_TOKEN` (a Hetzner Cloud API token) | `[providers.hetzner] token_file` |
+| `digitalocean` | `ZONEBLICK_DIGITALOCEAN_TOKEN` | `[providers.digitalocean] token_file` |
 
 ```toml
-[providers.digitalocean]
-token_file = "/etc/zoneblick/digitalocean-token"   # readable by the zoneblick user only
+[providers.cloudflare]
+token_file = "/etc/zoneblick/cloudflare-token"     # readable by the zoneblick user only
+
+[providers.route53]
+credentials_file = "/etc/zoneblick/aws-credentials" # aws_access_key_id = ... and aws_secret_access_key = ... lines
 
 [[zone]]
 name = "example.org"
-discover = ["digitalocean"]
+discover = ["cloudflare"]
 ```
 
-A token with read access is enough, and zoneblick only reads. The token is sent to `api.digitalocean.com` and nowhere else, and is not written to the database, the log or a recorded fixture. This source has been tested against recorded answers only, not against the live API.
+Read access is enough, and zoneblick only reads: for Route 53 the access key needs `route53:ListHostedZonesByName` and `route53:ListResourceRecordSets`. A credential is sent to that host's API and nowhere else, and is not written to the database, the log or a recorded fixture. At most 500 names are taken. **None of the five has been run against the live API**: they are tested against answers written from each host's API documentation, and the Route 53 request signing is tested against Amazon's published example. Hetzner is read through the Hetzner Cloud API (`api.hetzner.cloud`), not the older DNS Console API. If one of them fails for you, the run says so and carries on without it; please report it.
 
 Most nameservers refuse transfers to strangers, and the run then says so and carries on; it works when your servers allow transfers from the machine zoneblick runs on. Names found this way (at most 500, those with address, alias, mail or text records) are checked from the next run on. A transfer request can look like probing to an intrusion detection system, so ask for it only on your own zones.
 
 The names found are remembered like names given with `--name`; from certificate logs, wildcard entries are left out and at most 200 names are added. The lookup goes to [crt.sh](https://crt.sh), a public search of the logs, so crt.sh learns which zone you asked about. That is why discovery is off unless you ask for it. crt.sh is often slow or briefly unavailable; when it fails, the run says so and carries on with the names it has.
+
+### Comparing with a zone file
+
+If you keep the zone in a file (the standard master-file format that BIND uses and that most DNS hosts export), zoneblick can tell you where the servers differ from it:
+
+```
+zoneblick run example.org --expect example.org.zone
+```
+
+Every name in the file is checked. A record set that is in the file but missing or different on the servers is finding DRF-01; one that is served but not in the file is DRF-02. Compared are A, AAAA, CNAME, MX, TXT, CAA, and the apex NS set when the file states one; spelling differences (address notation, quoting, relative names) do not count. `$ORIGIN` and `$TTL` are understood; `$INCLUDE` and `$GENERATE` are not, so give one flat file. TTLs are not compared. A wildcard in the file stands in for names under it. In the daemon, set `expect = "/path/to/file"` in the zone's block; the file is read again for every run.
+
+Only names zoneblick knows about are compared, so a record somebody added under a name that is in neither the file nor the list of checked names is not seen. Zone-file drift is not available for octoDNS or dnscontrol sources directly; export a zone file from them.
 
 ### Findings you have accepted
 
@@ -413,14 +460,25 @@ max_qps_per_server = 5
 name = "example.org"
 seeds = ["www", "api", "mail"]     # names to check besides the apex
 ignore = ["_acme-challenge.*"]     # left out of change reports and alerts
-# discover = ["ct", "axfr"]        # find more names: "ct", "axfr", "digitalocean"
+# discover = ["ct", "axfr"]        # find more names: "ct", "axfr", or your DNS host
+# expect = "/etc/zoneblick/example.org.zone"   # a zone file the zone should match
+# dkim_selectors = ["s1", "s2"]    # the DKIM selectors your mail is signed with
 
 [retention]
 keep_all = "30d"                   # keep every run this long
 keep_daily = "365d"                # then one run per day, until this age
 
+[alerts]
+# digest = "7d"                    # also send a summary of every zone this often
+
 [alerts.webhook]
 url = "https://example.org/hooks/zoneblick"
+
+[alerts.slack]
+webhook_url = "https://hooks.slack.com/services/..."
+
+[alerts.discord]
+webhook_url = "https://discord.com/api/webhooks/..."
 
 [alerts.ntfy]
 url = "https://ntfy.sh/your-topic"
@@ -457,13 +515,17 @@ An alert is sent when something changes state: a finding opens or resolves, reco
 |---|---|
 | Webhook | An HTTP POST with JSON: `zone`, `run`, `severity`, `title`, `text`, `findings_opened`, `findings_resolved`, `changes` |
 | ntfy | The text, with the title and a priority taken from the severity |
+| Slack | A message to an incoming webhook: the title in bold, the text in a code block |
+| Discord | The same, to a Discord webhook, with mentions switched off |
 | Email | A plain-text message over SMTP |
 
-Email has been tested only as far as building the message; it has not been tried against a real mail server yet.
+Record data comes from the DNS, so in Slack messages `&`, `<` and `>` are sent as entities and cannot form links or mentions. Chat messages are cut at about 1,700 characters. Email has been tested only as far as building the message, and Slack, Discord and ntfy only as far as building the request; none has been tried against the real service yet.
+
+**Digest.** With `digest = "7d"` under `[alerts]`, the daemon also sends a summary to the same places once in that time: per zone, the runs made, the findings open now by severity, and the findings opened and resolved in the period. A zone with no runs in the period is called out. The clock starts the first time the daemon runs with the setting; nothing is sent then. `zoneblick digest --since 7d` prints the same summary from the database at any time.
 
 ### The web UI
 
-Open the `bind` address in a browser. The page lists your zones with their open findings, a nameserver table, the delegation path, and a history of runs with what changed in each. "Run checks now" starts a run of every zone, "Deep check of this zone" a deep run of the selected one, and each finding has a Mute button. The page is a single file compiled into the binary; it loads nothing from other sites.
+Open the `bind` address in a browser. The page lists your zones with their open findings, a nameserver table, the delegation path, and a history: a timeline with one bar per stored run (up to 200), coloured by the worst finding of that run, and the changes between any run and the one before it, or any other run you pick. "Run checks now" starts a run of every zone, "Deep check of this zone" a deep run of the selected one, and each finding has a Mute button. When a token is set, the page asks for it once per browser session and "Sign out" forgets it. `#findings`, `#servers` and `#history` at the end of the address open that tab. The page is a single file compiled into the binary; it loads nothing from other sites.
 
 ### The API
 
@@ -480,6 +542,10 @@ JSON under `/api/v1`. All routes except `health` need the token when one is set.
 | `GET /diff?zone=&from=&to=` | The same document as `diff --json` |
 | `POST /runs` | Starts a run in the background; body `{}` for all zones or `{"zone": "example.org"}`; add `"deep": true` for a deep run |
 | `GET /ui` | Everything the web UI shows, in one document |
+| `GET /ui/diff?zone=&to=&from=` | The change list between two runs, as the UI shows it; without `from`, the run before `to` |
+| `GET /metrics` | The state of every zone in the Prometheus text format |
+
+**Metrics.** `GET /api/v1/metrics` gives `zoneblick_open_findings{zone,severity}`, `zoneblick_last_run_timestamp_seconds{zone}`, `zoneblick_last_run_failed{zone}`, `zoneblick_stored_runs{zone}`, `zoneblick_names{zone}` and `zoneblick_info{version}`. It needs the token like the rest of the API; in Prometheus, set `authorization: { credentials: <token> }` on the scrape job and `metrics_path: /api/v1/metrics`. Alerting on `time() - zoneblick_last_run_timestamp_seconds > 7200` catches a daemon that has stopped checking.
 
 Errors are JSON too: `{"error": {"kind": "...", "message": "..."}}` with a matching HTTP status. Requests that change something must send JSON and must not come from another website.
 
@@ -492,6 +558,7 @@ Errors are JSON too: `{"error": {"kind": "...", "message": "..."}}` with a match
 | `zoneblick diff <zone>` | Compares two stored runs | No |
 | `zoneblick baseline pin\|show\|clear <zone>` | Pins, shows or removes the zone's baseline run | Yes |
 | `zoneblick prune` | Deletes old runs | Yes |
+| `zoneblick digest` | Summarises every stored zone over a period | No |
 | `zoneblick findings list\|mute\|unmute` | Lists findings, or mutes one | Yes |
 | `zoneblick export` | Writes the stored findings as JSON or CSV | No |
 | `zoneblick zones list` | Lists the stored zones | No |
@@ -511,7 +578,11 @@ Errors are JSON too: `{"error": {"kind": "...", "message": "..."}}` with a match
 | `--baseline` | `diff` | Compare against the pinned baseline instead of the run before |
 | `--ignore PATTERN` | `diff` | Leave out matching names; repeatable |
 | `--deep` | `check`, `run` | Also make the [deep checks](#deep-checks) |
-| `--discover ct\|axfr\|digitalocean` | `run` | Find more names in certificate logs, by zone transfer, or at DigitalOcean; remembered |
+| `--discover SOURCE` | `run` | Find more names: `ct`, `axfr`, `cloudflare`, `route53`, `gandi`, `hetzner` or `digitalocean`; repeatable; remembered |
+| `--expect FILE` | `run` | Compare what is served with this [zone file](#comparing-with-a-zone-file) |
+| `--dkim-selector NAME` | `check`, `run` | A DKIM selector your mail is signed with; repeatable |
+| `--sarif FILE` | `check`, `run` | Also write the findings to this file as SARIF 2.1.0 |
+| `--since TIME` | `digest` | How far back the summary reaches. Default: `7d` |
 | `--state STATE` | `findings list` | `open`, `muted`, `resolved` or `all`. Default: open and muted |
 | `--format json\|csv`, `--zone ZONE` | `export` | The output format, and one zone only |
 | `--run RUN` | `baseline pin` | The run to pin. Default: the latest |
@@ -559,17 +630,29 @@ For `diff`: `0` nothing changed, `1` something changed, `3` the command failed (
 | POL-03 | No CAA record | notice |
 | POL-04 | An MTA-STS record whose policy file cannot be fetched, is invalid, or does not cover the zone's mail servers | warning |
 | POL-05 | A mail server (MX target) is a CNAME or has no address | warning |
+| POL-06 | Mail servers are told to require TLS (MTA-STS or TLSA), but there is no usable TLS reporting record | notice |
+| POL-07 | A mail server's TLSA records cannot be used: wrong parameters, or the zone is not signed | warning; notice when usable records stand beside bad ones |
+| POL-08 | A DKIM key is missing, revoked, unreadable, or an RSA key under 1024 bits | warning; notice for RSA under 2048 bits |
+| POL-09 | A BIMI record is published but has no effect: DMARC is not enforced, or the logo address is unusable | notice |
 | TKO-01 | A CNAME points at a name that does not exist | warning |
 | TKO-02 | A CNAME points at a hosting service that says nobody has claimed the site | critical |
 | TKO-03 | A CNAME or MX points into a domain that is not registered | critical |
 | TKO-04 | The SPF record includes or redirects to a domain that is not registered | critical |
 | TKO-05 | The zone's wildcard record is an alias of a name outside the zone | notice |
+| CRT-01 | The newest certificate logged for a name in use runs out within 14 days, and no newer one is logged | notice; warning within 3 days |
+| CRT-02 | A certificate was issued in the last 30 days by an authority the CAA records do not allow | warning |
+| DRF-01 | A record set in the declared zone file is missing or different on the servers | warning |
+| DRF-02 | A record set is served but is not in the declared zone file | warning |
 
-These are the 26 checks of the v1 design plus SEC-11, made on every run. If IPv6 does not work on your machine, CON-04 is skipped and one `info` finding says so.
+These 35 checks are made on every run, with two conditions: CRT-01 and CRT-02 need the run to read certificate logs (`--discover ct`), and DRF-01 and DRF-02 need a zone file (`--expect`). If IPv6 does not work on your machine, CON-04 is skipped and one `info` finding says so.
+
+**Mail checks (POL-06 to POL-09).** For a zone with mail servers, every check also looks up the TLS reporting record (`_smtp._tls`), the BIMI record (`default._bimi`), a TLSA record set for each mail server (`_25._tcp.<server>`), and DKIM keys under eight selector names that large mail services use (`default`, `google`, `selector1`, `selector2`, `k1`, `s1`, `s2`, `mail`). DKIM selectors cannot be listed from the DNS, so name yours with `--dkim-selector` or `dkim_selectors`: a key found under a common name is checked, but only a selector you named is reported when its key is missing. TLSA records are checked for usable parameters (RFC 7672) and for the zone being signed; they are not compared with the certificate the mail server presents, because zoneblick does not connect to mail servers. The BIMI logo is not fetched.
+
+**Certificate checks (CRT-01, CRT-02).** These read the list of unexpired certificates that crt.sh returns for the zone. CRT-01 looks only at names that have an address or alias on your nameservers, and counts a wildcard certificate as covering the names one label below it. CRT-02 matches the issuer's name against a built-in list of nineteen certificate authorities and the domains each accepts in CAA; an issuer that is not on the list is not judged, and neither is a certificate issued more than 30 days ago, which may predate your CAA record. The match is by name, so treat a CRT-02 finding as a prompt to look at the certificate, not as proof of mis-issuance. A run that does not read the logs leaves these findings as they are. When crt.sh cuts its answer short, or a zone has more than 2,000 logged certificates, no certificate checks are made.
 
 ### Deep checks
 
-`zoneblick check <zone> --deep` and `zoneblick run <zone> --deep` add these. They cost a few more queries per nameserver: four unusual SOA queries, three for DNSSEC housekeeping records, one for a name that does not exist, one zone-transfer attempt, and one lookup per nameserver address at Team Cymru's IP-to-ASN service.
+`zoneblick check <zone> --deep` and `zoneblick run <zone> --deep` add these. They cost a few more queries per nameserver: four unusual SOA queries, three for DNSSEC housekeeping records, one for a name that does not exist, one zone-transfer attempt, and one lookup per nameserver address at Team Cymru's IP-to-ASN service. For a signed zone a deep run also asks for the keys and DS records of every zone from the root down, and asks again, with signatures, for each record set the run collected (at most 300 queries). And it makes two HTTPS requests about the domain's registration.
 
 | ID | Check | Severity |
 |---|---|---|
@@ -578,6 +661,8 @@ These are the 26 checks of the v1 design plus SEC-11, made on every run. If IPv6
 | SEC-08 | The DNSKEY set changed since the last stored run, and a removed key is still named by the parent's DS set or still signs | warning; `info` when the change is clean |
 | SEC-09 | CDS or CDNSKEY records differ between nameservers, or name a key that is not in the DNSKEY set | warning |
 | SEC-10 | An algorithm in the DS or DNSKEY set has no signature over the DNSKEY set or the SOA record | warning |
+| SEC-12 | A record set's signature is missing, outside its validity period, or does not verify with the zone's keys | critical; warning when the zone is not chained to its parent |
+| SEC-13 | The chain of trust from the root is broken at an ancestor zone, or at the zone's own DS set or key set | critical |
 | NSB-01 | A nameserver breaks the EDNS rules: no BADVERS for an unknown version, or an unknown option is not ignored | warning |
 | NSB-02 | A nameserver allows a zone transfer to anyone | warning |
 | NSB-03 | An authoritative nameserver offers recursion | warning |
@@ -587,22 +672,29 @@ These are the 26 checks of the v1 design plus SEC-11, made on every run. If IPv6
 | SOA-01 | An SOA timer is outside a sane range | notice |
 | SOA-02 | The primary named in the SOA record is not a listed nameserver, or has no address | notice |
 | SOA-03 | The contact address in the SOA record is at a domain that takes no mail | notice |
+| REG-01 | The domain's registration has run out, or runs out within 30 days | warning; critical within 7 days |
+| REG-02 | The domain has no transfer lock at the registry | notice |
+| REG-03 | The registry holds the domain (`client hold`, `server hold`), or is about to delete it (`redemption period`, `pending delete`) | critical |
+| REG-04 | The registry's record lists other nameservers than the parent zone serves | notice |
 
 - **Lifecycle.** A light run says nothing about these checks, so a deep finding stays open through light runs and is resolved only by a later deep run that no longer sees it.
 - **SEC-06** asks every nameserver for `zz--zoneblick-absent.<zone>`. An NSEC proof must cover the name. An NSEC3 proof must have a record at the zone apex and records covering the name and the wildcard, checked by hashing the names as the zone does. The signatures on the proof are checked for being there, not verified.
 - **SEC-08** compares with the previous stored run, so it needs `run` or `serve`; a plain `check --deep` has nothing to compare with.
 - **NET-01** asks [Team Cymru's IP-to-ASN service](https://www.team-cymru.com/ip-asn-mapping) over DNS which network announces each nameserver address, so Team Cymru's nameservers see those addresses. It reports only when the network of every address is known and they all share one. Zones hosted at a single large provider get this notice by design; mute it if that is a choice you have made.
+- **SEC-13** starts from the root zone's two trust anchors (the key-signing keys of 2017 and 2024, built in) and works down the delegation path: at each step the DS set must be signed by the parent's keys, and a key the DS set points at must sign the child's key set. The first link that does not hold is reported, and the zones below it are not judged. A parent with no DS for its child ends the chain as "insecure", which is not a finding. SEC-13 does not check the proof that a DS record is absent.
+- **SEC-12** needs `run`, since `check` collects no record sets. It checks the sets that have data, on every nameserver that served them, and takes a wildcard answer as signed under the wildcard's name. RSA, ECDSA and Ed25519 are verified; a set signed only with another algorithm is left alone.
+- **REG-01 to REG-04** read the registry's record of the domain over RDAP: zoneblick fetches IANA's list of RDAP services (`data.iana.org`) and asks the one for the top-level domain about the registered domain, which is the zone or the domain it is under. The registry therefore learns that someone looked the domain up. Top-level domains without an RDAP service, which includes many country-code domains, give no registration checks. During the automatic renewal period some registries show an expiry date in the past for a domain that is in fact renewed.
 - **SOA-01 limits** are loose, to catch mistakes and not tastes: refresh at least 20 minutes, retry at least 2 minutes and shorter than refresh, expire at least a week and longer than refresh, negative-caching TTL between a minute and a day.
 - **SOA-02** also fires for a hidden primary, which is a legitimate design. Mute it if that is yours.
 - **NSB-02** makes one transfer request per nameserver and reads only the first answer: it records whether the transfer was allowed and keeps none of the zone. Like the odd EDNS queries, it can look like probing to an intrusion detection system, which is one more reason to run deep checks only on your own zones.
 
 **Takeover checks.** TKO-01, TKO-02 and the CNAME part of TKO-03 look at the CNAME records of the names you list, so they need `run` or `serve`; `check` covers the apex only. "Not registered" is decided from DNS alone: the name does not exist and the server that says so belongs to a top-level domain, which means the domain itself is not delegated. Domains under two-level suffixes such as `co.uk` are not recognised this way and are reported as TKO-01 instead. DEL-06 uses the same test for the domains of nameservers. zoneblick never tries to claim anything.
 
-**Service signatures (TKO-02).** When a listed name is a CNAME to one of eleven hosting services (GitHub Pages, Amazon S3, Surge, Read the Docs, Pantheon, Tilda, Strikingly, WordPress.com, Help Scout, UserVoice and Cargo), `run` fetches the front page of your hostname once over plain HTTP, without following redirects, and compares it with the page that service shows for a site nobody has claimed. A match is a critical finding: anyone with an account at the service can claim the site and serve your hostname. At most twenty hostnames are fetched per run. The page texts come from the MIT-licensed [nuclei-templates](https://github.com/projectdiscovery/nuclei-templates) project (see [`THIRD-PARTY.md`](THIRD-PARTY.md)); they go stale when a service changes its error page, so a clean result is not proof that an alias is safe. A service that is not on the list is not checked at all.
+**Service signatures (TKO-02).** When a listed name is a CNAME to one of 32 hosting services (among them GitHub Pages, Amazon S3, Zendesk, Intercom, Kinsta, ngrok, WordPress.com, Read the Docs, Pantheon, Surge, Help Scout and Campaign Monitor; the full list is in [`src/signatures.rs`](src/signatures.rs)), `run` fetches the front page of your hostname once over plain HTTP, without following redirects, and compares it with the page that service shows for a site nobody has claimed. A match is a critical finding: anyone with an account at the service can claim the site and serve your hostname. At most twenty hostnames are fetched per run. The page texts come from the MIT-licensed [nuclei-templates](https://github.com/projectdiscovery/nuclei-templates) project (see [`THIRD-PARTY.md`](THIRD-PARTY.md)); they go stale when a service changes its error page, so a clean result is not proof that an alias is safe. A service that is not on the list is not checked at all. Heroku, Netlify, Fastly, Shopify and Azure are not on it: the source project has no body-text signature for them, because an unclaimed name there cannot be told apart reliably from the outside. A dangling alias to one of them that no longer resolves is still reported as TKO-01.
 
 **Wildcards (TKO-05).** zoneblick asks for the record `*.<zone>` itself. When it is a CNAME to a name outside the zone, every hostname nobody created is served by that outside service, which is worth knowing even when it is intended.
 
-**The DNSSEC checks are beta.** They read the DS record at the parent, each nameserver's DNSKEY set, and the signatures over the DNSKEY set and the SOA record. They check that the DS matches a key (key tag, algorithm and SHA-256 or SHA-384 digest), that the dates on the signatures are current, and, as SEC-11, that a signature over each of the two record sets verifies with a key the zone publishes. RSA (SHA-1, SHA-256, SHA-512), ECDSA (P-256, P-384) and Ed25519 are verified; a signature made with another algorithm is left untried and not reported. Signatures over other records, and the chain above the zone's own parent, are not verified, so this is not a full validator. For SEC-02, "close to expiring" means within seven days, or within a quarter of the signature's own lifetime when that is shorter, so zones signed on the fly with one- or two-day signatures do not warn constantly. An unsigned zone produces no DNSSEC findings.
+**The DNSSEC checks are beta.** They read the DS record at the parent, each nameserver's DNSKEY set, and the signatures over the DNSKEY set and the SOA record. They check that the DS matches a key (key tag, algorithm and SHA-256 or SHA-384 digest), that the dates on the signatures are current, and, as SEC-11, that a signature over each of the two record sets verifies with a key the zone publishes. RSA (SHA-1, SHA-256, SHA-512), ECDSA (P-256, P-384) and Ed25519 are verified; a signature made with another algorithm is left untried and not reported. A light run does not verify signatures over other records or the chain above the zone's own parent; a deep run does both (SEC-12 and SEC-13). Proofs that a name or a DS record does not exist are checked for shape, not verified, so this is still not a full validator. For SEC-02, "close to expiring" means within seven days, or within a quarter of the signature's own lifetime when that is shorter, so zones signed on the fly with one- or two-day signatures do not warn constantly. An unsigned zone produces no DNSSEC findings.
 
 ### Politeness
 
@@ -660,7 +752,11 @@ Each finding has `check_id`, `severity`, `name`, `summary` (one line for people)
 | TKO-02 | `unclaimed_service` | `owner`, `target`, `service`, `url`, `status` |
 | TKO-05 | `wildcard_alias` | `wildcard`, `target` |
 | NSB-01 to NSB-04 | `server_behaviour` | `ns_name`, `address`, `details` (a list of lines) |
-| SEC-06 to SEC-11, NET-01, NET-02, SOA-01 to SOA-03 | `zone_detail` | `details` (a list of lines) |
+| SEC-06 to SEC-11, SEC-13, NET-01, NET-02, SOA-01 to SOA-03, REG-01 to REG-04, POL-06 to POL-09, CRT-01, CRT-02 | `zone_detail` | `details` (a list of lines) |
+| SEC-12 | `record_detail` | `rtype`, `details` (a list of lines) |
+| DRF-01, DRF-02 | `drift` | `rtype`, `declared`, `served`, `source` (the zone file) |
+
+`--sarif FILE` writes the same findings as a SARIF 2.1.0 document: one result per finding, with the check as the rule, the DNS name as a logical location, and the finding's fingerprint as `partialFingerprints`. A drift finding also points at the zone file. Whether GitHub code scanning shows results that have no file location has not been tried.
 
 A full example is in [`tests/fixtures/broken.example.report.json`](tests/fixtures/broken.example.report.json); a test pins it byte for byte.
 
@@ -708,6 +804,21 @@ When the run fails, the document is shorter:
 
 `error.kind` is one of `invalid_name`, `no_network`, `zone_not_found`, `not_a_zone`, `servers_failed`, `too_many_referrals`, `no_server_reachable`, `name_outside_zone`, `no_database`, `unknown_zone`, `unknown_run`, `not_enough_runs`, `store_error`, `fixture_error`.
 
+## GitHub Action
+
+The repository is also a GitHub Action, for checking a zone from a workflow, for example when a pull request changes a zone file:
+
+```yaml
+- uses: cschweda/zoneblick@v0.12.0
+  with:
+    zone: example.org
+    expect: dns/example.org.zone   # optional
+    fail-on: critical              # or: findings, never
+    sarif: zoneblick.sarif         # optional
+```
+
+It downloads the release binary for the runner (Linux or macOS), checks its SHA-256, and runs `zoneblick run`. Inputs: `zone`, `names`, `expect`, `deep`, `fail-on`, `sarif`, `db` and `version`; the output `exit-code` is zoneblick's exit code. The check runs against the live DNS, so it tests what is deployed, not what the pull request would deploy. Restore the `db` file with `actions/cache` to see changes between workflow runs. The release workflow runs the action once against `example.com` after publishing.
+
 ## Development
 
 ```
@@ -726,17 +837,17 @@ The same lint and tests run in CI on Linux, macOS and Windows for every push and
 Binaries are built by GitHub Actions (`.github/workflows/release.yml`). To publish a release, set the version in `Cargo.toml`, commit, then push a matching tag:
 
 ```
-git tag v0.12.0
-git push origin v0.12.0
+git tag v0.13.0
+git push origin v0.13.0
 ```
 
-The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, and attaches them to a GitHub Release with a `SHA256SUMS` file, then publishes the container image to `ghcr.io/cschweda/zoneblick`. Each archive holds the binary, this README, both license files and `THIRD-PARTY.md`. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
+The workflow checks that the tag matches the crate version, runs the lint and tests, builds static Linux binaries (x86_64 and aarch64), macOS binaries (Apple Silicon and Intel) and a Windows binary, packages the Linux ones as `.deb` and `.rpm` (installing the `.deb` on the runner to see the service start), and attaches everything to a GitHub Release with a `SHA256SUMS` file. It then publishes the container image to `ghcr.io/cschweda/zoneblick`, commits the Homebrew formula for the release to `main`, and runs the GitHub Action against `example.com`. Each archive holds the binary, this README, both license files and `THIRD-PARTY.md`. The macOS and Windows binaries are not signed. Versions below 1.0 are marked as pre-releases. A pull request that changes the workflow or the Cargo files runs the same builds without publishing.
 
 ## What it will do
 
-- **Zone health:** delegation, nameserver consistency, DNSSEC. All three have checks now, with a deep level for nameserver behaviour, SOA values and DNSSEC details; signatures over the DNSKEY set and the SOA record are verified.
-- **Exposure:** dangling records and subdomain-takeover risk. Dangling aliases, unregistered domains and aliases of unclaimed sites at known hosting services are detected now.
-- **Drift history:** every run stored and compared with the last, on a schedule, with alerts. All of this exists now, with pinned baselines, learned rotation and retention.
+- **Zone health:** delegation, nameserver consistency, DNSSEC, mail policy. All have checks now, with a deep level for nameserver behaviour, SOA values, the DNSSEC chain of trust from the root, signatures over every record set, and the domain's registration.
+- **Exposure:** dangling records and subdomain-takeover risk. Dangling aliases, unregistered domains, aliases of unclaimed sites at 32 hosting services, and certificates from unexpected authorities are detected now.
+- **Drift history:** every run stored and compared with the last, on a schedule, with alerts. All of this exists now, with pinned baselines, comparison with a zone file, learned rotation, retention, a digest and Prometheus metrics.
 
 One binary, one config file, one SQLite file, on your own server.
 
@@ -759,6 +870,13 @@ One binary, one config file, one SQLite file, on your own server.
 | `src/diff.rs` | The diff engine: pure functions over two stored runs |
 | `src/resolver/deep.rs`, `src/checks/deep.rs` | The deep probes and the deep checks |
 | `src/discover.rs` | Finding names in certificate logs and by zone transfer |
+| `src/providers.rs` | Finding names through the API of the DNS host |
+| `src/registration.rs` | Reading the domain's registration over RDAP |
+| `src/zonefile.rs` | Reading a zone file to compare the zone with |
+| `src/resolver/chain.rs` | The DNSSEC chain of trust and per-record signature checks |
+| `src/digest.rs` | The periodic summary |
+| `action.yml` | The GitHub Action |
+| `Formula/zoneblick.rb` | The Homebrew formula, rewritten at each release |
 | `src/signatures.rs` | The hosting-service signatures for TKO-02 |
 | `THIRD-PARTY.md` | Where the signatures come from, and their licence |
 | `src/config.rs` | The `zoneblick.toml` configuration file |
@@ -779,7 +897,7 @@ Scan only zones you control.
 
 ## Privacy
 
-zoneblick sends no telemetry. The binary talks to DNS servers, to the alert destinations you configure, to a zone's own `mta-sts` host when that zone publishes an MTA-STS record, to your own hostnames that are aliases of a known hosting service (one page each, for TKO-02), to crt.sh or DigitalOcean's API when you turn those discovery sources on, and to Team Cymru's nameservers during deep runs, and to nothing else; the web UI loads nothing from other sites. The project website, zoneblick.com, uses [Plausible](https://plausible.io) for privacy-friendly, cookie-free visit statistics.
+zoneblick sends no telemetry. The binary talks to DNS servers, to the alert destinations you configure, to a zone's own `mta-sts` host when that zone publishes an MTA-STS record, to your own hostnames that are aliases of a known hosting service (one page each, for TKO-02), to crt.sh or your DNS host's API when you turn those discovery sources on, to Team Cymru's nameservers, IANA's RDAP service list and the registry's RDAP service during deep runs, and to nothing else; the web UI loads nothing from other sites. The project website, zoneblick.com, uses [Plausible](https://plausible.io) for privacy-friendly, cookie-free visit statistics.
 
 ## License
 
