@@ -146,10 +146,9 @@ pub async fn record_signatures(client: &Client, obs: &ZoneObservation) -> Vec<Re
     }
     let keys: Vec<Dnskey> = keys.into_iter().collect();
     let mut out = Vec::new();
+    // Every query sent counts, whether or not it gives a verdict.
+    let mut asked = 0;
     for rec in &obs.records {
-        if out.len() >= MAX_RECORD_QUERIES {
-            break;
-        }
         let has_data = rec
             .outcome
             .answer()
@@ -157,6 +156,10 @@ pub async fn record_signatures(client: &Client, obs: &ZoneObservation) -> Vec<Re
         if !has_data || !QType::SWEEP.contains(&rec.qtype) {
             continue;
         }
+        if asked >= MAX_RECORD_QUERIES {
+            break;
+        }
+        asked += 1;
         let rtype = record_type(rec.qtype);
         let status = match ask_signed(client, rec.address, &rec.name, rec.qtype).await {
             Ok(msg) if is_authoritative_answer(&msg) => {

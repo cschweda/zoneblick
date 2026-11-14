@@ -132,7 +132,17 @@ td.g{color:var(--ok)}td.b{color:var(--crit);font-weight:500}
 .diff .del{color:var(--crit);background:rgba(255,90,69,.09)}
 .diff .add{color:var(--ok);background:rgba(116,211,160,.08)}
 .diff .ctx{color:var(--muted)}
-.dcap{margin:0 0 10px;color:var(--muted);font-size:13.5px}
+.dcap{margin:0 0 10px;color:var(--muted);font-size:13.5px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.dcap select{background:var(--ground);border:1px solid var(--line);color:var(--text);font-family:var(--mono);font-size:13px;padding:5px 8px;max-width:100%}
+.tlwrap{grid-column:1/-1;min-width:0}
+.tl{display:flex;align-items:flex-end;gap:2px;height:64px;border-bottom:1px solid var(--line);overflow-x:auto;padding:2px 2px 0}
+.tl button{flex:0 0 7px;background:var(--ok);border:0;padding:0;min-height:5px;opacity:.75}
+.tl button.crit{background:var(--crit)}.tl button.warn{background:var(--warn)}.tl button.note{background:var(--note)}
+.tl button:hover,.tl button:focus-visible{opacity:1}
+.tl button[aria-current="true"]{opacity:1;outline:2px solid var(--text);outline-offset:1px}
+.tl button.base{opacity:1;outline:2px dashed var(--muted);outline-offset:1px}
+.tlcap{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;color:var(--muted);padding:6px 0 0}
+.bar button.back{background:transparent;border:0;padding:0;font-size:14px;color:var(--muted);text-decoration:underline}
 
 @media (max-width:900px){
   .summary{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -155,6 +165,7 @@ td.g{color:var(--ok)}td.b{color:var(--crit);font-weight:500}
     <a class="mark" href="./"><i aria-hidden="true"></i>zoneblick</a>
     <span class="demo-tag" id="ver"></span>
     <span class="sp"></span>
+    <button class="back" id="signout" type="button" hidden>Sign out</button>
     <a class="back" href="https://zoneblick.com/">zoneblick.com</a>
   </div>
 </header>
@@ -237,13 +248,16 @@ function load(){
     state.lastRun=ago(newest);state.running=anyRunning();
     if(!current()&&zones.length)state.zone=zones.slice().sort(function(a,b){return SEV[worst(a)]-SEV[worst(b)]||a.name.localeCompare(b.name);})[0].name;
     $("ver").textContent="v"+m.version;
+    $("signout").hidden=!token();
     if(!$("notice").classList.contains("err")||!$("tok"))notice("");
     renderSummary();renderChips();renderZones();renderDetail();
   }).catch(function(e){if(e.message!=="unauthorized")notice("Cannot reach the zoneblick API: "+e.message,true);});
 }
 
 /* ---------- state ---------- */
-var state={zone:null,tab:"findings",filter:"all",q:"",run:null,running:false,lastRun:"never"};
+var state={zone:null,tab:"findings",filter:"all",q:"",run:null,base:null,running:false,lastRun:"never"};
+/* Change lists fetched on demand, by "zone|from|to". */
+var diffs={};
 
 /* ---------- helpers ---------- */
 function $(id){return document.getElementById(id);}
@@ -299,7 +313,7 @@ function renderZones(){
     var w=worst(z),counts=el("span",{class:"counts"});
     ["crit","warn","note"].forEach(function(s){var n=open(z).filter(function(f){return f.sev===s;}).length;if(n)counts.appendChild(el("span",{class:"pill n "+s,text:String(n),title:n+" "+SEVNAME[s].toLowerCase()}));});
     if(w==="ok")counts.appendChild(pill("ok","Clean"));
-    ul.appendChild(el("li",null,[el("button",{type:"button","aria-current":String(z.name===state.zone),onclick:function(){state.zone=z.name;state.run=null;renderZones();renderDetail();}},[
+    ul.appendChild(el("li",null,[el("button",{type:"button","aria-current":String(z.name===state.zone),onclick:function(){state.zone=z.name;state.run=null;state.base=null;renderZones();renderDetail();}},[
       el("span",{class:"stripe "+w,"aria-hidden":"true"}),
       el("span",{class:"zn"},[label(z.name),el("span",{class:"zmeta",text:z.last_run_id?z.names+" names · "+z.ns.length+" nameservers":"not checked yet"})]),
       counts
@@ -319,7 +333,7 @@ function renderDetail(){
   if(z.error)d.appendChild(el("p",{class:"zerr",text:"The last run of this zone failed: "+z.error}));
   var tabs=el("div",{class:"tabs",role:"tablist"});
   [["findings","Findings",open(z).length],["servers","Nameservers",z.ns.length],["history","History",z.history.length]].forEach(function(t){
-    tabs.appendChild(el("button",{class:"tab",type:"button",role:"tab","aria-selected":String(state.tab===t[0]),onclick:function(){state.tab=t[0];renderDetail();}},[t[1],el("span",{class:"c",text:String(t[2])})]));
+    tabs.appendChild(el("button",{class:"tab",type:"button",role:"tab","aria-selected":String(state.tab===t[0]),onclick:function(){state.tab=t[0];try{history.replaceState(null,"","#"+t[0]);}catch(e){}renderDetail();}},[t[1],el("span",{class:"c",text:String(t[2])})]));
   });
   d.appendChild(tabs);
   d.appendChild(state.tab==="findings"?viewFindings(z):state.tab==="servers"?viewServers(z):viewHistory(z));
@@ -367,24 +381,72 @@ function viewServers(z){
   return box;
 }
 
+function when(unix){
+  var d=new Date(unix*1000);
+  function p(n){return (n<10?"0":"")+n;}
+  return d.getUTCFullYear()+"-"+p(d.getUTCMonth()+1)+"-"+p(d.getUTCDate())+" "+p(d.getUTCHours())+":"+p(d.getUTCMinutes())+" UTC";
+}
+/* The change list between two runs: from the page's data when it is the
+   run before, otherwise fetched once and kept. Returns null while loading. */
+function changesFor(z,to,from){
+  var pre=z.history.filter(function(r){return r.id===to;})[0];
+  if(pre&&(from==null||from===pre.prev))return {from:pre.prev,changes:pre.changes};
+  var key=z.name+"|"+(from==null?"":from)+"|"+to;
+  if(diffs[key])return diffs[key];
+  diffs[key]={loading:true};
+  api("ui/diff?zone="+encodeURIComponent(z.name)+"&to="+to+(from==null?"":"&from="+from))
+    .then(function(d){diffs[key]={from:d.from===to?d.to:d.from,changes:d.changes};})
+    .catch(function(e){diffs[key]={from:from,changes:[],error:/needs two/.test(e.message)?null:e.message,first:/needs two/.test(e.message)};})
+    .then(function(){if(state.tab==="history"&&state.zone===z.name)renderDetail();});
+  return diffs[key];
+}
 function viewHistory(z){
   var box=el("div",{class:"hist",role:"tabpanel"});
   if(!z.history.length){box.className="";box.appendChild(el("div",{class:"allclear"},["No run has been stored for this zone yet."]));return box;}
   var sel=state.run!=null?state.run:z.history[0].id;
+  var ticks=z.timeline||[];
+  if(!ticks.some(function(t){return t.id===sel;}))sel=z.history[0].id;
+  var base=state.base!=null&&state.base!==sel&&ticks.some(function(t){return t.id===state.base;})?state.base:null;
+
+  /* Timeline: one bar per stored run, height by the number of findings,
+     colour by the worst of them. */
+  if(ticks.length>1){
+    var most=ticks.reduce(function(a,t){return Math.max(a,t.crit+t.warn+t.note);},1);
+    var tl=el("div",{class:"tl",role:"group","aria-label":"Runs of "+label(z.name)+", oldest first"});
+    ticks.forEach(function(t){
+      var n=t.crit+t.warn+t.note,sev=t.crit?"crit":t.warn?"warn":t.note?"note":"ok";
+      var text="Run #"+t.id+", "+when(t.when_unix)+": "+(n?n+" finding"+(n===1?"":"s")+" ("+[t.crit&&t.crit+" critical",t.warn&&t.warn+" warning",t.note&&t.note+" notice"].filter(Boolean).join(", ")+")":"clean");
+      tl.appendChild(el("button",{type:"button",class:sev+(t.id===base?" base":""),style:"height:"+Math.round(8+52*n/most)+"%","aria-current":String(t.id===sel),title:text,"aria-label":text,onclick:function(){state.run=t.id;state.base=null;renderDetail();}}));
+    });
+    box.appendChild(el("div",{class:"tlwrap"},[tl,el("div",{class:"tlcap"},[
+      el("span",{text:when(ticks[0].when_unix)}),
+      el("span",{text:ticks.length+" runs · select one to see what changed"}),
+      el("span",{text:when(ticks[ticks.length-1].when_unix)})
+    ])]));
+    setTimeout(function(){var cur=tl.querySelector('[aria-current="true"]');if(cur&&tl.scrollWidth>tl.clientWidth)tl.scrollLeft=cur.offsetLeft-tl.clientWidth/2;},0);
+  }
+
   var ul=el("ul",{class:"runs"});
   z.history.forEach(function(r){
     var n=r.changes.filter(function(c){return c[0]!==" ";}).length;
-    ul.appendChild(el("li",null,[el("button",{type:"button","aria-current":String(r.id===sel),onclick:function(){state.run=r.id;renderDetail();}},[
+    ul.appendChild(el("li",null,[el("button",{type:"button","aria-current":String(r.id===sel),onclick:function(){state.run=r.id;state.base=null;renderDetail();}},[
       el("span",{text:"#"+r.id+"  "+ago(r.when_unix)}),
       el("span",{class:"ch"+(n?" has":""),text:n?n+" changed":"no change"})
     ])]));
   });
-  var r=z.history.filter(function(x){return x.id===sel;})[0]||z.history[0];
+
+  var got=changesFor(z,sel,base);
   var right=el("div");
-  right.appendChild(el("p",{class:"dcap",text:r.prev?"Run #"+r.id+" compared with run #"+r.prev:"Run #"+r.id+" is the first stored run of this zone"}));
+  var others=ticks.filter(function(t){return t.id!==sel;}).slice().reverse();
+  var pick=el("select",{id:"basesel","aria-label":"Compare run #"+sel+" with",onchange:function(e){state.base=e.target.value===""?null:Number(e.target.value);renderDetail();}},
+    [el("option",{value:"",text:"the run before it"})].concat(others.map(function(t){return el("option",{value:String(t.id),selected:t.id===base,text:"run #"+t.id+" · "+when(t.when_unix)});})));
+  right.appendChild(el("div",{class:"dcap"},[el("label",{for:"basesel",text:"Run #"+sel+" compared with"}),pick]));
   var diff=el("div",{class:"diff"});
-  if(!r.changes.length)diff.appendChild(el("div",{class:"ctx",text:r.prev?"  No changes. "+z.names+" names checked on "+z.ns.length+" nameservers.":"  Nothing to compare with yet."}));
-  r.changes.forEach(function(c){diff.appendChild(el("div",{class:c[0]==="+"?"add":c[0]==="-"?"del":"ctx",text:c[0]+" "+c[1]}));});
+  if(got.loading)diff.appendChild(el("div",{class:"ctx",text:"  Loading…"}));
+  else if(got.error)diff.appendChild(el("div",{class:"del",text:"  "+got.error}));
+  else if(got.from==null||got.first)diff.appendChild(el("div",{class:"ctx",text:"  Run #"+sel+" is the first stored run of this zone; there is nothing to compare it with."}));
+  else if(!got.changes.length)diff.appendChild(el("div",{class:"ctx",text:"  No changes between #"+Math.min(got.from,sel)+" and #"+Math.max(got.from,sel)+"."}));
+  else got.changes.forEach(function(c){diff.appendChild(el("div",{class:c[0]==="+"?"add":c[0]==="-"?"del":"ctx",text:c[0]+" "+c[1]}));});
   right.appendChild(diff);
   box.appendChild(ul);box.appendChild(right);
   return box;
@@ -414,6 +476,15 @@ function poll(){
 }
 
 /* ---------- boot ---------- */
+$("signout").addEventListener("click",function(){
+  try{sessionStorage.removeItem(TOKEN_KEY);}catch(e){}
+  zones=[];model=null;diffs={};state.zone=null;
+  $("signout").hidden=true;
+  renderSummary();renderChips();renderZones();renderDetail();
+  load();
+});
+/* A link can open a tab: #findings, #servers or #history. */
+if(["findings","servers","history"].indexOf(location.hash.slice(1))>=0)state.tab=location.hash.slice(1);
 $("q").addEventListener("input",function(e){state.q=e.target.value.trim();renderZones();});
 renderSummary();renderChips();renderZones();renderDetail();
 load().then(function(){if(anyRunning())setTimeout(poll,2000);});

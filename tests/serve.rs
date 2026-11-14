@@ -587,3 +587,53 @@ async fn metrics_need_the_token_when_one_is_set() {
         .unwrap();
     assert_eq!(ok.status().as_u16(), 200);
 }
+
+#[tokio::test]
+async fn the_ui_gets_a_timeline_and_can_compare_any_two_runs() {
+    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
+    let zone = state.config.zones[0].clone();
+    for run in 1..=3 {
+        assert_eq!(run_zone(&state, &zone, "test").await, Ok(run));
+    }
+    let base = serve(router(state)).await;
+
+    let (_, ui) = get(&format!("{base}/api/v1/ui")).await;
+    let timeline = ui["zones"][0]["timeline"].as_array().unwrap();
+    let ticks: Vec<(i64, u64, u64)> = timeline
+        .iter()
+        .map(|t| {
+            (
+                t["id"].as_i64().unwrap(),
+                t["warn"].as_u64().unwrap(),
+                t["crit"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    // Clean before the drift, one warning after it; oldest first.
+    assert_eq!(ticks, [(1, 0, 0), (2, 1, 0), (3, 1, 0)]);
+
+    // Runs 1 and 3, in either order, give the changes of the drift.
+    let (status, d) = get(&format!(
+        "{base}/api/v1/ui/diff?zone=drift.example&from=3&to=1"
+    ))
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!((d["from"].as_i64(), d["to"].as_i64()), (Some(1), Some(3)));
+    let changes = d["changes"].as_array().unwrap();
+    assert!(changes.iter().any(|c| c[0] == "+"), "{changes:?}");
+    assert!(changes.iter().any(|c| c[0] == "-"), "{changes:?}");
+    // Runs 2 and 3 hold the same data.
+    let (_, same) = get(&format!("{base}/api/v1/ui/diff?zone=drift.example&to=3")).await;
+    assert_eq!(same["from"], 2);
+    assert_eq!(same["changes"].as_array().unwrap().len(), 0);
+    // The first run has nothing before it.
+    let (status, err) = get(&format!("{base}/api/v1/ui/diff?zone=drift.example&to=1")).await;
+    assert_eq!(status, 409, "{err}");
+    assert!(
+        err["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("needs two"),
+        "{err}"
+    );
+}

@@ -31,6 +31,9 @@ const UI_HTML: &str = include_str!("ui/index.html");
 /// How many runs the UI's history tab shows per zone.
 const HISTORY_RUNS: usize = 10;
 
+/// How many runs the UI's timeline shows per zone.
+const TIMELINE_RUNS: usize = 200;
+
 /// Makes the DNS client for one run. Tests swap in a replaying client.
 pub type ClientFactory = Arc<dyn Fn(&str) -> Arc<Client> + Send + Sync>;
 
@@ -599,6 +602,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/findings/unmute", axum::routing::post(api_unmute))
         .route("/diff", get(api_diff))
         .route("/ui", get(api_ui))
+        .route("/ui/diff", get(api_ui_diff))
         .route("/metrics", get(api_metrics))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         // Health needs no token, so a load balancer or uptime check can use it.
@@ -843,6 +847,35 @@ async fn api_diff(
     Ok(Json(store.diff(&zone, from, to, &ignore)?))
 }
 
+/// The change list between any two runs of a zone, as the UI shows it.
+/// Without `from`, the run before `to`.
+async fn api_ui_diff(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ZoneQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let zone = required_zone(&query)?;
+    let ignore = state
+        .zone_config(&zone)
+        .map(|z| z.ignore.clone())
+        .unwrap_or_default();
+    let store = state.store();
+    let (from, to) = store.pick_runs(&zone, query.from, query.to)?;
+    let (from, to) = if from.id > to.id {
+        (to, from)
+    } else {
+        (from, to)
+    };
+    let changes = ui_changes(&zone, &store.diff(&zone, from, to, &ignore)?);
+    Ok(Json(serde_json::json!({
+        "zone": zone,
+        "from": from.id,
+        "to": to.id,
+        "from_unix": from.started_at_unix,
+        "to_unix": to.started_at_unix,
+        "changes": changes,
+    })))
+}
+
 #[derive(Deserialize, Default)]
 struct TriggerBody {
     zone: Option<String>,
@@ -960,8 +993,20 @@ struct UiRun {
     changes: Vec<(String, String)>,
 }
 
+/// One run on the UI's timeline: findings by severity.
+#[derive(Serialize)]
+struct UiTick {
+    id: i64,
+    when_unix: u64,
+    crit: usize,
+    warn: usize,
+    note: usize,
+}
+
 #[derive(Serialize)]
 struct UiZone {
+    /// The latest runs, oldest first.
+    timeline: Vec<UiTick>,
     name: String,
     names: usize,
     ns: Vec<UiNs>,
@@ -1214,7 +1259,23 @@ fn ui_zone(state: &AppState, store: &Store, zone: &str) -> Result<UiZone, StoreE
     } else {
         store.names(zone)?.len()
     };
+    let timeline = if runs.is_empty() {
+        Vec::new()
+    } else {
+        store
+            .run_timeline(zone, TIMELINE_RUNS)?
+            .into_iter()
+            .map(|(run, [crit, warn, note])| UiTick {
+                id: run.id,
+                when_unix: run.started_at_unix,
+                crit,
+                warn,
+                note,
+            })
+            .collect()
+    };
     Ok(UiZone {
+        timeline,
         name: zone.to_string(),
         names: stored_names.max(seeds) + 1,
         ns: view.as_ref().map(ui_nameservers).unwrap_or_default(),

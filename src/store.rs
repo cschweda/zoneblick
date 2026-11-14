@@ -549,6 +549,44 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// The latest `limit` runs of a zone, oldest first, each with how many
+    /// findings it had at each severity (critical, warning, notice). Muted
+    /// findings are not counted.
+    pub fn run_timeline(
+        &self,
+        zone: &str,
+        limit: usize,
+    ) -> Result<Vec<(RunRef, [usize; 3])>, StoreError> {
+        let zone_id = self.zone_id(zone)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT r.id, r.started_at,
+                    COALESCE(SUM(rf.severity = 'critical'), 0),
+                    COALESCE(SUM(rf.severity = 'warning'), 0),
+                    COALESCE(SUM(rf.severity = 'notice'), 0)
+             FROM runs r
+             LEFT JOIN run_findings rf ON rf.run_id = r.id
+                  AND rf.finding_id NOT IN (SELECT id FROM findings WHERE state = 'muted')
+             WHERE r.zone_id = ?1
+             GROUP BY r.id ORDER BY r.id DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![zone_id, limit as i64], |r| {
+            Ok((
+                RunRef {
+                    id: r.get(0)?,
+                    started_at_unix: r.get::<_, i64>(1)? as u64,
+                },
+                [
+                    r.get::<_, i64>(2)? as usize,
+                    r.get::<_, i64>(3)? as usize,
+                    r.get::<_, i64>(4)? as usize,
+                ],
+            ))
+        })?;
+        let mut out: Vec<(RunRef, [usize; 3])> = rows.collect::<Result<_, _>>()?;
+        out.reverse();
+        Ok(out)
+    }
+
     /// The two runs a diff compares. With no IDs given: the latest run and
     /// the one before it. With only `to` given: that run and the one before.
     pub fn pick_runs(
