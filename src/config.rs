@@ -200,6 +200,13 @@ pub struct ServerConfig {
     /// SHA-256 of the API token, in hex. Make one with `zoneblick token`.
     #[serde(default)]
     pub token_sha256: Option<String>,
+    /// A certificate chain in PEM form. With `tls_key`, the daemon
+    /// serves HTTPS itself.
+    #[serde(default)]
+    pub tls_cert: Option<PathBuf>,
+    /// The private key for `tls_cert`, in PEM form.
+    #[serde(default)]
+    pub tls_key: Option<PathBuf>,
 }
 
 fn default_bind() -> String {
@@ -216,6 +223,8 @@ impl Default for ServerConfig {
             bind: default_bind(),
             data_dir: default_data_dir(),
             token_sha256: None,
+            tls_cert: None,
+            tls_key: None,
         }
     }
 }
@@ -437,6 +446,16 @@ impl Config {
                 )));
             }
         }
+        if config.server.tls_cert.is_some() != config.server.tls_key.is_some() {
+            return Err(ConfigError::Invalid(
+                "[server] tls_cert and tls_key go together: set both, or neither".to_string(),
+            ));
+        }
+        if config.server.tls_cert.is_some() && config.socket_path().is_some() {
+            return Err(ConfigError::Invalid(
+                "[server] tls_cert is for a network address, not for a socket file".to_string(),
+            ));
+        }
         if config.socket_path().is_some() {
             if !cfg!(unix) {
                 return Err(ConfigError::Invalid(
@@ -646,6 +665,14 @@ smtp_host = "smtp.example.org"
             );
         }
         assert!(err("[server]\nbind = \"unix:\"").contains("not an address and port"));
+        assert!(err("[server]\ntls_cert = \"c.pem\"").contains("go together"));
+        assert!(
+            Config::parse("[server]\ntls_cert = \"c.pem\"\ntls_key = \"k.pem\"")
+                .unwrap()
+                .server
+                .tls_key
+                .is_some()
+        );
         assert!(err("[schedule]\nevery = \"soon\"").contains("not a length of time"));
         assert!(
             err("[[zone]]\nname = \"a.example\"\n[[zone]]\nname = \"A.example.\"")

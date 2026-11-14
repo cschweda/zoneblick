@@ -58,6 +58,8 @@ pub enum ServeError {
         path: std::path::PathBuf,
         source: std::io::Error,
     },
+    #[error("HTTPS cannot be set up: {0}")]
+    Tls(String),
     #[error("the server stopped: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -673,6 +675,23 @@ pub async fn serve(
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|source| ServeError::Bind { addr, source })?;
+    if let (Some(cert), Some(key)) = (
+        state.config.server.tls_cert.clone(),
+        state.config.server.tls_key.clone(),
+    ) {
+        let config = crate::tls::load(&cert, &key).map_err(ServeError::Tls)?;
+        let listener = crate::tls::TlsListener::new(listener, config, cert, key, log)?;
+        started(&format!("https://{addr}"));
+        if state.config.server.token_sha256.is_none() {
+            log("no API token is set; the API is open to this machine only");
+        }
+        let job = tokio::spawn(scheduler(state.clone(), every));
+        let result = axum::serve(listener, router(state))
+            .with_graceful_shutdown(shutdown)
+            .await;
+        job.abort();
+        return Ok(result?);
+    }
     started(&format!("http://{addr}"));
     if state.config.server.token_sha256.is_none() {
         log("no API token is set; the API is open to this machine only");

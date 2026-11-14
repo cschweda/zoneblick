@@ -18,3 +18,6 @@ zoneblick.toml
 # Secrets
 .env
 .env.*
+
+# Working copies made by tools.
+.claude/

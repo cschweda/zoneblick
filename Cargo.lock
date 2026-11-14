@@ -1999,5 +1999,6 @@ dependencies = [
  "sha2",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "toml",
 ]
