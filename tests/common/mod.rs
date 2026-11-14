@@ -635,6 +635,44 @@ pub fn rrsig_rdata(
     rdata
 }
 
+/// [`rrsig_rdata`] for a record set at any owner name inside the zone
+/// `signer`, or for a DS set in the parent zone `signer`.
+#[allow(clippy::too_many_arguments)]
+pub fn rrsig_for(
+    owner: &str,
+    type_covered: u16,
+    seed: u8,
+    ksk: bool,
+    inception: u64,
+    expiration: u64,
+    signer: &str,
+    rdatas: &[Vec<u8>],
+) -> Vec<u8> {
+    let key_tag = zoneblick::dnssec::key_tag(&dnskey_rdata(seed, ksk));
+    let labels = owner
+        .trim_end_matches('.')
+        .split('.')
+        .filter(|l| !l.is_empty())
+        .count() as u8;
+    let mut rdata = type_covered.to_be_bytes().to_vec();
+    rdata.extend([15, labels]);
+    rdata.extend(3600u32.to_be_bytes());
+    rdata.extend((expiration as u32).to_be_bytes());
+    rdata.extend((inception as u32).to_be_bytes());
+    rdata.extend(key_tag.to_be_bytes());
+    let signer_wire = zoneblick::verify::name_wire(signer);
+    rdata.extend(&signer_wire);
+    let message = zoneblick::verify::signed_data(
+        &rdata,
+        signer_wire.len(),
+        &zoneblick::verify::name_wire(owner),
+        type_covered,
+        rdatas,
+    );
+    rdata.extend(signing_key(seed).sign(&message).as_ref());
+    rdata
+}
+
 pub const SIGNED_ZONE: &str = "signed.example.";
 
 /// A signed zone, `signed.example.`: a KSK and a ZSK on both servers, with

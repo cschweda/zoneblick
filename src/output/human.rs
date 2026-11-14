@@ -406,9 +406,9 @@ pub fn evidence_lines(evidence: &Evidence) -> Vec<String> {
                 None => format!("{url} gave the {service} page for an unclaimed site"),
             },
         ],
-        Evidence::ServerBehaviour { details, .. } | Evidence::ZoneDetail { details } => {
-            details.clone()
-        }
+        Evidence::ServerBehaviour { details, .. }
+        | Evidence::ZoneDetail { details }
+        | Evidence::RecordDetail { details, .. } => details.clone(),
         Evidence::Drift {
             declared,
             served,

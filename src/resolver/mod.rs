@@ -8,6 +8,7 @@
 //! - [`probe`]: queries every nameserver address of a zone and builds the
 //!   [`ZoneObservation`](crate::observe::ZoneObservation)
 
+pub mod chain;
 pub mod deep;
 pub mod hints;
 pub mod iterate;

@@ -612,6 +612,31 @@ pub struct Registration {
     pub error: Option<String>,
 }
 
+/// One zone on the way from the root to the checked zone, and whether
+/// its keys are vouched for from above.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChainLink {
+    pub zone: String,
+    /// `secure`: its DS set is signed by its parent and one of those keys
+    /// signs its key set. `insecure`: the parent has no DS for it.
+    /// `bogus`: a signature or a DS record does not hold. `unknown`: it
+    /// could not be checked.
+    pub status: String,
+    pub detail: Option<String>,
+}
+
+/// Whether the signature over one record set, as one server gave it,
+/// verifies with the zone's keys.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordSignature {
+    pub name: String,
+    pub rtype: String,
+    pub ns_name: String,
+    pub address: IpAddr,
+    /// `valid`, `invalid`, `expired`, `unsigned` or `untried`.
+    pub status: String,
+}
+
 /// What a deep run collects on top of a light one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeepObservation {
@@ -628,6 +653,12 @@ pub struct DeepObservation {
     /// Which network announces each nameserver address.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub origins: Vec<AddressOrigin>,
+    /// The chain of trust from the root down to the zone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain: Vec<ChainLink>,
+    /// The signature check of every record set the run collected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub record_signatures: Vec<RecordSignature>,
     /// The domain's registration, from the registry's RDAP service.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration: Option<Registration>,

@@ -463,6 +463,8 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
         rname_address: None,
         previous_dnskeys: None,
         origins,
+        chain: Vec::new(),
+        record_signatures: Vec::new(),
         registration: None,
     };
     if let Some(soa) = soa {
@@ -483,6 +485,8 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
             deep.rname_domain = Some(domain);
         }
     }
+    deep.chain = super::chain::chain_of_trust(&client, obs, &super::chain::root_anchors()).await;
+    deep.record_signatures = super::chain::record_signatures(&client, obs).await;
     deep.registration = crate::registration::collect(&client, obs).await;
     obs.deep = Some(deep);
 }

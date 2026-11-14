@@ -721,6 +721,92 @@ pub fn sec_10_algorithm_completeness(obs: &ZoneObservation) -> Vec<Finding> {
     )]
 }
 
+/// SEC-12: a record set's signature is missing, expired or does not
+/// verify with the zone's keys. Validating resolvers refuse such answers
+/// when the zone is chained to its parent.
+pub fn sec_12_record_signatures(obs: &ZoneObservation) -> Vec<Finding> {
+    let Some(d) = deep(obs) else {
+        return Vec::new();
+    };
+    let chained = obs
+        .dnssec
+        .as_ref()
+        .and_then(|d| d.parent_ds.as_ref())
+        .and_then(|p| p.records.as_ref())
+        .is_some_and(|records| !records.is_empty());
+    let severity = if chained {
+        Severity::Critical
+    } else {
+        Severity::Warning
+    };
+    // One finding per record set, naming the servers it fails on.
+    let mut bad: std::collections::BTreeMap<(&str, &str), Vec<String>> = Default::default();
+    for sig in &d.record_signatures {
+        let what = match sig.status.as_str() {
+            "invalid" => "the signature does not verify",
+            "expired" => "every signature is outside its validity period",
+            "unsigned" => "there is no signature",
+            _ => continue,
+        };
+        bad.entry((sig.name.as_str(), sig.rtype.as_str()))
+            .or_default()
+            .push(format!("{} {}: {what}", sig.ns_name, sig.address));
+    }
+    bad.into_iter()
+        .map(|((name, rtype), details)| {
+            Finding::new(
+                "SEC-12",
+                severity,
+                name,
+                format!(
+                    "the {rtype} records of {name} are not validly signed{}",
+                    if chained {
+                        "; validating resolvers refuse them"
+                    } else {
+                        ""
+                    }
+                ),
+                Evidence::RecordDetail {
+                    rtype: rtype.to_string(),
+                    details,
+                },
+            )
+        })
+        .collect()
+}
+
+/// SEC-13: the chain of trust from the root breaks before it reaches the
+/// zone: at an ancestor, or at the zone's own DS set or key set.
+pub fn sec_13_chain(obs: &ZoneObservation) -> Vec<Finding> {
+    let Some(d) = deep(obs) else {
+        return Vec::new();
+    };
+    let Some(broken) = d.chain.iter().find(|l| l.status == "bogus") else {
+        return Vec::new();
+    };
+    let mut details: Vec<String> = d
+        .chain
+        .iter()
+        .map(|l| match &l.detail {
+            Some(detail) => format!("{} {}: {detail}", l.zone, l.status),
+            None => format!("{} {}", l.zone, l.status),
+        })
+        .collect();
+    details.push(
+        "validating resolvers treat every name below the broken link as unreachable".to_string(),
+    );
+    vec![zone_finding(
+        "SEC-13",
+        Severity::Critical,
+        &obs.zone,
+        format!(
+            "the DNSSEC chain of trust to {} is broken at {}",
+            obs.zone, broken.zone
+        ),
+        details,
+    )]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -797,6 +883,8 @@ mod tests {
             rname_address: None,
             previous_dnskeys: None,
             origins: Vec::new(),
+            chain: Vec::new(),
+            record_signatures: Vec::new(),
             registration: None,
         });
         obs

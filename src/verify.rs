@@ -134,6 +134,25 @@ pub fn signed_data(
     data
 }
 
+/// The name a signature with `labels` labels was made under, when that
+/// is fewer than `owner` has: `*.` followed by the last `labels` labels.
+/// `None` when the signature covers the owner name itself.
+fn wildcard_owner(owner: &[u8], labels: u8) -> Option<Vec<u8>> {
+    let mut starts = Vec::new();
+    let mut at = 0;
+    while at < owner.len() && owner[at] != 0 {
+        starts.push(at);
+        at += 1 + owner[at] as usize;
+    }
+    let keep = labels as usize;
+    if keep >= starts.len() {
+        return None;
+    }
+    let mut out = vec![1, b'*'];
+    out.extend_from_slice(&owner[starts[starts.len() - keep..].first().copied().unwrap_or(at)..]);
+    Some(out)
+}
+
 /// Try every signature over a record set owned by `owner`.
 ///
 /// `rdatas` is the record data of each record in canonical form (names in
@@ -158,7 +177,16 @@ pub fn verify_rrset(
         };
         let (algorithm, tag) = (rrsig[2], u16::from_be_bytes([rrsig[16], rrsig[17]]));
         let sig = &rrsig[18 + signer_len..];
-        let message = signed_data(rrsig, signer_len, &owner_wire, rtype, rdatas);
+        // An answer made from a wildcard is signed under the wildcard's
+        // name: `*.` and the number of labels the signature states.
+        let owner_signed = wildcard_owner(&owner_wire, rrsig[3]);
+        let message = signed_data(
+            rrsig,
+            signer_len,
+            owner_signed.as_deref().unwrap_or(&owner_wire),
+            rtype,
+            rdatas,
+        );
         for key in keys
             .iter()
             .filter(|k| k.algorithm == algorithm && k.key_tag == tag)
@@ -184,6 +212,23 @@ pub fn verify_rrset(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wildcard_answer_is_signed_under_the_wildcard_name() {
+        let owner = name_wire("a.b.example.test.");
+        assert_eq!(wildcard_owner(&owner, 4), None);
+        assert_eq!(
+            wildcard_owner(&owner, 3),
+            Some(name_wire("*.b.example.test."))
+        );
+        assert_eq!(
+            wildcard_owner(&owner, 2),
+            Some(name_wire("*.example.test."))
+        );
+        assert_eq!(wildcard_owner(&owner, 0), Some(vec![1, b'*', 0]));
+        assert_eq!(wildcard_owner(&name_wire("."), 0), None);
+    }
+
     use crate::dnssec::{hex, parse_dnskey};
     use ring::rand::SystemRandom;
     use ring::signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair};

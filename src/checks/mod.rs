@@ -226,6 +226,10 @@ pub enum Evidence {
     ZoneDetail {
         details: Vec<String>,
     },
+    RecordDetail {
+        rtype: String,
+        details: Vec<String>,
+    },
     Drift {
         rtype: String,
         /// What the zone file says, and what the nameservers serve.
@@ -296,7 +300,7 @@ impl Finding {
             Evidence::ServerBehaviour { address, .. } => address.to_string(),
             Evidence::ZoneDetail { .. } => String::new(),
             Evidence::UnclaimedService { service, .. } => service.clone(),
-            Evidence::Drift { rtype, .. } => rtype.clone(),
+            Evidence::Drift { rtype, .. } | Evidence::RecordDetail { rtype, .. } => rtype.clone(),
         };
         format!("{}|{}|{}", self.check_id, self.name, detail)
     }
@@ -556,6 +560,16 @@ pub const CATALOG: &[CheckInfo] = &[
         Severity::Warning,
     ),
     deep_check(
+        "SEC-12",
+        "A record set's signature is missing, expired or does not verify",
+        Severity::Critical,
+    ),
+    deep_check(
+        "SEC-13",
+        "The chain of trust from the root is broken above or at the zone",
+        Severity::Critical,
+    ),
+    deep_check(
         "NSB-01",
         "Server does not follow the EDNS rules",
         Severity::Warning,
@@ -693,6 +707,8 @@ const CHECKS: &[Check] = &[
     deep::sec_08_rollover,
     deep::sec_09_cds,
     deep::sec_10_algorithm_completeness,
+    deep::sec_12_record_signatures,
+    deep::sec_13_chain,
     deep::nsb_01_edns_compliance,
     deep::nsb_02_open_transfer,
     deep::nsb_03_recursion,
