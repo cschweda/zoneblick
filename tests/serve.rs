@@ -81,7 +81,9 @@ fn client() -> reqwest::Client {
 fn token_file() -> String {
     let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("vantage-token");
     std::fs::write(&path, TOKEN).unwrap();
-    path.display().to_string()
+    // Forward slashes: the path goes into a TOML string, where a Windows
+    // backslash would start an escape.
+    path.display().to_string().replace('\\', "/")
 }
 
 async fn get(url: &str) -> (u16, Value) {
