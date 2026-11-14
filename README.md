@@ -18,9 +18,9 @@ A check of a deliberately broken test zone. One nameserver refuses queries for t
 
 ![Terminal output of zoneblick check for a broken, unsigned zone: one critical finding, DEL-02, for a lame nameserver, and one warning, CON-01, for mismatched SOA serials](screenshots/check-findings.png)
 
-A real, signed zone, checked live:
+A real zone, checked live (the author's own, `metaincognita.com`):
 
-![Terminal output of zoneblick check for example.com: the delegation path from the root, twelve nameserver addresses all answering over UDP and TCP, the DS record and DNSSEC keys, a mail and policy summary, and one notice for a missing CAA record](screenshots/check-clean.png)
+![Terminal output of zoneblick check for metaincognita.com: the delegation path from the root, four nameservers with eight addresses all answering over UDP and TCP with the same serial, no DNSSEC, a mail and policy summary, and two notices, for a missing DMARC record and a missing CAA record](screenshots/check-clean.png)
 
 Mail-policy and takeover findings, in a test zone whose SPF record includes a domain nobody has registered:
 
@@ -42,13 +42,13 @@ The mail checks, in a test zone whose mail records are wrong in several ways: a 
 
 ![Terminal output of zoneblick check for a test zone: one critical finding for an SPF include of an unregistered domain, four warnings covering MTA-STS, TLSA and two DKIM selectors, and four notices covering DMARC, CAA, TLS reporting and BIMI](screenshots/mail.png)
 
-What a deep run adds for a real, signed zone, read from its JSON output: the chain of trust from the root, the signature check of every record set, and the domain's registration:
+What a deep run adds for the same zone, read from its JSON output: the chain of trust from the root (which ends as "insecure" at a zone that is not signed, with the parent's proof that there is no DS record), the network its nameservers are in, whether any allows zone transfers or recursion, and the domain's registration:
 
-![Terminal output of a deep run of example.com piped through jq: the chain of trust is secure at the root, at com and at example.com, 72 record-set signatures are valid, and the registration shows the registrar, three lock statuses and an expiry date in August 2027](screenshots/deep.png)
+![Terminal output of a deep run of metaincognita.com piped through jq: the chain of trust is secure at the root and at com and insecure at metaincognita.com, every nameserver is in AS32771, none allows transfers or recursion, and the registration shows the registrar, a transfer lock and an expiry date in August 2027](screenshots/deep.png)
 
-The digest, here for two real zones after four runs each:
+The digest, here for that zone after three runs:
 
-![Terminal output of zoneblick digest: two zones, two open findings, and for each zone the number of runs, the open findings by severity and the finding opened in the period](screenshots/digest.png)
+![Terminal output of zoneblick digest: one zone, three open findings, the number of runs, and the three notices opened in the period](screenshots/digest.png)
 
 The web UI's history tab, for a test zone that changed in its tenth run. The strip is the timeline, one bar per stored run; below it, the changes between the selected run and the one before:
 
@@ -56,7 +56,7 @@ The web UI's history tab, for a test zone that changed in its tenth run. The str
 
 The API token, from 0.14.0. The daemon makes one on its first start in a file only its own user can read; a request without it is refused, also on localhost:
 
-![Terminal session: zoneblick serve logs that it made an API token, the token file is readable by its owner only, a request without the token gets an unauthorized error, zoneblick token --show prints the token, and the same request with the token returns the zone](screenshots/token.png)
+![Terminal session: zoneblick serve logs that it made an API token, the token file is readable by its owner only, a request without the token gets an unauthorized error, zoneblick token --show prints the token, and the same request with the token returns the zone metaincognita.com](screenshots/token.png)
 
 The web UI asks for the token once per browser session:
 
@@ -314,7 +314,7 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.14.0` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check, of the author's zone; put yours in its place. Change `v0.14.0` to install another release.
 
 **Linux**
 
@@ -326,7 +326,7 @@ curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V
 tar -xzf zoneblick-$V-$T.tar.gz
 sudo install zoneblick-$V-$T/zoneblick /usr/local/bin/
 
-zoneblick check example.org
+zoneblick check metaincognita.com
 ```
 
 **macOS**
@@ -341,7 +341,7 @@ tar -xzf zoneblick-$V-$T.tar.gz
 sudo mkdir -p /usr/local/bin
 sudo install zoneblick-$V-$T/zoneblick /usr/local/bin/
 
-zoneblick check example.org
+zoneblick check metaincognita.com
 ```
 
 **Windows (PowerShell)**
@@ -353,7 +353,7 @@ $T = "x86_64-pc-windows-msvc"
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
 Expand-Archive zoneblick.zip -DestinationPath .
 
-& ".\zoneblick-$V-$T\zoneblick.exe" check example.org
+& ".\zoneblick-$V-$T\zoneblick.exe" check metaincognita.com
 ```
 
 On Windows the binary stays in the unpacked folder. To run `zoneblick` from any folder, move `zoneblick.exe` to a folder on your `PATH`. The Windows binary is not signed.
@@ -415,44 +415,56 @@ zoneblick is one binary. `check`, `run` and `diff` need no config file; only `ru
 Once installed:
 
 ```
-zoneblick check example.com
+zoneblick check metaincognita.com
 ```
 
-Or, without installing, run it from a checkout with `cargo run -- check example.com`.
+Put your own zone in place of `metaincognita.com`, which is the author's. Or, without installing, run it from a checkout with `cargo run -- check metaincognita.com`.
 
 `check` resolves the zone from the root servers, asks every authoritative nameserver directly over UDP and TCP, IPv4 and IPv6, reads the zone's DNSSEC keys and signatures and its mail and policy records, and reports what is wrong. It needs no config file and no database, and it never uses your system resolver for zone data.
 
 ```
-zoneblick check example.com.
+zoneblick check metaincognita.com.
 
 Delegation path
-  . -> com.             asked a.root-servers.net. (198.41.0.4): 13 NS, 26 glue
-  com. -> example.com.  asked a.gtld-servers.net. (192.5.6.30): 2 NS, 12 glue
+  . -> com.                   asked a.root-servers.net. (198.41.0.4): 13 NS, 26 glue
+  com. -> metaincognita.com.  asked a.gtld-servers.net. (192.5.6.30): 4 NS, 2 glue
 
 Nameservers
-  elliott.ns.cloudflare.com.  listed by: parent and zone
-    108.162.195.228          serial 2418004112   udp: ok   tcp: ok
+  ns1.dnsimple-edge.com.  listed by: parent and zone
+    199.247.152.53     serial 1539965345   udp: ok   tcp: ok
+    2620:111:8004::53  serial 1539965345   udp: ok   tcp: ok
     ...
 
+DNSSEC
+  DS at com.: none
+  DNSKEY: none; the zone is not signed
+
+Mail and policy
+  MX:    mxa.mailgun.org., mxb.mailgun.org.
+  SPF:   5 DNS lookups
+  DMARC: none
+  CAA:   none
+
+Findings
+  NOTICE (2)
+    POL-02  _dmarc.metaincognita.com.
+      metaincognita.com. has no DMARC record
+      no TXT record starting with v=DMARC1
+    POL-03  metaincognita.com.
+      metaincognita.com. has no CAA record, so any certificate authority may issue certificates for it
+      no CAA record at the zone apex
+
+Summary: 0 critical, 0 warning, 2 notice, 0 info
+```
+
+For a signed zone the DNSSEC part lists the DS record at the parent, the zone's keys and the earliest signature expiry:
+
+```
 DNSSEC
   DS at com.: key tag 2371 (ECDSAP256SHA256, SHA-256)
   DNSKEY: key tag 2371 (KSK, ECDSAP256SHA256)
   DNSKEY: key tag 34505 (ZSK, ECDSAP256SHA256)
   earliest signature expiry: 2026-11-14 18:16 UTC
-
-Mail and policy
-  MX:    null MX (the zone takes no mail)
-  SPF:   0 DNS lookups
-  DMARC: p=reject
-  CAA:   none
-
-Findings
-  NOTICE (1)
-    POL-03  example.com.
-      example.com. has no CAA record, so any certificate authority may issue certificates for it
-      no CAA record at the zone apex
-
-Summary: 0 critical, 0 warning, 1 notice, 0 info
 ```
 
 To see findings without touching the network, replay the deliberately broken test zone from a checkout of this repository:
