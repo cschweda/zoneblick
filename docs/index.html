@@ -406,10 +406,10 @@ footer .grid{row-gap:24px}
     <div class="wrap grid">
       <div class="num">02</div>
       <div class="body">
-        <h2>Seven kinds of trouble, one pass.</h2>
+        <h2>Eight kinds of trouble, one pass.</h2>
         <p class="intro">Each check has a stable ID, a severity, and the evidence behind it. No recursive resolver sits in the middle, so you see what the authoritative servers really say.</p>
-        <p class="tier"><b>Light run</b><span>Hourly. Thirty-five checks across the whole fleet.</span></p>
-        <p class="tier"><b>Working today</b><span>All thirty-five: delegation, consistency, DNSSEC (beta), mail and policy, takeover exposure at 32 known hosting services, certificates from the public logs, and drift from a zone file you keep.</span></p>
+        <p class="tier"><b>Light run</b><span>Hourly. Forty checks across the whole fleet.</span></p>
+        <p class="tier"><b>Working today</b><span>All forty: delegation, consistency, DNSSEC (beta), mail and policy, takeover exposure at 32 known hosting services, certificates from the public logs, drift from a zone file you keep, reverse zones, and differences between vantage points.</span></p>
         <div class="checks">
           <article>
             <div class="label">DEL</div>
@@ -451,20 +451,26 @@ footer .grid{row-gap:24px}
             <div class="label">DRF</div>
             <h3>Zone-file drift</h3>
             <p>Do the servers hold what your zone file says?</p>
-            <ul><li>Records missing or changed</li><li>Records nobody declared</li></ul>
+            <ul><li>Records missing or changed</li><li>Records nobody declared</li><li>A plan before you deploy</li></ul>
+          </article>
+          <article>
+            <div class="label">VAN</div>
+            <h3>Vantage points</h3>
+            <p>Does the zone look the same from somewhere else?</p>
+            <ul><li>Answers that differ by place</li><li>Servers unreachable from one side</li></ul>
           </article>
         </div>
 
         <h3 class="h3big">Deep checks, once a day.</h3>
-        <p class="h3sub">Twenty more checks that take extra queries per nameserver. Each one was chosen because its result changes over time, so the history shows when a zone went wrong as well as that it is wrong.</p>
+        <p class="h3sub">Twenty-one more checks that take extra queries per nameserver. Each one was chosen because its result changes over time, so the history shows when a zone went wrong as well as that it is wrong.</p>
         <p class="tier"><b>Deep run</b><span>As often as you set, or on demand for a single zone with <span class="mono">--deep</span>.</span></p>
-        <p class="tier"><b>Working today</b><span>All twenty.</span></p>
+        <p class="tier"><b>Working today</b><span>All twenty-one.</span></p>
         <div class="checks four">
           <article>
             <div class="label">SEC 06&ndash;13</div>
             <h3>DNSSEC, deeper</h3>
             <p>Does signing hold up through rollovers and re-signing?</p>
-            <ul><li>Denial-of-existence proofs</li><li>NSEC3 parameters</li><li>Key rollover state</li><li>CDS and CDNSKEY sync</li><li>Algorithm completeness</li><li>Chain of trust from the root</li><li>Signatures on every record set</li></ul>
+            <ul><li>Denial-of-existence proofs</li><li>NSEC3 parameters</li><li>Key rollover state</li><li>CDS and CDNSKEY sync</li><li>Algorithm completeness</li><li>Chain of trust from the root</li><li>Signatures on every record set</li><li>Signed proofs of absence</li></ul>
           </article>
           <article>
             <div class="label">NSB</div>
@@ -527,7 +533,7 @@ footer .grid{row-gap:24px}
               <tr><th scope="row">Zonemaster, DNSViz</th><td class="y">Yes</td><td class="y">Full</td><td>No</td><td>No, one shot</td><td class="y">Yes</td></tr>
               <tr><th scope="row">BadDNS, dnsReaper</th><td>No</td><td>No</td><td class="y">Deep</td><td>No</td><td class="y">Yes</td></tr>
               <tr><th scope="row">Hosted DNS monitors</th><td>Partial</td><td>Varies</td><td>Partial</td><td class="y">Yes</td><td>No</td></tr>
-              <tr class="us"><th scope="row">zoneblick</th><td>35 checks, hourly</td><td>20 selected checks, daily</td><td>Imported signatures</td><td>Every run</td><td>One binary</td></tr>
+              <tr class="us"><th scope="row">zoneblick</th><td>40 checks, hourly</td><td>21 selected checks, daily</td><td>Imported signatures</td><td>Every run</td><td>One binary</td></tr>
             </tbody>
           </table>
         </div>
@@ -564,7 +570,7 @@ footer .grid{row-gap:24px}
           </article>
           <article class="wide">
             <h3>Download a binary</h3>
-            <p>Release <a href="https://github.com/cschweda/zoneblick/releases/tag/v0.12.2">v0.12.2</a> has ready-built binaries for Linux, macOS and Windows. Pick your system, paste the commands into a terminal, and the last line runs your first check. Each release also has a <span class="mono">SHA256SUMS</span> file; the <a href="https://github.com/cschweda/zoneblick#install">README</a> shows how to verify a download.</p>
+            <p>Release <a href="https://github.com/cschweda/zoneblick/releases/tag/v0.13.0">v0.13.0</a> has ready-built binaries for Linux, macOS and Windows. Pick your system, paste the commands into a terminal, and the last line runs your first check. Each release also has a <span class="mono">SHA256SUMS</span> file; the <a href="https://github.com/cschweda/zoneblick#install">README</a> shows how to verify a download.</p>
             <div class="tabs">
               <div class="tablist" role="tablist" aria-label="Operating system">
                 <button type="button" role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="true">Linux</button>
@@ -573,7 +579,7 @@ footer .grid{row-gap:24px}
               </div>
               <div class="panel on" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux">
                 <h4 class="ptitle">Linux</h4>
-<pre tabindex="0">V=v0.12.2
+<pre tabindex="0">V=v0.13.0
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -585,7 +591,7 @@ zoneblick check example.org</pre>
               </div>
               <div class="panel" role="tabpanel" id="panel-macos" aria-labelledby="tab-macos">
                 <h4 class="ptitle">macOS</h4>
-<pre tabindex="0">V=v0.12.2
+<pre tabindex="0">V=v0.13.0
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -599,7 +605,7 @@ zoneblick check example.org</pre>
               </div>
               <div class="panel" role="tabpanel" id="panel-windows" aria-labelledby="tab-windows">
                 <h4 class="ptitle">Windows (PowerShell)</h4>
-<pre tabindex="0">$V = "v0.12.2"
+<pre tabindex="0">$V = "v0.13.0"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -670,8 +676,8 @@ zoneblick serve</pre>
   ghcr.io/cschweda/zoneblick</pre>
           </article>
         </div>
-        <p class="status"><b>Early days</b><span>v0.12.2 is an early pre-release. All thirty-five light checks, stored runs, baselines, zone-file comparison, discovery from certificate logs, zone transfers and five DNS hosts, muting, export, the daemon, alerts, a weekly digest, metrics and the web UI work today. All twenty deep checks work too, including the DNSSEC chain of trust from the root and the domain's registration. Parts that talk to outside services (DNS host APIs, chat alerts, email) are tested against recorded answers, not the live services.</span></p>
-        <p class="status"><b>Security review</b><span>0.12.0 went through a red team and blue team review: 3,200 runs over corrupted DNS answers, hostile API requests, and a code review as an attacker. Two serious findings and nine smaller ones are fixed in v0.12.2; what held and what is still open is in the <a href="https://github.com/cschweda/zoneblick#security-review">README</a>.</span></p>
+        <p class="status"><b>Early days</b><span>v0.13.0 is an early pre-release. All forty light checks, stored runs, baselines, zone-file comparison and <span class="mono">zoneblick plan</span> for a file before it is deployed, discovery from certificate logs, zone transfers and five DNS hosts, muting, export, the daemon, alerts, a weekly digest, metrics and the web UI work today. All twenty-one deep checks work too, including the DNSSEC chain of trust from the root with verified proofs of absence, mail-server certificates against TLSA records, and the domain's registration. Release files carry a build provenance that the install script verifies. Parts that talk to outside services (DNS host APIs, chat alerts, email) are tested against recorded answers, not the live services.</span></p>
+        <p class="status"><b>Security review</b><span>0.12.0 went through a red team and blue team review: 3,200 runs over corrupted DNS answers, hostile API requests, and a code review as an attacker. Two serious findings and nine smaller ones are fixed in v0.13.0; what held and what is still open is in the <a href="https://github.com/cschweda/zoneblick#security-review">README</a>.</span></p>
       </div>
     </div>
   </section>

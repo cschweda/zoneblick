@@ -88,14 +88,43 @@ impl ServerCertVerifier for AnyCertificate {
     }
 }
 
-/// Read one SMTP reply: its code and its lines, without the code.
-fn reply(
-    reader: &mut BufReader<TcpStream>,
+/// A connection on which every single read and write is held to the
+/// overall deadline. Buffered readers and the TLS handshake make many
+/// small reads; each one gets only the time that is left.
+struct Timed {
+    stream: TcpStream,
     deadline: std::time::Instant,
-) -> Result<(u16, Vec<String>), String> {
+}
+
+impl Timed {
+    fn arm(&self) -> std::io::Result<()> {
+        arm(&self.stream, self.deadline)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::TimedOut, e))
+    }
+}
+
+impl Read for Timed {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.arm()?;
+        self.stream.read(buf)
+    }
+}
+
+impl Write for Timed {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.arm()?;
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.stream.flush()
+    }
+}
+
+/// Read one SMTP reply: its code and its lines, without the code.
+fn reply(reader: &mut BufReader<Timed>) -> Result<(u16, Vec<String>), String> {
     let mut lines = Vec::new();
     for _ in 0..MAX_REPLY_LINES {
-        arm(reader.get_ref(), deadline)?;
         let mut line = String::new();
         let n = reader
             .by_ref()
@@ -128,17 +157,20 @@ pub fn starttls_certificates(addr: SocketAddr, host: &str) -> Result<Vec<Vec<u8>
     let deadline = std::time::Instant::now() + DEADLINE;
     let stream = TcpStream::connect_timeout(&addr, TIMEOUT).map_err(io)?;
     arm(&stream, deadline)?;
-    let mut reader = BufReader::new(stream.try_clone().map_err(io)?);
-    let mut writer = stream;
+    let mut reader = BufReader::new(Timed {
+        stream: stream.try_clone().map_err(io)?,
+        deadline,
+    });
+    let mut writer = Timed { stream, deadline };
 
-    let (code, _) = reply(&mut reader, deadline)?;
+    let (code, _) = reply(&mut reader)?;
     if code != 220 {
         return Err(format!("the server greeted with {code}, not 220"));
     }
     writer
         .write_all(b"EHLO zoneblick.invalid\r\n")
         .map_err(io)?;
-    let (code, extensions) = reply(&mut reader, deadline)?;
+    let (code, extensions) = reply(&mut reader)?;
     if code != 250 {
         return Err(format!("EHLO was answered with {code}"));
     }
@@ -149,7 +181,7 @@ pub fn starttls_certificates(addr: SocketAddr, host: &str) -> Result<Vec<Vec<u8>
         return Err(NO_STARTTLS.to_string());
     }
     writer.write_all(b"STARTTLS\r\n").map_err(io)?;
-    let (code, _) = reply(&mut reader, deadline)?;
+    let (code, _) = reply(&mut reader)?;
     if code != 220 {
         return Err(format!("STARTTLS was answered with {code}"));
     }
@@ -171,7 +203,6 @@ pub fn starttls_certificates(addr: SocketAddr, host: &str) -> Result<Vec<Vec<u8>
     let mut tls =
         rustls::ClientConnection::new(Arc::new(config), name).map_err(|e| e.to_string())?;
     while tls.is_handshaking() {
-        arm(&writer, deadline)?;
         tls.complete_io(&mut writer)
             .map_err(|e| format!("the TLS handshake failed: {e}"))?;
     }
