@@ -263,10 +263,11 @@ impl Store {
         // WAL keeps readers and the writer out of each other's way.
         conn.pragma_update(None, "journal_mode", "WAL")?;
         let store = Self::init(conn)?;
-        // On Windows the side files take the directory's permissions, so
-        // those of a database made here are narrowed as well.
+        // On Windows the side files take the directory's permissions, and
+        // SQLite makes them again on a later start, so they are narrowed
+        // on every open. They can hold recent runs.
         #[cfg(windows)]
-        if made_here {
+        {
             for suffix in ["-wal", "-shm"] {
                 let mut side = path.as_os_str().to_owned();
                 side.push(suffix);
@@ -1640,6 +1641,7 @@ mod tests {
                 record_signatures: Vec::new(),
                 mail_tls: Vec::new(),
                 registration: None,
+                ..Default::default()
             });
             obs
         };

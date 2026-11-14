@@ -10,6 +10,7 @@
 
 pub mod chain;
 pub mod deep;
+pub mod exposure;
 pub mod hints;
 pub mod iterate;
 pub mod limiter;

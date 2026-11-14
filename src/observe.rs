@@ -142,6 +142,9 @@ pub enum Probe {
     Recursion,
     /// The query name is sent in mixed upper and lower case.
     MixedCase,
+    /// "Recursion desired" and "checking disabled" are both set: a
+    /// validating resolver then answers without validating.
+    RecursionUnvalidated,
 }
 
 impl Probe {
@@ -691,7 +694,7 @@ pub struct MailTls {
 }
 
 /// What a deep run collects on top of a light one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeepObservation {
     pub servers: Vec<ServerDeep>,
     /// The address lookup of the primary named in the SOA record.
@@ -718,6 +721,135 @@ pub struct DeepObservation {
     /// The domain's registration, from the registry's RDAP service.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registration: Option<Registration>,
+    /// Names below the zone that are delegated to other nameservers, and
+    /// whether those nameservers serve them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subzones: Vec<Subzone>,
+    /// The registration of the domains the zone's nameservers and mail
+    /// servers are in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<Dependency>,
+    /// What each mail server and each web name presented over TLS.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub served_tls: Vec<ServedTls>,
+    /// Whether the route to each nameserver address is covered by RPKI.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routes: Vec<RouteOrigin>,
+    /// What public resolvers say about the zone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolvers: Vec<ResolverView>,
+    /// Blocklist lookups of the mail addresses and of the domain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocklists: Vec<BlocklistLookup>,
+    /// For each outside domain the DMARC record sends reports to: the
+    /// record by which that domain agrees to receive them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dmarc_reports: Vec<Lookup>,
+    /// Registered domains that look like the zone's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lookalikes: Vec<Lookalike>,
+}
+
+/// One nameserver of a delegated name, asked for that name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubzoneServer {
+    pub ns_name: String,
+    /// The address that was asked; `None` when the name has none.
+    pub address: Option<IpAddr>,
+    /// `authoritative`, `refused` (the server answered, and not for this
+    /// name), `silent`, `no_address` or `unregistered`.
+    pub status: String,
+    /// The answer code or the error, for `refused` and `silent`; the
+    /// unregistered domain, for `unregistered`.
+    pub detail: Option<String>,
+}
+
+/// A name below the zone that the zone delegates to other nameservers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Subzone {
+    pub name: String,
+    pub servers: Vec<SubzoneServer>,
+}
+
+/// The registration of a domain the zone depends on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dependency {
+    /// What depends on it, for example `nameserver ns1.example.net.`.
+    pub used_by: Vec<String>,
+    pub registration: Registration,
+}
+
+/// What a server presented when TLS was started with it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServedTls {
+    /// `mail` (port 25, after STARTTLS) or `web` (port 443).
+    pub role: String,
+    /// The mail server's name, or the web name.
+    pub host: String,
+    pub address: Option<IpAddr>,
+    /// For mail: whether the server offers STARTTLS. `None` when it
+    /// could not be asked.
+    pub starttls: Option<bool>,
+    /// When the server's own certificate runs out.
+    pub not_after_unix: Option<u64>,
+    /// The DNS names the certificate is for.
+    pub names: Vec<String>,
+    /// Why nothing was read, when nothing was.
+    pub error: Option<String>,
+}
+
+/// Whether the announcement of a nameserver's network is covered by a
+/// route origin authorisation (RPKI).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteOrigin {
+    pub prefix: String,
+    pub asn: u32,
+    /// The nameserver addresses inside the prefix.
+    pub addresses: Vec<IpAddr>,
+    /// `valid`, `invalid_asn`, `invalid_length` or `unknown` (no
+    /// authorisation covers the prefix). `None` when the lookup failed.
+    pub status: Option<String>,
+    pub error: Option<String>,
+}
+
+/// What one public resolver answered when asked for the zone's SOA record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolverView {
+    /// The operator, for example `Cloudflare`.
+    pub operator: String,
+    pub address: IpAddr,
+    /// The answer code. `None` when there was no answer.
+    pub rcode: Option<String>,
+    /// After a SERVFAIL: the answer code when asked again with DNSSEC
+    /// validation switched off.
+    pub rcode_unvalidated: Option<String>,
+    pub error: Option<String>,
+}
+
+/// One blocklist asked about one address or domain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlocklistLookup {
+    /// The address or domain asked about.
+    pub subject: String,
+    /// Where it comes from: `mail server mx.example.`, `SPF record`,
+    /// `the domain`.
+    pub role: String,
+    /// The list's zone, for example `zen.spamhaus.org.`.
+    pub list: String,
+    /// The answer codes (`127.0.0.x`) when listed; empty when not.
+    pub codes: Vec<String>,
+    /// Set when the list gave no usable answer.
+    pub error: Option<String>,
+}
+
+/// A registered domain that looks like the zone's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Lookalike {
+    pub domain: String,
+    /// How it differs: `one letter left out`, `two letters swapped`, ...
+    pub kind: String,
+    /// Its mail servers; empty when it has none.
+    pub mx: Vec<String>,
 }
 
 /// One certificate logged for names in the zone, as Certificate

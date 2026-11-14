@@ -487,7 +487,12 @@ impl Resolver {
 
     /// One question to one server: UDP with EDNS, without EDNS if the server
     /// rejects it, and TCP if the answer is truncated.
-    async fn ask(&self, server: IpAddr, qname: &str, qtype: QType) -> Result<Message, String> {
+    pub(crate) async fn ask(
+        &self,
+        server: IpAddr,
+        qname: &str,
+        qtype: QType,
+    ) -> Result<Message, String> {
         let mut spec = QuerySpec {
             server,
             transport: Transport::Udp,

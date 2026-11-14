@@ -369,6 +369,7 @@ async fn a_ds_set_signed_by_the_wrong_key_breaks_the_chain() {
         record_signatures: sigs,
         mail_tls: Vec::new(),
         registration: None,
+        ..Default::default()
     });
     let findings = run_all(&obs);
     let got: Vec<(&str, Severity, &str)> = findings

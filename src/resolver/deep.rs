@@ -490,6 +490,14 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
         record_signatures: Vec::new(),
         mail_tls: Vec::new(),
         registration: None,
+        subzones: Vec::new(),
+        dependencies: Vec::new(),
+        served_tls: Vec::new(),
+        routes: Vec::new(),
+        resolvers: Vec::new(),
+        blocklists: Vec::new(),
+        dmarc_reports: Vec::new(),
+        lookalikes: Vec::new(),
     };
     if let Some(soa) = soa {
         let mut lookup = resolver.lookup(&soa.mname, QType::A).await;
@@ -513,6 +521,7 @@ pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
     deep.record_signatures = super::chain::record_signatures(&client, obs).await;
     deep.mail_tls = mail_certificates(&client, obs).await;
     deep.registration = crate::registration::collect(&client, obs).await;
+    super::exposure::add_exposure(&client, obs, &mut deep).await;
     obs.deep = Some(deep);
 }
 

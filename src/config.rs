@@ -404,6 +404,43 @@ impl Config {
         })
     }
 
+    /// The alert addresses that are plain `http://` to somewhere that is
+    /// not this machine or a private network: what is sent there, and an
+    /// ntfy token, can be read on the way.
+    pub fn plain_http_alerts(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut look = |section: &str, url: &str| {
+            let Some(parsed) = reqwest::Url::parse(url)
+                .ok()
+                .filter(|u| u.scheme() == "http")
+            else {
+                return;
+            };
+            let host = parsed.host_str().unwrap_or("").trim_matches(['[', ']']);
+            let private = match host.parse::<std::net::IpAddr>() {
+                Ok(address) => crate::resolver::policy::not_public(address).is_some(),
+                // A name without a dot, or under a private ending, is on
+                // the local network.
+                Err(_) => {
+                    !host.contains('.')
+                        || [".local", ".lan", ".internal", ".home.arpa", ".localhost"]
+                            .iter()
+                            .any(|end| host.ends_with(end))
+                }
+            };
+            if !private {
+                out.push(format!("[alerts.{section}] {host}"));
+            }
+        };
+        if let Some(webhook) = &self.alerts.webhook {
+            look("webhook", &webhook.url);
+        }
+        if let Some(ntfy) = &self.alerts.ntfy {
+            look("ntfy", &ntfy.url);
+        }
+        out
+    }
+
     /// Parse and validate. Zone and seed names come back normalised.
     pub fn parse(text: &str) -> Result<Config, ConfigError> {
         let mut config: Config = toml::from_str(text).map_err(|e| ConfigError::Parse {
@@ -661,6 +698,25 @@ smtp_host = "smtp.example.org"
         for bad in ["", "h", "10", "0m", "1 week", "-5m"] {
             assert!(parse_duration(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn plain_http_alert_addresses_outside_the_local_network_are_named() {
+        let plain = |text: &str| Config::parse(text).unwrap().plain_http_alerts();
+        assert!(plain("[alerts.webhook]\nurl = \"https://hooks.example.org/z\"").is_empty());
+        assert!(plain("[alerts.webhook]\nurl = \"http://10.0.0.5/z\"").is_empty());
+        assert!(plain("[alerts.webhook]\nurl = \"http://127.0.0.1:9000/z\"").is_empty());
+        assert!(plain("[alerts.ntfy]\nurl = \"http://ntfy.lan/topic\"").is_empty());
+        assert!(plain("[alerts.ntfy]\nurl = \"http://ntfy/topic\"").is_empty());
+        assert_eq!(
+            plain(
+                "[alerts.webhook]\nurl = \"http://hooks.example.org/z\"\n[alerts.ntfy]\nurl = \"http://9.9.9.9/t\""
+            ),
+            [
+                "[alerts.webhook] hooks.example.org",
+                "[alerts.ntfy] 9.9.9.9"
+            ]
+        );
     }
 
     #[test]

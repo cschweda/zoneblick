@@ -41,7 +41,7 @@ const MAX_LINE: u64 = 2048;
 /// TLSA records. Handshake signatures are still verified, so the server
 /// must hold the key of the certificate it shows.
 #[derive(Debug)]
-struct AnyCertificate(Arc<rustls::crypto::CryptoProvider>);
+pub(crate) struct AnyCertificate(pub(crate) Arc<rustls::crypto::CryptoProvider>);
 
 impl ServerCertVerifier for AnyCertificate {
     fn verify_server_cert(
@@ -221,6 +221,178 @@ pub fn starttls_certificates(addr: SocketAddr, host: &str) -> Result<Vec<Vec<u8>
     Ok(chain)
 }
 
+/// Connect to a TLS port (443 for the web), finish the handshake under the
+/// given name, and return the certificates the server presents, its own
+/// first, as DER. Nothing is sent after the handshake. Blocking; call
+/// from a blocking task.
+pub fn tls_certificates(addr: SocketAddr, host: &str) -> Result<Vec<Vec<u8>>, String> {
+    let io = |e: std::io::Error| e.to_string();
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).map_err(io)?;
+    arm(&stream, deadline)?;
+    let mut stream = Timed { stream, deadline };
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AnyCertificate(provider)))
+        .with_no_client_auth();
+    let name = ServerName::try_from(host.trim_end_matches('.').to_string())
+        .map_err(|_| "the name cannot be used for TLS".to_string())?;
+    let mut tls =
+        rustls::ClientConnection::new(Arc::new(config), name).map_err(|e| e.to_string())?;
+    while tls.is_handshaking() {
+        tls.complete_io(&mut stream)
+            .map_err(|e| format!("the TLS handshake failed: {e}"))?;
+    }
+    let chain: Vec<Vec<u8>> = tls
+        .peer_certificates()
+        .unwrap_or_default()
+        .iter()
+        .map(|c| c.as_ref().to_vec())
+        .collect();
+    tls.send_close_notify();
+    let _ = tls.complete_io(&mut stream);
+    if chain.is_empty() {
+        return Err("the server presented no certificate".to_string());
+    }
+    Ok(chain)
+}
+
+/// When a certificate runs out, and the DNS names it is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertificateInfo {
+    pub not_after_unix: u64,
+    pub names: Vec<String>,
+}
+
+/// At most this many names are read from one certificate.
+const MAX_CERTIFICATE_NAMES: usize = 100;
+
+/// A time in a certificate: `YYMMDDHHMMSSZ` (tag 0x17) or
+/// `YYYYMMDDHHMMSSZ` (tag 0x18).
+fn certificate_time(tag: u8, content: &[u8]) -> Option<u64> {
+    let text = std::str::from_utf8(content).ok()?;
+    let digits = text.strip_suffix('Z')?;
+    if !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let (year, rest) = match (tag, digits.len()) {
+        (0x17, 12) => {
+            let yy: u32 = digits[..2].parse().ok()?;
+            (if yy >= 50 { 1900 + yy } else { 2000 + yy }, &digits[2..])
+        }
+        (0x18, 14) => (digits[..4].parse().ok()?, &digits[4..]),
+        _ => return None,
+    };
+    crate::registration::parse_rfc3339(&format!(
+        "{year:04}-{}-{}T{}:{}:{}Z",
+        &rest[..2],
+        &rest[2..4],
+        &rest[4..6],
+        &rest[6..8],
+        &rest[8..10]
+    ))
+}
+
+/// Read the end of validity and the subject alternative names of a
+/// certificate. The certificate comes from a server someone else runs, so
+/// every length is checked and names are kept only when they look like
+/// DNS names.
+pub fn certificate_info(certificate: &[u8]) -> Option<CertificateInfo> {
+    let (0x30, _, body, _) = der(certificate)? else {
+        return None;
+    };
+    let (0x30, _, mut fields, _) = der(body)? else {
+        return None;
+    };
+    let (tag, _, _, rest) = der(fields)?;
+    if tag == 0xa0 {
+        fields = rest;
+    }
+    // serial, signature algorithm, issuer
+    for _ in 0..3 {
+        fields = der(fields)?.3;
+    }
+    let (0x30, _, validity, mut fields) = der(fields)? else {
+        return None;
+    };
+    let (_, _, _, after) = der(validity)?;
+    let (tag, _, content, _) = der(after)?;
+    let not_after_unix = certificate_time(tag, content)?;
+    // subject, public key
+    for _ in 0..2 {
+        fields = der(fields)?.3;
+    }
+    let mut names = Vec::new();
+    while let Some((tag, _, content, rest)) = der(fields) {
+        fields = rest;
+        // [3]: the extensions, a list inside a list.
+        if tag != 0xa3 {
+            continue;
+        }
+        let Some((0x30, _, mut extensions, _)) = der(content) else {
+            break;
+        };
+        while let Some((0x30, _, extension, rest)) = der(extensions) {
+            extensions = rest;
+            let Some((0x06, _, oid, mut value)) = der(extension) else {
+                continue;
+            };
+            // 2.5.29.17, subjectAltName
+            if oid != [0x55, 0x1d, 0x11] {
+                continue;
+            }
+            // An optional "critical" flag comes before the value.
+            if let Some((0x01, _, _, rest)) = der(value) {
+                value = rest;
+            }
+            let Some((0x04, _, inner, _)) = der(value) else {
+                continue;
+            };
+            let Some((0x30, _, mut general, _)) = der(inner) else {
+                continue;
+            };
+            while let Some((tag, _, name, rest)) = der(general) {
+                general = rest;
+                // [2]: a DNS name.
+                if tag == 0x82
+                    && names.len() < MAX_CERTIFICATE_NAMES
+                    && !name.is_empty()
+                    && name.len() <= 253
+                    && name
+                        .iter()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-._*".contains(b))
+                {
+                    names.push(String::from_utf8_lossy(name).to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    Some(CertificateInfo {
+        not_after_unix,
+        names,
+    })
+}
+
+/// Whether a certificate with these names is good for `host`. A wildcard
+/// stands for exactly one label, the leftmost.
+pub fn certificate_covers(names: &[String], host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    names.iter().any(|name| {
+        let name = name.trim_end_matches('.');
+        match name.strip_prefix("*.") {
+            Some(parent) => host
+                .split_once('.')
+                .is_some_and(|(label, rest)| !label.is_empty() && rest == parent),
+            None => name == host,
+        }
+    })
+}
+
 /// The error text for a server that does not offer STARTTLS at all.
 pub const NO_STARTTLS: &str = "the server does not offer STARTTLS";
 
@@ -316,6 +488,81 @@ pub fn tlsa_matches(record: &str, chain: &[Vec<u8>]) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A self-signed certificate made with openssl: names
+    /// mail.test.example, *.test.example and Other.Example (marked
+    /// critical), valid until 2027-11-14 16:27:04 UTC.
+    const TEST_CERTIFICATE: &[&str] = &[
+        "3082019130820137a003020102021415fe9709cd7e44faf4bf187da1d5297ea372403b300a06082a",
+        "8648ce3d04030230173115301306035504030c0c746573742e6578616d706c65301e170d32363131",
+        "31343136323730345a170d3237313131343136323730345a30173115301306035504030c0c746573",
+        "742e6578616d706c653059301306072a8648ce3d020106082a8648ce3d030107034200047e110660",
+        "22b2dee84118d48ccf5aeba01b8826f6f78f40d55de7fa02ab4e1fb67b49cc301e992544ae6497e8",
+        "88cba079fbbeb74f4854424970067239476cda33a361305f303e0603551d110101ff043430328211",
+        "6d61696c2e746573742e6578616d706c65820e2a2e746573742e6578616d706c65820d4f74686572",
+        "2e4578616d706c65301d0603551d0e04160414a0d09364f1feee94166fdee827c7e8d13879440c30",
+        "0a06082a8648ce3d0403020348003045022100c8da02cb1afbf45823a9392cb29a519b70b5bfb14e",
+        "98c5ab8cb9bc35d27af01a0220387ca256bb5170b1313251644754819907bad3d938591cb03f38f8",
+        "e1ec65e1aa",
+    ];
+
+    fn test_certificate() -> Vec<u8> {
+        let hex = TEST_CERTIFICATE.concat();
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn the_end_date_and_names_of_a_certificate_are_read() {
+        let der = test_certificate();
+        let info = certificate_info(&der).unwrap();
+        assert_eq!(info.not_after_unix, 1_826_209_624);
+        assert_eq!(
+            info.names,
+            ["*.test.example", "mail.test.example", "other.example"]
+        );
+        // Cut short anywhere, or filled with noise, it is refused or read
+        // without a panic.
+        for end in 0..der.len() {
+            let _ = certificate_info(&der[..end]);
+        }
+        let mut noise = der.clone();
+        for i in (0..noise.len()).step_by(7) {
+            noise[i] ^= 0x5a;
+            let _ = certificate_info(&noise);
+        }
+        assert_eq!(certificate_info(&[]), None);
+    }
+
+    #[test]
+    fn a_wildcard_covers_one_label() {
+        let names = vec!["*.test.example".to_string(), "other.example".to_string()];
+        assert!(certificate_covers(&names, "mail.test.example."));
+        assert!(certificate_covers(&names, "OTHER.example"));
+        assert!(!certificate_covers(&names, "test.example."));
+        assert!(!certificate_covers(&names, "a.b.test.example."));
+        assert!(!certificate_covers(&names, "another.example."));
+        assert!(!certificate_covers(&[], "test.example."));
+    }
+
+    #[test]
+    fn certificate_times() {
+        assert_eq!(certificate_time(0x17, b"700101000000Z"), Some(0));
+        assert_eq!(
+            certificate_time(0x17, b"231114221320Z"),
+            Some(1_700_000_000)
+        );
+        assert_eq!(
+            certificate_time(0x18, b"20231114221320Z"),
+            Some(1_700_000_000)
+        );
+        assert_eq!(certificate_time(0x17, b"2311142213Z"), None);
+        assert_eq!(certificate_time(0x17, b"23111422132aZ"), None);
+        assert_eq!(certificate_time(0x18, b"20231114221320"), None);
+    }
+
     use std::net::TcpListener;
 
     fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {

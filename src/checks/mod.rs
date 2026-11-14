@@ -9,6 +9,7 @@ pub mod consistency;
 pub mod deep;
 pub mod delegation;
 pub mod drift;
+pub mod exposure;
 pub mod mail;
 pub mod policy;
 pub mod registration;
@@ -662,6 +663,61 @@ pub const CATALOG: &[CheckInfo] = &[
         "Registry record lists other nameservers than the parent zone serves",
         Severity::Notice,
     ),
+    deep_check(
+        "TKO-07",
+        "A name is delegated to nameservers that do not serve it",
+        Severity::Critical,
+    ),
+    deep_check(
+        "REG-05",
+        "A domain the nameservers or mail servers are in is about to lapse, or is held",
+        Severity::Warning,
+    ),
+    deep_check(
+        "POL-11",
+        "A mail server offers no STARTTLS, or its certificate has run out or is for another name",
+        Severity::Warning,
+    ),
+    deep_check(
+        "TLS-01",
+        "The certificate a name serves on port 443 has run out, is about to, or is for another name",
+        Severity::Warning,
+    ),
+    deep_check(
+        "NET-03",
+        "A nameserver network is announced against, or without, a route origin authorisation",
+        Severity::Notice,
+    ),
+    deep_check(
+        "RES-01",
+        "A public resolver cannot resolve the zone, or rejects its DNSSEC",
+        Severity::Critical,
+    ),
+    deep_check(
+        "RES-02",
+        "A public resolver says the zone does not exist",
+        Severity::Warning,
+    ),
+    deep_check(
+        "BLK-01",
+        "A mail address or the domain is on a blocklist",
+        Severity::Warning,
+    ),
+    deep_check(
+        "POL-12",
+        "The SPF record allows every sender, or gives receivers no instruction",
+        Severity::Notice,
+    ),
+    deep_check(
+        "POL-13",
+        "The DMARC record is weaker than it looks",
+        Severity::Notice,
+    ),
+    deep_check(
+        "LAL-01",
+        "A registered lookalike of the domain takes mail",
+        Severity::Notice,
+    ),
 ];
 
 const fn deep_check(id: &'static str, title: &'static str, severity: Severity) -> CheckInfo {
@@ -764,6 +820,17 @@ const CHECKS: &[Check] = &[
     registration::reg_02_transfer_lock,
     registration::reg_03_hold,
     registration::reg_04_nameservers,
+    exposure::tko_07_subzone,
+    exposure::reg_05_dependency,
+    exposure::pol_11_mail_tls,
+    exposure::tls_01_served_certificate,
+    exposure::net_03_route_origin,
+    exposure::res_01_resolver_failure,
+    exposure::res_02_resolver_denies,
+    exposure::blk_01_blocklisted,
+    exposure::pol_12_spf_strength,
+    exposure::pol_13_dmarc_strength,
+    exposure::lal_01_lookalike,
 ];
 
 /// Run every Phase 0 check. Findings come back in a stable order: by

@@ -972,6 +972,7 @@ mod tests {
             record_signatures: Vec::new(),
             mail_tls: Vec::new(),
             registration: None,
+            ..Default::default()
         });
         obs
     }

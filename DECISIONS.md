@@ -253,5 +253,20 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 ## After 0.14.0: fixes from the review of the token change
 
 - A `[[vantage]]` url is parsed with the HTTP client's own parser. "This machine" is decided from the parsed host, and a url with a user name or password is refused: `http://127.0.0.1:80@other.example/` used to pass as local.
-- On Windows the token file and a new database are made inside a new directory already limited to the current user with `icacls` (inheritance removed, one grant, Everyone / Authenticated Users / Users removed), then moved into place: narrowing a file after making it would leave a moment in which another user could open it. No new dependency. For the token it fails closed: no token is written if the permissions cannot be set. For the database it is best effort. SQLite's side files are narrowed after the database is first opened; ones made on a later open take the directory's permissions again.
+- On Windows the token file and a new database are made inside a new directory already limited to the current user with `icacls` (inheritance removed, one grant, Everyone / Authenticated Users / Users removed), then moved into place: narrowing a file after making it would leave a moment in which another user could open it. No new dependency. For the token it fails closed: no token is written if the permissions cannot be set. For the database it is best effort. SQLite's side files are narrowed on every open, since SQLite makes them again on a later start.
 - The Docker starter config ships without `token_sha256`, so the daemon makes the token; the hash stays as a commented option.
+- No limit on token guesses was added. A limit that lets the right token through does not slow guessing; a per-address limit lets anyone lock out the owner of a daemon behind a proxy. The token's length is the defence.
+- The daemon logs a warning at start for a webhook or ntfy address that is plain http and not local or private. It is not refused: people run receivers on names the daemon cannot classify.
+- CI runs `cargo audit` on every change and weekly.
+
+## After 0.14.0: eleven deep checks that look outward
+
+- TKO-07, REG-05, POL-11, TLS-01, NET-03, RES-01, RES-02, BLK-01, POL-12, POL-13, LAL-01. Probes in `resolver/exposure.rs`, checks in `checks/exposure.rs`, all as fields of the deep observation that are left out of the JSON when empty, so stored runs and fixtures from before read as they did.
+- The certificate served on port 443 got its own prefix, `TLS`, not `CRT-03`: `CRT-` findings are only judged by runs that read certificate logs, which would have kept a TLS finding open through deep runs that do not.
+- Served certificates are read with the hand-written DER reader already used for TLSA; no X.509 dependency. They are not validated against trust roots: that needs a root store and path building, and a wrong verdict there would be worse than none. Dates and names only.
+- POL-12 and POL-13 need no extra network beyond one lookup, but are deep checks so that the light set, its count and its pinned reports stay as they are.
+- RPKI status comes from RIPEstat over HTTPS, not from a validator of our own. One request per prefix, at most eight.
+- Public resolvers are asked over UDP with "recursion desired"; a new probe kind adds "checking disabled" for the second question after a SERVFAIL.
+- Blocklists: Spamhaus ZEN and DBL, SpamCop. Answers in 127.255.255.0/24 are Spamhaus refusing the query and count as no answer. A mail server on the PBL is not a finding.
+- Lookalikes are deliberately few (at most 60, no keyboard neighbours, no other alphabets): each costs lookups at the top-level domain's servers, and a long list of honest neighbours would only be muted.
+- TLS and SMTP connections are made only by a live run, never when replaying a fixture, like the TLSA certificate check before them.

@@ -461,7 +461,9 @@ fn build_query(spec: &QuerySpec, edns_payload: u16) -> Result<(u16, Vec<u8>), St
     // `Message::query` picks a random ID. Recursion is asked for only by
     // the probe that tests for it.
     let mut msg = Message::query();
-    msg.metadata.recursion_desired = spec.probe == Probe::Recursion;
+    msg.metadata.recursion_desired =
+        matches!(spec.probe, Probe::Recursion | Probe::RecursionUnvalidated);
+    msg.metadata.checking_disabled = spec.probe == Probe::RecursionUnvalidated;
     msg.add_query(Query::query(name, record_type(spec.qtype)));
     if spec.edns {
         let mut edns = Edns::new();

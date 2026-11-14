@@ -183,7 +183,12 @@ pub fn parse_rdap(domain: &str, url: &str, body: &str) -> Result<Registration, S
 /// when the zone is not under a top-level domain (the root, or a
 /// top-level domain itself).
 pub async fn collect(client: &Client, obs: &ZoneObservation) -> Option<Registration> {
-    let candidates = candidates(obs);
+    collect_candidates(client, &candidates(obs)).await
+}
+
+/// Ask the registry about the first of these names that it has a record
+/// of. `None` when there are no names.
+pub async fn collect_candidates(client: &Client, candidates: &[String]) -> Option<Registration> {
     let first = candidates.first()?.clone();
     let failed = |message: String| {
         Some(Registration {
@@ -209,7 +214,7 @@ pub async fn collect(client: &Client, obs: &ZoneObservation) -> Option<Registrat
         }
     };
     let mut last = String::new();
-    for domain in &candidates {
+    for domain in candidates {
         let url = format!("{base}domain/{}", domain.trim_end_matches('.'));
         match client.http_get_with(&url, RDAP_LIMIT, TIMEOUT).await {
             HttpOutcome::Response { status: 200, body } => match parse_rdap(domain, &url, &body) {

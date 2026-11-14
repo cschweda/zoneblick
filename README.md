@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 40 checks for every run and 21 more with `--deep`, which also follows the DNSSEC chain of trust from the root, verifies denial proofs, compares mail servers' certificates with their TLSA records and watches the domain's registration. `zoneblick plan` checks a zone file before it is deployed, several daemons can compare what they see from different places, and release files carry a verifiable build provenance. The daemon's API and web UI always need a token, which the daemon makes itself on its first start; it can serve HTTPS with your own certificate or listen on a socket file. The current release, `v0.14.0`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 40 checks for every run and 32 more with `--deep`, which also follows the DNSSEC chain of trust from the root, verifies denial proofs, compares mail servers' certificates with their TLSA records and watches the domain's registration. Eleven of the deep checks are new since `v0.14.0` and will be in the next release (build from source to have them now): subdomains delegated to nameservers that no longer serve them, the registration of the domains your nameservers and mail servers are in, the certificates your mail and web servers really present, route origin validation (RPKI) of your nameservers' networks, what Cloudflare's, Google's and Quad9's resolvers say about the zone, blocklists, weak SPF and DMARC records, and registered lookalike domains. `zoneblick plan` checks a zone file before it is deployed, several daemons can compare what they see from different places, and release files carry a verifiable build provenance. The daemon's API and web UI always need a token, which the daemon makes itself on its first start; it can serve HTTPS with your own certificate or listen on a socket file. The current release, `v0.14.0`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -10,7 +10,7 @@ A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver f
 - Who it is for, with the commands for each case: [Who it is for](#who-it-is-for)
 - How it is protected, and what is still open: [Security](#security)
 
-![The zoneblick social card: "Know the moment your DNS drifts." Below it, a one-line description, a three-line record diff, the labels 40 checks every run, 21 deep checks, alerts, web UI and API, one binary and one SQLite file, and four nameservers of which one serves an older SOA serial](docs/og-image.png)
+![The zoneblick social card: "Know the moment your DNS drifts." Below it, a one-line description, a three-line record diff, the labels 40 checks every run, 32 deep checks, alerts, web UI and API, one binary and one SQLite file, and four nameservers of which one serves an older SOA serial](docs/og-image.png)
 
 ## What it looks like
 
@@ -42,9 +42,13 @@ The mail checks, in a test zone whose mail records are wrong in several ways: a 
 
 ![Terminal output of zoneblick check for a test zone: one critical finding for an SPF include of an unregistered domain, four warnings covering MTA-STS, TLSA and two DKIM selectors, and four notices covering DMARC, CAA, TLS reporting and BIMI](screenshots/mail.png)
 
-What a deep run adds for the same zone, read from its JSON output: the chain of trust from the root (which ends as "insecure" at a zone that is not signed, with the parent's proof that there is no DS record), the network its nameservers are in, whether any allows zone transfers or recursion, and the domain's registration:
+What a deep run adds for the same zone, read from its JSON output: the chain of trust from the root (which ends as "insecure" at a zone that is not signed), route origin validation of the nameservers' networks, what three public resolvers answer, the certificates the web names really serve, the registration of the domains the nameservers and mail servers are in, a registered lookalike, and the domain's own registration:
 
-![Terminal output of a deep run of metaincognita.com piped through jq: the chain of trust is secure at the root and at com and insecure at metaincognita.com, every nameserver is in AS32771, none allows transfers or recursion, and the registration shows the registrar, a transfer lock and an expiry date in August 2027](screenshots/deep.png)
+![Terminal output of a deep run of metaincognita.com piped through jq: the chain of trust is secure at the root and at com and insecure at metaincognita.com, eight routes are valid, Cloudflare, Google and Quad9 answer NOERROR, two web names serve a certificate valid until January 2027, four domains the zone depends on are registered until 2027, metaincognita.net is a registered lookalike, and the registration shows the registrar, a transfer lock and an expiry date in August 2027](screenshots/deep.png)
+
+And the findings of that deep check. LAL-01 and NET-01 are deep findings; the lookalike here is the same name under `.net`, which takes mail:
+
+![Terminal output of zoneblick check --deep for metaincognita.com: four notices, LAL-01 for metaincognita.net which is registered and takes mail, NET-01 for all nameservers in one network with the eight addresses and their prefixes, POL-02 for no DMARC record and POL-03 for no CAA record](screenshots/deep-findings.png)
 
 The digest, here for that zone after three runs:
 
@@ -68,7 +72,7 @@ The web UI that `zoneblick serve` provides. This picture is of the [demo](https:
 
 ## Who it is for
 
-Ten situations zoneblick was built for, each with the commands that answer it. Every command here is explained further down.
+Twelve situations zoneblick was built for, each with the commands that answer it. Every command here is explained further down.
 
 **1. "I look after a few domains and want to hear when something breaks."** Install the daemon on a small Linux server, list the zones, and point an alert at your phone.
 
@@ -98,15 +102,15 @@ docker run --rm ghcr.io/cschweda/zoneblick check example.org --deep
 zoneblick run example.org --expect dns/example.org.zone
 ```
 
-**5. "I need to find the forgotten subdomains that still point at something we gave up."** Take the names from certificate logs or your DNS host, check them for dangling aliases and unclaimed hosting, and hand the result to whoever tracks it.
+**5. "I need to find the forgotten subdomains that still point at something we gave up."** Take the names from certificate logs or your DNS host, check them for dangling aliases and unclaimed hosting, and hand the result to whoever tracks it. A deep run also finds subdomains that are still delegated to a DNS host where the zone is gone (TKO-07), the worst kind, since it gives away everything under the name.
 
 ```
-zoneblick run example.org --discover ct --discover cloudflare
+zoneblick run example.org --discover ct --discover cloudflare --deep
 zoneblick export --format csv --zone example.org > findings.csv
 zoneblick run example.org --sarif zoneblick.sarif
 ```
 
-**6. "Our mail must arrive, and nobody should be able to forge it."** SPF, DMARC, MTA-STS, TLS reporting, DKIM keys and BIMI on every run; with `--deep`, the mail servers' certificates against their TLSA records.
+**6. "Our mail must arrive, and nobody should be able to forge it."** SPF, DMARC, MTA-STS, TLS reporting, DKIM keys and BIMI on every run; with `--deep`, whether each mail server offers STARTTLS with a current certificate, the certificates against their TLSA records, blocklists, and how strong the SPF and DMARC records really are.
 
 ```
 zoneblick check example.org --dkim-selector s1 --dkim-selector s2 --deep
@@ -153,7 +157,15 @@ digest = "7d"
   static_configs: [{ targets: ["127.0.0.1:8053"] }]
 ```
 
-Also covered: a domain about to lapse or lose its transfer lock (REG-01 to REG-04, in deep runs), a certificate with no renewal in sight (CRT-01), and a finding you have decided to live with (`zoneblick findings mute`).
+**11. "It resolves for me. Does it resolve for everyone?"** A deep run asks the resolvers most people use, and checks that the routes to your nameservers are covered by RPKI. A broken DNSSEC chain shows up here as what it means for users: Cloudflare, Google and Quad9 refuse every name in the zone.
+
+```
+zoneblick check example.org --deep
+```
+
+**12. "Is somebody sitting on a name that looks like ours?"** A deep run looks for registered lookalikes that take mail, and tells you once when a new one appears.
+
+Also covered: a domain about to lapse or lose its transfer lock, yours or one your nameservers and mail servers live in (REG-01 to REG-05, in deep runs), a certificate with no renewal in sight (CRT-01) or one that has run out on the server (TLS-01), and a finding you have decided to live with (`zoneblick findings mute`).
 
 ## Platforms
 
@@ -934,7 +946,7 @@ These 40 checks are made on every run, with three conditions: CRT-01 and CRT-02 
 
 ### Deep checks
 
-`zoneblick check <zone> --deep` and `zoneblick run <zone> --deep` add these. They cost a few more queries per nameserver: four unusual SOA queries, three for DNSSEC housekeeping records, one for a name that does not exist, one zone-transfer attempt, and one lookup per nameserver address at Team Cymru's IP-to-ASN service. For a signed zone a deep run also asks for the keys and DS records of every zone from the root down, and asks again, with signatures, for each record set the run collected (at most 300 queries). And it makes two HTTPS requests about the domain's registration.
+`zoneblick check <zone> --deep` and `zoneblick run <zone> --deep` add these. They cost a few more queries per nameserver: four unusual SOA queries, three for DNSSEC housekeeping records, one for a name that does not exist, one zone-transfer attempt, and one lookup per nameserver address at Team Cymru's IP-to-ASN service. For a signed zone a deep run also asks for the keys and DS records of every zone from the root down, and asks again, with signatures, for each record set the run collected (at most 300 queries). And it makes two HTTPS requests about the domain's registration. The eleven checks from TKO-07 down (new since 0.14.0) look past the zone's own nameservers; what they send, and to whom, is listed [below the table](#the-checks-that-look-outward).
 
 | ID | Check | Severity |
 |---|---|---|
@@ -959,6 +971,17 @@ These 40 checks are made on every run, with three conditions: CRT-01 and CRT-02 
 | REG-02 | The domain has no transfer lock at the registry | notice |
 | REG-03 | The registry holds the domain (`client hold`, `server hold`), or is about to delete it (`redemption period`, `pending delete`) | critical |
 | REG-04 | The registry's record lists other nameservers than the parent zone serves | notice |
+| TKO-07 | A name in the zone is delegated to nameservers that do not serve it, or whose domain is not registered | critical; warning when only some are lame, or none answers at all |
+| REG-05 | A domain that your nameservers or mail servers are in runs out within 30 days, or is held by its registry | warning; critical within 7 days or when held |
+| POL-11 | A mail server does not offer STARTTLS, or presents a certificate that has run out or is for another name | warning; critical when MTA-STS or DANE makes senders require it; notice for a wrong name otherwise |
+| TLS-01 | The certificate a name serves on port 443 has run out, runs out within 14 days, or is for another name | critical when run out; warning within 3 days or for a wrong name; notice within 14 days |
+| NET-03 | A nameserver's network is announced against its route origin authorisation (RPKI), or has none | warning when against it; notice when there is none |
+| RES-01 | A public resolver (Cloudflare, Google, Quad9) cannot resolve the zone | critical when it can with validation switched off, which means it rejects the zone's DNSSEC; warning otherwise |
+| RES-02 | A public resolver says the zone does not exist | warning |
+| BLK-01 | An address your mail uses, or the domain, is on a blocklist (Spamhaus ZEN and DBL, SpamCop) | warning |
+| POL-12 | The SPF record ends in `+all`, or gives receivers no instruction (`?all`, no `all`), or uses `ptr` | critical for `+all`; notice otherwise |
+| POL-13 | The DMARC record is weaker than it looks: reports go to a domain that has not agreed to receive them, no report address, `sp=none`, or `pct` under 100 | notice |
+| LAL-01 | A registered domain that looks like yours takes mail | notice |
 
 - **Lifecycle.** A light run says nothing about these checks, so a deep finding stays open through light runs and is resolved only by a later deep run that no longer sees it.
 - **SEC-06** asks every nameserver for `zz--zoneblick-absent.<zone>`. An NSEC proof must cover the name. An NSEC3 proof must have a record at the zone apex and records covering the name and the wildcard, checked by hashing the names as the zone does. The signatures over those NSEC and NSEC3 records are verified with the zone's keys; a missing, expired or invalid one is reported.
@@ -971,6 +994,21 @@ These 40 checks are made on every run, with three conditions: CRT-01 and CRT-02 
 - **SOA-01 limits** are loose, to catch mistakes and not tastes: refresh at least 20 minutes, retry at least 2 minutes and shorter than refresh, expire at least a week and longer than refresh, negative-caching TTL between a minute and a day.
 - **SOA-02** also fires for a hidden primary, which is a legitimate design. Mute it if that is yours.
 - **NSB-02** makes one transfer request per nameserver and reads only the first answer: it records whether the transfer was allowed and keeps none of the zone. Like the odd EDNS queries, it can look like probing to an intrusion detection system, which is one more reason to run deep checks only on your own zones.
+
+#### The checks that look outward
+
+TKO-07 to LAL-01 are new since 0.14.0. Each asks someone other than your own nameservers, so each tells a third party something; that is why they are deep checks. All have limits, so that a zone with thousands of names cannot turn a deep run into thousands of connections.
+
+- **TKO-07, delegated names.** For every name the run checks, and every name between it and the zone, one of your nameservers is asked for its NS records (at most 60 names). Where the answer is a delegation, each nameserver it names (at most 6, for at most 10 delegated names) is asked for the delegated name's SOA record. A server that answers but not for the name (`REFUSED`, `SERVFAIL`, no authority) is the takeover case: at a DNS host where any customer can add any zone, whoever adds the name there answers for it and everything under it. Only names zoneblick knows about are looked at, so list the delegated name, or anything under it, with `--name`. It needs `run`, like the other takeover checks. zoneblick never tries to add the zone anywhere.
+- **REG-05, the domains you depend on.** Your nameservers' and mail servers' names live in domains somebody else must renew. For up to six such domains outside your own, the registry is asked over RDAP, as for REG-01. A top-level domain without an RDAP service (`.io` is one) gives no answer and no finding.
+- **POL-11 and TLS-01, the certificates really served.** A deep run connects to port 25 of each mail server (at most five; `EHLO`, `STARTTLS`, `QUIT`, no mail) and to port 443 of the zone and of each checked name that has an address or alias (at most 20; the TLS handshake and nothing after it), and reads when the certificate runs out and which names it is for. CRT-01 reads the public logs, which can show a renewed certificate that was never installed; this reads what visitors get. **The certificate is not validated against any authority**: an untrusted issuer or a missing intermediate is not seen, only dates and names. Nothing on the port is not a finding. Many networks block outgoing port 25; then POL-11 says nothing. Only public addresses are connected to.
+- **NET-03, route origins.** The network and prefix of each nameserver address come from Team Cymru (as for NET-01). [RIPEstat](https://stat.ripe.net) is then asked whether a route origin authorisation covers that announcement (at most 8 prefixes), so RIPE learns the prefixes. An address announced by several networks at once is not judged.
+- **RES-01 and RES-02, public resolvers.** `1.1.1.1`, `8.8.8.8` and `9.9.9.9` are each asked for the zone's SOA record, as a user's computer would ask. After a `SERVFAIL` the question is repeated with validation switched off; an answer then means the resolver rejects the zone's DNSSEC, which every validating resolver will. Quad9 answers `NXDOMAIN` for names it blocks as malicious, which is the usual cause of RES-02. The three operators see the zone's name.
+- **BLK-01, blocklists.** The IPv4 addresses of your mail servers, and single `ip4:` addresses in your SPF record (at most ten in all), are looked up at Spamhaus ZEN and SpamCop, and the domain at Spamhaus DBL. A mail server on Spamhaus's policy list (PBL) is not reported, since that list is about sending. The mail servers of a hosted mail service are that service's, and are not necessarily the addresses your mail is sent from. Spamhaus's free service is for low volumes and refuses queries from some networks; a refused query is not a listing and is not reported.
+- **POL-12 and POL-13, SPF and DMARC strength.** These read the records a light run already has. POL-13 adds one lookup per outside domain that DMARC reports are sent to: such a domain must publish `<your zone>._report._dmarc.<its domain>` or receivers will not send the reports (RFC 7489).
+- **LAL-01, lookalikes.** Up to 60 names are made from the zone's first label: a letter left out, two letters swapped, a letter doubled, letters replaced by ones that look alike (`o` and `0`, `l` and `1`, `m` and `rn`), and the same name under `com`, `net`, `org`, `co` and `io`. Each is looked up; one that is registered and has mail servers is reported once, when it first appears. It may well be yours, or an honest neighbour: mute it then. Keyboard slips, added words and other alphabets are not tried, so this is far short of what a brand-protection service does.
+
+Tested against real services: REG-05, TLS-01, NET-03, the public resolvers, the blocklist lookups and LAL-01 were run against the author's zone, and RES-01 against `dnssec-failed.org`, a zone kept broken on purpose for such tests. Not yet tried against a live case: a lame delegated name (TKO-07), a mail server reached on port 25 (POL-11; the port is blocked where zoneblick is developed), an invalid route, and a real blocklist listing. Those rest on tests with hand-built observations.
 
 **Takeover checks.** TKO-01, TKO-02 and the CNAME part of TKO-03 look at the CNAME records of the names you list, so they need `run` or `serve`; `check` covers the apex only. "Not registered" is decided from DNS alone: the name does not exist and the server that says so belongs to a top-level domain, which means the domain itself is not delegated. Domains under two-level suffixes such as `co.uk` are not recognised this way and are reported as TKO-01 instead. DEL-06 uses the same test for the domains of nameservers. zoneblick never tries to claim anything.
 
@@ -1041,6 +1079,8 @@ Each finding has `check_id`, `severity`, `name`, `summary` (one line for people)
 | VAN-02 | `server_behaviour` | `ns_name`, `address`, `details` |
 | TKO-06 | `dangling_target` | as for TKO-01 |
 | REV-01, VAN-03, POL-10 | `zone_detail` | `details` (a list of lines) |
+| TKO-07 | `dangling_target` for a nameserver in an unregistered domain, otherwise `zone_detail` | as above |
+| REG-05, POL-11, TLS-01, NET-03, RES-01, RES-02, BLK-01, POL-12, POL-13, LAL-01 | `zone_detail` | `details` (a list of lines) |
 | DRF-01, DRF-02 | `drift` | `rtype`, `declared`, `served`, `source` (the zone file) |
 
 `--sarif FILE` writes the same findings as a SARIF 2.1.0 document: one result per finding, with the check as the rule, the DNS name as a logical location, and the finding's fingerprint as `partialFingerprints`. A drift finding also points at the zone file. Whether GitHub code scanning shows results that have no file location has not been tried.
@@ -1132,8 +1172,8 @@ The workflow checks that the tag matches the crate version, runs the lint and te
 
 ## What it will do
 
-- **Zone health:** delegation, nameserver consistency, DNSSEC, mail policy. All have checks now, with a deep level for nameserver behaviour, SOA values, the DNSSEC chain of trust from the root, signatures over every record set, and the domain's registration.
-- **Exposure:** dangling records and subdomain-takeover risk. Dangling aliases, unregistered domains, aliases of unclaimed sites at 32 hosting services, and certificates from unexpected authorities are detected now.
+- **Zone health:** delegation, nameserver consistency, DNSSEC, mail policy. All have checks now, with a deep level for nameserver behaviour, SOA values, the DNSSEC chain of trust from the root, signatures over every record set, the domain's registration, the certificates really served, route origins, and the view from public resolvers.
+- **Exposure:** dangling records and subdomain-takeover risk. Dangling aliases, unregistered domains, aliases of unclaimed sites at 32 hosting services, certificates from unexpected authorities, delegated names nobody serves, lapsing domains you depend on, blocklist listings and registered lookalikes are detected now.
 - **Drift history:** every run stored and compared with the last, on a schedule, with alerts. All of this exists now, with pinned baselines, comparison with a zone file, learned rotation, retention, a digest and Prometheus metrics.
 
 One binary, one config file, one SQLite file, on your own server.
@@ -1161,6 +1201,7 @@ One binary, one config file, one SQLite file, on your own server.
 | `src/registration.rs` | Reading the domain's registration over RDAP |
 | `src/zonefile.rs` | Reading a zone file to compare the zone with |
 | `src/resolver/chain.rs` | The DNSSEC chain of trust and per-record signature checks |
+| `src/resolver/exposure.rs`, `src/checks/exposure.rs` | The deep probes and checks that look outward: delegated names, dependencies, served certificates, routes, public resolvers, blocklists, lookalikes |
 | `src/digest.rs` | The periodic summary |
 | `src/plan.rs` | Checking a zone file before it is deployed |
 | `src/vantage.rs` | Comparing with other zoneblick daemons |
@@ -1193,7 +1234,7 @@ zoneblick reads data that other people control: every DNS answer, every page it 
 |---|---|---|
 | The API and web UI | Whoever can reach the `bind` address: this machine by default | The token, on every route but `health` |
 | The DNS resolver and every parser | Any zone you check, and any zone its records point into | Limits on size, count and time; no trust in what an answer says about itself |
-| Outgoing HTTP, SMTP and API requests | The services asked: crt.sh, RDAP servers, DNS hosts, mail servers, vantage points, alert receivers | Public addresses only, no redirects, verified TLS, credentials to fixed hosts |
+| Outgoing HTTP, SMTP, TLS and API requests | The services asked: crt.sh, RDAP servers, RIPEstat, DNS hosts, mail and web servers the zone names, public resolvers, blocklists, vantage points, alert receivers | Public addresses only, no redirects, verified TLS, credentials to fixed hosts |
 | Files on disk | Other users of the machine | Owner-only permissions, an unprivileged service user |
 | Releases, the install script, the Action | Whoever can alter a download | Checksums and build provenance |
 
@@ -1209,7 +1250,7 @@ zoneblick reads data that other people control: every DNS answer, every page it 
 | Outgoing requests | Pages are fetched from public addresses only; nothing is sent to loopback or link-local addresses; the address checked is the address connected to. No request follows a redirect. TLS certificates are verified. A provider credential goes to that provider's API host and nowhere else; a vantage token goes only over `https://`. Mail servers get `EHLO`, `STARTTLS` and `QUIT` under a 30-second deadline, and no mail. |
 | Secrets and data | The database and the token file are made readable by their owner only: by file mode on Unix, and, after 0.14.0, by an access list for the current user on Windows, set before anything is written. Credentials are read from files or the environment and are not written to the database, the log or a recorded fixture. `zoneblick token` reads the token from standard input so that it does not show in the process list. |
 | The service | The systemd unit runs as the unprivileged `zoneblick` user with `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome` and `PrivateTmp`, and may write to `/var/lib/zoneblick` only. The container holds the static binary and CA certificates, runs as an unprivileged user, and its base image is pinned by digest. |
-| Supply chain | Every release file and the image carries a [build provenance attestation](#verifying-a-download) pinned to this repository, the release workflow and the tag; the install script and the Action verify it and the SHA-256. Pinning the Action pins the binary. Dependencies are locked in `Cargo.lock`. |
+| Supply chain | Every release file and the image carries a [build provenance attestation](#verifying-a-download) pinned to this repository, the release workflow and the tag; the install script and the Action verify it and the SHA-256. Pinning the Action pins the binary. Dependencies are locked in `Cargo.lock` and checked against the RustSec advisory database in CI. |
 | What it does to others | It only reads. It never tries to claim a dangling resource, sends no mail, keeps nothing of a zone transfer, limits itself to 5 queries per second per server, and sends no telemetry (see [Privacy](#privacy)). |
 | Tests | The attacks from every audit are regression tests ([`tests/hostile.rs`](tests/hostile.rs), [`tests/serve.rs`](tests/serve.rs), [`tests/dnssec.rs`](tests/dnssec.rs)) that run in CI on Linux, macOS and Windows. |
 
@@ -1222,7 +1263,7 @@ zoneblick reads data that other people control: every DNS answer, every page it 
 - Verify what you install: `gh attestation verify`, or `--require-attestation` on the install script.
 - On Windows with 0.14.0, put the data directory where other users cannot read; later versions limit the token file and the database themselves.
 
-**Limits of this analysis.** The audits are the project's own, not a third party's. 0.14.0 has had a review of its one change and no full audit yet; the Windows permissions fix has been run in CI only, not on a Windows machine with several users. The DNS and TLS libraries were fuzzed through zoneblick but not reviewed, and dependencies have not been checked against advisory databases. zoneblick's DNSSEC verdicts cover the answers it asks for; it is not a general validator.
+**Limits of this analysis.** The audits are the project's own, not a third party's. 0.14.0 has had a review of its one change and no full audit yet; the Windows permissions fix has been run in CI only, not on a Windows machine with several users; the deep checks added after 0.14.0 have not been audited. The DNS and TLS libraries were fuzzed through zoneblick but not reviewed. zoneblick's DNSSEC verdicts cover the answers it asks for; it is not a general validator.
 
 To report a security problem, open a GitHub security advisory on the repository.
 
@@ -1249,19 +1290,20 @@ This section is the record of every security audit of zoneblick, newest first; o
 
 ### Open now
 
-Known, and not fixed. This list is current as of 2026-11-14. 0.14.0 closed the two items both audits had flagged (the API without a token behind a reverse proxy, and without a token for other local users) by making the token mandatory; the two findings of the review of 0.14.0 are fixed in the source and will be in the next release.
+Known, and not fixed. This list is current as of 2026-11-14. 0.14.0 closed the two items both audits had flagged (the API without a token behind a reverse proxy, and without a token for other local users) by making the token mandatory; the two findings of the review of 0.14.0 are fixed in the source and will be in the next release, together with three more items that stood here: SQLite's side files on Windows, dependencies never checked against advisories, and no warning for plain `http://` alert addresses.
 
 - **A token the daemon made is stored as it is**, in a file only the daemon's user and root can read (`api-token` in the data directory). Anyone who can read that file can use the API. Set `token_sha256` to keep only a hash.
-- **No limit on token guesses**, and the stored hash is unsalted SHA-256. Fine for a long random token; a short or reused one is not.
-- **On Windows, SQLite's side files can be wider than the database.** The `-wal` and `-shm` files of a new database are limited to the current user, but ones SQLite makes again on a later start take the permissions of the data directory. They can hold recent runs.
+- **No limit on token guesses, on purpose**, and the stored hash is unsalted SHA-256. A limit that lets the right token through cannot slow guessing, and one per address would let anyone who can reach a daemon behind a reverse proxy lock its owner out, since every request then comes from the proxy's address. The defence is the token's length: the one the daemon makes has 256 random bits, and `zoneblick token` refuses one under 16 characters. A short or reused token of your own is still your risk.
 - **A stripped proof hides a broken chain.** An answer that claims there is no DS record and brings no proof reads "unknown", not "broken".
 - **DANE trust-anchor records (usage 2) are not verified.** A match against a certificate the server merely sent proves nothing, so such a match is left without a verdict; only usage 3 is checked for real.
 - **Plain HTTP for the hosting-service page** (TKO-02): someone on the network path can add or remove the "unclaimed" text.
-- **Webhook and ntfy addresses may be `http://`**, since self-hosted receivers on a private network are common.
+- **Webhook and ntfy addresses may be `http://`**, since self-hosted receivers on a private network are common. After 0.14.0 the daemon warns at its start when such an address is not on this machine or a private network.
 - **The install script trusts GitHub's answer about which release is newest.** Whoever controls that answer can pick an older release, though only one with a valid build provenance. Without the GitHub CLI the script checks the checksum only, and says so.
 - **Packages carry no package signature**; the build provenance attestation is the verification.
 - **Names with unusual bytes** (escaped dots, bytes above 127) can get wrong NSEC and signature verdicts. It is a wrong answer, not a crash.
-- **The DNS and TLS libraries were fuzzed through zoneblick, not reviewed**, and dependencies were not checked against advisory databases.
+- **The DNS and TLS libraries were fuzzed through zoneblick, not reviewed.** Dependencies are checked against the RustSec advisory database in CI on every change and once a week (after 0.14.0); on 2026-11-14 none of the 209 had a known vulnerability.
+- **The eleven deep checks added after 0.14.0 have had no audit.** They read certificates from servers that a zone names, JSON from RIPEstat, and answers from blocklists and public resolvers, and they open connections to ports 25 and 443. They follow the rules the audits established (public addresses only, no redirects, limits on every count, a deadline on every connection, names from certificates kept only when they look like DNS names), and the certificate reader is tested against a certificate cut short at every length and against noise. A red team has not attacked them yet.
+- **Served certificates are not validated against an authority** (POL-11, TLS-01): only their dates and names are read, so a certificate from an issuer no browser trusts is not reported.
 
 ### Review of 0.14.0: the mandatory token
 
@@ -1341,7 +1383,7 @@ Scan only zones you control.
 
 ## Privacy
 
-zoneblick sends no telemetry. The binary talks to DNS servers, to the alert destinations you configure, to a zone's own `mta-sts` host when that zone publishes an MTA-STS record, to your own hostnames that are aliases of a known hosting service (one page each, for TKO-02), to crt.sh or your DNS host's API when you turn those discovery sources on, to Team Cymru's nameservers, IANA's RDAP service list, the registry's RDAP service and port 25 of your own mail servers that have TLSA records during deep runs, to the other zoneblick daemons you list as vantage points, and to nothing else. Pages are fetched from public addresses only, and nothing is ever sent to a loopback or link-local address; the web UI loads nothing from other sites. The project website, zoneblick.com, uses [Plausible](https://plausible.io) for privacy-friendly, cookie-free visit statistics.
+zoneblick sends no telemetry. The binary talks to DNS servers, to the alert destinations you configure, to a zone's own `mta-sts` host when that zone publishes an MTA-STS record, to your own hostnames that are aliases of a known hosting service (one page each, for TKO-02), to crt.sh or your DNS host's API when you turn those discovery sources on, to Team Cymru's nameservers, IANA's RDAP service list, the registry's RDAP service port 25 of your mail servers and port 443 of your own names, RIPEstat (the prefixes of your nameservers), the public resolvers of Cloudflare, Google and Quad9 (the zone's name), Spamhaus and SpamCop (your mail addresses and the domain), and the registries of the domains your nameservers and mail servers are in, during deep runs, to the other zoneblick daemons you list as vantage points, and to nothing else. Pages are fetched from public addresses only, and nothing is ever sent to a loopback or link-local address; the web UI loads nothing from other sites. The project website, zoneblick.com, uses [Plausible](https://plausible.io) for privacy-friendly, cookie-free visit statistics.
 
 ## License
 

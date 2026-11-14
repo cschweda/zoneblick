@@ -201,7 +201,7 @@ h2{margin:0 0 20px;font-weight:800;font-size:clamp(30px,4.4vw,60px);line-height:
 .steps p{margin:0;color:var(--muted);font-size:16px}
 
 .tablebox{overflow-x:auto;border-top:1px solid var(--text)}
-table.cmp{width:100%;min-width:760px;border-collapse:collapse;font-size:15px}
+table.cmp{width:100%;min-width:920px;border-collapse:collapse;font-size:15px}
 .cmp th,.cmp td{text-align:left;padding:14px 16px 14px 0;border-bottom:1px solid var(--line);vertical-align:top}
 .cmp thead th{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:400}
 .cmp tbody th{font-weight:700}
@@ -462,9 +462,9 @@ footer .grid{row-gap:24px}
         </div>
 
         <h3 class="h3big">Deep checks, once a day.</h3>
-        <p class="h3sub">Twenty-one more checks that take extra queries per nameserver. Each one was chosen because its result changes over time, so the history shows when a zone went wrong as well as that it is wrong.</p>
+        <p class="h3sub">Thirty-two more checks. Some take extra queries per nameserver; others look past your nameservers, at the registry, the routing table, public resolvers, blocklists and the servers your records point to. Each one was chosen because its result changes over time, so the history shows when a zone went wrong as well as that it is wrong.</p>
         <p class="tier"><b>Deep run</b><span>As often as you set, or on demand for a single zone with <span class="mono">--deep</span>.</span></p>
-        <p class="tier"><b>Working today</b><span>All twenty-one.</span></p>
+        <p class="tier"><b>Working today</b><span>Twenty-one in v0.14.0. The eleven that look outward are in the source now and in the next release.</span></p>
         <div class="checks four">
           <article>
             <div class="label">SEC 06&ndash;13</div>
@@ -482,7 +482,7 @@ footer .grid{row-gap:24px}
             <div class="label">NET</div>
             <h3>Network</h3>
             <p>Would one network failure take every nameserver with it?</p>
-            <ul><li>All servers in one network</li><li>Private or reserved addresses</li></ul>
+            <ul><li>All servers in one network</li><li>Private or reserved addresses</li><li>Route origin validation (RPKI)</li></ul>
           </article>
           <article>
             <div class="label">SOA</div>
@@ -494,7 +494,37 @@ footer .grid{row-gap:24px}
             <div class="label">REG</div>
             <h3>Registration</h3>
             <p>Is the domain itself about to lapse or be taken away?</p>
-            <ul><li>Expiry date</li><li>Registry holds</li><li>Transfer lock</li><li>Nameservers on record</li></ul>
+            <ul><li>Expiry date</li><li>Registry holds</li><li>Transfer lock</li><li>Nameservers on record</li><li>Domains your nameservers and mail servers are in</li></ul>
+          </article>
+          <article>
+            <div class="label">TKO 07</div>
+            <h3>Delegated names</h3>
+            <p>Is a subdomain still handed to a DNS host where the zone is gone?</p>
+            <ul><li>Nameservers that do not serve the name</li><li>Nameservers in unregistered domains</li></ul>
+          </article>
+          <article>
+            <div class="label">TLS &middot; POL 11</div>
+            <h3>Certificates served</h3>
+            <p>What do your web and mail servers really present?</p>
+            <ul><li>Expired or expiring on port 443</li><li>For another name</li><li>Mail servers without STARTTLS</li></ul>
+          </article>
+          <article>
+            <div class="label">RES</div>
+            <h3>Public resolvers</h3>
+            <p>Does the zone resolve for everyone else?</p>
+            <ul><li>Cloudflare, Google, Quad9</li><li>DNSSEC they reject</li><li>Names they block</li></ul>
+          </article>
+          <article>
+            <div class="label">BLK &middot; POL 12&ndash;13</div>
+            <h3>Mail reputation</h3>
+            <p>Will mail from the domain be accepted?</p>
+            <ul><li>Spamhaus and SpamCop listings</li><li>SPF that allows everyone</li><li>DMARC weaker than it looks</li></ul>
+          </article>
+          <article>
+            <div class="label">LAL</div>
+            <h3>Lookalikes</h3>
+            <p>Has somebody registered a name that reads like yours?</p>
+            <ul><li>Typos and look-alike letters</li><li>Other endings</li><li>Reported when they take mail</li></ul>
           </article>
         </div>
         <p class="status"><b>Deep findings last</b><span>A deep finding stays open through the hourly light runs and closes only when a later deep run no longer sees it.</span></p>
@@ -528,18 +558,20 @@ footer .grid{row-gap:24px}
         <p class="intro">Good tools exist for each part of this job. None of the open-source ones covers zone health, takeover exposure and drift history together while keeping your zone data on your own server.</p>
         <div class="tablebox" tabindex="0" role="region" aria-label="Comparison of zoneblick with existing tools">
           <table class="cmp">
-            <thead><tr><th scope="col">Tool</th><th scope="col">Core zone health</th><th scope="col">Deep analysis</th><th scope="col">Takeover exposure</th><th scope="col">Drift history</th><th scope="col">Self-hosted</th></tr></thead>
+            <thead><tr><th scope="col">Tool</th><th scope="col">Core zone health</th><th scope="col">Deep analysis</th><th scope="col">Takeover exposure</th><th scope="col">Outward view</th><th scope="col">Drift history</th><th scope="col">Self-hosted</th></tr></thead>
             <tbody>
-              <tr><th scope="row">Zonemaster, DNSViz</th><td class="y">Yes</td><td class="y">Full</td><td>No</td><td>No, one shot</td><td class="y">Yes</td></tr>
-              <tr><th scope="row">BadDNS, dnsReaper</th><td>No</td><td>No</td><td class="y">Deep</td><td>No</td><td class="y">Yes</td></tr>
-              <tr><th scope="row">Hosted DNS monitors</th><td>Partial</td><td>Varies</td><td>Partial</td><td class="y">Yes</td><td>No</td></tr>
-              <tr class="us"><th scope="row">zoneblick</th><td>40 checks, hourly</td><td>21 selected checks, daily</td><td>Imported signatures</td><td>Every run</td><td>One binary</td></tr>
+              <tr><th scope="row">Zonemaster, DNSViz</th><td class="y">Yes</td><td class="y">Full</td><td>No</td><td>No</td><td>No, one shot</td><td class="y">Yes</td></tr>
+              <tr><th scope="row">BadDNS, dnsReaper</th><td>No</td><td>No</td><td class="y">Deep</td><td>No</td><td>No</td><td class="y">Yes</td></tr>
+              <tr><th scope="row">internet.nl, Hardenize</th><td>Partial</td><td>Partial</td><td>No</td><td class="y">TLS, mail and RPKI, in depth</td><td>One shot, or hosted</td><td>Partly</td></tr>
+              <tr><th scope="row">MXToolbox, dnstwist</th><td>Partial</td><td>No</td><td>No</td><td class="y">Many blocklists; many lookalikes</td><td>One shot, or hosted</td><td>Partly</td></tr>
+              <tr><th scope="row">Hosted DNS monitors</th><td>Partial</td><td>Varies</td><td>Partial</td><td>Varies</td><td class="y">Yes</td><td>No</td></tr>
+              <tr class="us"><th scope="row">zoneblick</th><td>40 checks, hourly</td><td>32 selected checks, daily</td><td>Imported signatures, delegated names</td><td>Served certificates, RPKI, public resolvers, blocklists, lookalikes</td><td>Every run</td><td>One binary</td></tr>
             </tbody>
           </table>
         </div>
 
         <h3 class="h3big">The gaps it fills.</h3>
-        <p class="h3sub">Six things the existing tools leave to you, and what zoneblick does about each.</p>
+        <p class="h3sub">Seven things the existing tools leave to you, and what zoneblick does about each.</p>
         <ul class="gaps">
           <li class="head" aria-hidden="true"><span class="label">Gap</span><span class="label">Today</span><span class="label">With zoneblick</span></li>
           <li><b>History across a whole fleet</b><p><span>Today</span>Zonemaster and DNSViz analyse one zone when you ask. They are not built to watch dozens of zones on a schedule and alert you when one changes.</p><p class="us"><span>With zoneblick</span>Every zone is checked on a schedule. Each run is stored and compared with the last one, so you can see what changed and when.</p></li>
@@ -548,8 +580,9 @@ footer .grid{row-gap:24px}
           <li><b>Every nameserver, every transport</b><p><span>Today</span>Many monitors ask a public resolver, or a single nameserver. A stale secondary, or a server that fails only over TCP or IPv6, goes unseen.</p><p class="us"><span>With zoneblick</span>Each authoritative server is queried directly over UDP and TCP, IPv4 and IPv6, and the answers are compared server by server.</p></li>
           <li><b>What the internet sees</b><p><span>Today</span>Config tools such as dnscontrol and OctoDNS confirm that your provider matches your config file. They do not see the parent's delegation, a lagging secondary or expiring signatures.</p><p class="us"><span>With zoneblick</span>Resolution starts at the root and follows the real delegation, so the result is what a resolver would receive.</p></li>
           <li><b>Alerts you can leave on</b><p><span>Today</span>A plain record diff fires every time a CDN or round-robin pool rotates its addresses, and people soon mute it.</p><p class="us"><span>With zoneblick</span>Names that rotate are recognised and tracked as pools. You are alerted when a finding opens and when it closes.</p></li>
+          <li><b>The view from outside, kept over time</b><p><span>Today</span>Whether public resolvers accept the zone, whether its routes are covered by RPKI, whether a mail address is on a blocklist, whether a certificate on the server has run out: each has its own website, and each tells you about today.</p><p class="us"><span>With zoneblick</span>The daily deep run asks all of them and stores the answers with the rest, so a listing, a rejected signature or a new lookalike domain is an alert on the day it appears.</p></li>
         </ul>
-        <p class="limits"><strong>What it does not replace.</strong> The deep checks borrow a selected part of what Zonemaster and DNSViz do. Those tools still go further on a single zone, so findings link straight to them when you need a closer look. The takeover checks in zoneblick use the signature sets that the BadDNS, dnsReaper and Nuclei communities maintain.</p>
+        <p class="limits"><strong>What it does not replace.</strong> The deep checks borrow a selected part of what Zonemaster and DNSViz do. Those tools still go further on a single zone, so findings link straight to them when you need a closer look. The takeover checks in zoneblick use the signature sets that the BadDNS, dnsReaper and Nuclei communities maintain. The outward checks are selected too: internet.nl and Hardenize test a server's whole TLS setup where zoneblick reads the certificate's dates and names, MXToolbox asks far more blocklists than zoneblick's three, and dnstwist makes far more lookalike names than zoneblick's sixty.</p>
       </div>
     </div>
   </section>
@@ -744,7 +777,7 @@ zoneblick plan example.org \
   --file example.org.zone --offline</pre>
           </article>
         </div>
-        <p class="status"><b>Early days</b><span>v0.14.0 is an early pre-release. All forty light checks, stored runs, baselines, zone-file comparison and <span class="mono">zoneblick plan</span> for a file before it is deployed, discovery from certificate logs, zone transfers and five DNS hosts, muting, export, the daemon, alerts, a weekly digest, metrics and the web UI work today. All twenty-one deep checks work too, including the DNSSEC chain of trust from the root with verified proofs of absence, mail-server certificates against TLSA records, and the domain's registration. Release files carry a build provenance that the install script verifies. Parts that talk to outside services (DNS host APIs, chat alerts, email) are tested against recorded answers, not the live services.</span></p>
+        <p class="status"><b>Early days</b><span>v0.14.0 is an early pre-release. All forty light checks, stored runs, baselines, zone-file comparison and <span class="mono">zoneblick plan</span> for a file before it is deployed, discovery from certificate logs, zone transfers and five DNS hosts, muting, export, the daemon, alerts, a weekly digest, metrics and the web UI work today. All twenty-one deep checks of v0.14.0 work too, including the DNSSEC chain of trust from the root with verified proofs of absence, mail-server certificates against TLSA records, and the domain's registration. Eleven more deep checks are in the source and will be in the next release: delegated names that nobody serves, the domains your nameservers and mail servers depend on, the certificates really served, route origin validation, public resolvers, blocklists, SPF and DMARC strength, and lookalike domains. Release files carry a build provenance that the install script verifies. Parts that talk to outside services (DNS host APIs, chat alerts, email) are tested against recorded answers, not the live services.</span></p>
         <p class="status"><b>Security audits</b><span>Two red team and blue team audits so far, of 0.12.0 and 0.13.0, plus an automated review of every commit. The second found two serious problems and thirteen smaller ones, all fixed by v0.14.0, which also makes the API token mandatory. The <a href="https://github.com/cschweda/zoneblick#security">README</a> says how each part is protected and keeps the full record: what broke, what held, and what is still open.</span></p>
       </div>
     </div>

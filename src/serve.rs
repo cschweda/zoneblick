@@ -731,6 +731,11 @@ pub async fn serve(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), ServeError> {
     let every = state.config.interval()?;
+    for place in state.config.plain_http_alerts() {
+        log(&format!(
+            "warning: alerts to {place} go over plain http across the network; anyone on the way can read them. Use https://"
+        ));
+    }
     let started = |place: &str| {
         log(&format!(
             "zoneblick {} listening on {place}, {} zones, checking every {}",

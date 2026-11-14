@@ -192,6 +192,7 @@ mod tests {
             record_signatures: Vec::new(),
             mail_tls: Vec::new(),
             registration: Some(r),
+            ..Default::default()
         });
         obs
     }

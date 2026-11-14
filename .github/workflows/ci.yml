@@ -16,6 +16,10 @@ on:
       - "**.md"
       - "Formula/**"
   workflow_dispatch:
+  # Once a week as well, so that a new advisory about a dependency is
+  # seen even when nothing is pushed.
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -55,3 +59,18 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
       - run: cargo test --locked
+
+  audit:
+    name: dependencies against the advisory database
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      # Fails when a dependency in Cargo.lock has a known vulnerability
+      # in the RustSec advisory database.
+      - run: cargo audit

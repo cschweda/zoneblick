@@ -203,7 +203,10 @@ pub fn plain_host(name: &str) -> bool {
 /// The address to fetch a page of `host` from: resolved by zoneblick
 /// itself, following aliases, and refused unless every address found is
 /// public.
-async fn public_address(resolver: &Resolver, host: &str) -> Result<std::net::IpAddr, String> {
+pub(crate) async fn public_address(
+    resolver: &Resolver,
+    host: &str,
+) -> Result<std::net::IpAddr, String> {
     let mut name = host.to_string();
     for _ in 0..6 {
         for qtype in [QType::A, QType::Aaaa] {
