@@ -27,7 +27,12 @@ jobs:
     steps:
       - name: Install the package
         run: |
-          rpm -i "https://github.com/cschweda/zoneblick/releases/download/${VERSION}/zoneblick-${VERSION#v}-1.x86_64.rpm"
+          URL="https://github.com/cschweda/zoneblick/releases/download/${VERSION}/zoneblick-${VERSION#v}-1.x86_64.rpm"
+          # The package carries no signature, and current Fedora refuses
+          # such a package unless told to skip that check. Show the
+          # refusal, then install the way the README says.
+          rpm -i "$URL" && echo "rpm accepted the unsigned package" || echo "rpm refused the unsigned package"
+          rpm -q zoneblick || dnf -y install --nogpgcheck "$URL"
           zoneblick --version | grep -F "${VERSION#v}"
       - name: What the package set up
         run: |
@@ -77,6 +82,6 @@ jobs:
         # Nothing here fails the job: many networks block outgoing port 25,
         # and then the entries carry an error and the check says nothing.
         run: |
-          zoneblick check gmail.com --deep --json > report.json || true
+          zoneblick check metaincognita.com --deep --json > report.json || true
           jq '.deep.served_tls' report.json
           jq -r '.findings[] | "\(.severity) \(.check_id) \(.summary)"' report.json
