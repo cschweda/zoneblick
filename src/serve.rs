@@ -71,7 +71,17 @@ pub struct AppState {
     discovered_at: Mutex<BTreeMap<String, u64>>,
     /// When each zone last had a deep run.
     deep_at: Mutex<BTreeMap<String, u64>>,
+    /// Counts everything that changes what the UI shows: a run starting
+    /// or ending, a finding muted.
+    generation: std::sync::atomic::AtomicU64,
+    /// The zones part of the UI's data, for one generation.
+    ui_cache: Mutex<Option<(u64, serde_json::Value)>>,
 }
+
+/// At most this many names of one zone are checked in a run. Discovery
+/// can add names every day; without a limit, so would an attacker who can
+/// get certificates under the zone.
+pub const MAX_NAMES_PER_ZONE: usize = 1000;
 
 /// Certificate logs are asked at most this often per zone.
 const DISCOVER_EVERY_SECS: u64 = 86_400;
@@ -115,11 +125,20 @@ impl AppState {
             next_run_unix: Mutex::new(None),
             discovered_at: Mutex::new(BTreeMap::new()),
             deep_at: Mutex::new(BTreeMap::new()),
+            generation: std::sync::atomic::AtomicU64::new(0),
+            ui_cache: Mutex::new(None),
         })
     }
 
     fn store(&self) -> std::sync::MutexGuard<'_, Store> {
-        self.store.lock().expect("store lock")
+        // A panic while the lock was held must not take the API down
+        // with it: every write is a transaction, so the store is intact.
+        self.store.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn changed(&self) {
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     fn zone_config(&self, zone: &str) -> Option<&ZoneConfig> {
@@ -164,20 +183,79 @@ pub async fn run_zone_level(
     {
         return Err("a run of this zone is already in progress".to_string());
     }
-    let result = run_zone_inner(state, zone, trigger, deep).await;
+    state.changed();
+    // The run gets its own task and a deadline. Whoever serves the zone
+    // decides how long its answers take, and a run that never ends would
+    // never report anything; a crash in it must not stop the others.
+    let limit = state
+        .config
+        .run_timeout()
+        .unwrap_or(Duration::from_secs(900));
+    let task = tokio::spawn({
+        let (state, zone, trigger) = (state.clone(), zone.clone(), trigger.to_string());
+        async move { run_zone_inner(&state, &zone, &trigger, deep).await }
+    });
+    let stop = task.abort_handle();
+    let result = match tokio::time::timeout(limit, task).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(crash)) => Err(format!("the run stopped unexpectedly: {crash}")),
+        Err(_) => {
+            stop.abort();
+            Err(format!(
+                "the run did not finish within {} and was stopped",
+                state.config.schedule.run_timeout
+            ))
+        }
+    };
     state.running.lock().expect("lock").remove(&zone.name);
+    state.changed();
     match &result {
         Ok(id) => {
             state.errors.lock().expect("lock").remove(&zone.name);
             log(&format!("{} run #{id} stored ({trigger})", zone.name));
         }
         Err(e) => {
-            state
+            let first = state
                 .errors
                 .lock()
                 .expect("lock")
-                .insert(zone.name.clone(), e.clone());
+                .insert(zone.name.clone(), e.clone())
+                .is_none();
             log(&format!("{} run failed: {e}", zone.name));
+            // A zone that cannot be checked is itself news: a hijacked
+            // delegation can look exactly like this. Say so once, when the
+            // failures start.
+            if first {
+                let title = format!("zoneblick: {} could not be checked", zone.name);
+                let text = format!(
+                    "{} run failed ({trigger})\n{e}\nNo findings or changes can be reported for this zone until a run succeeds.",
+                    zone.name
+                );
+                let out = alerts::Outgoing {
+                    severity: Severity::Critical,
+                    title: &title,
+                    text: &text,
+                    json: serde_json::json!({
+                        "kind": "run_failed",
+                        "zone": zone.name,
+                        "severity": "critical",
+                        "title": title,
+                        "text": text,
+                        "error": e,
+                    }),
+                };
+                for (sink, sent) in
+                    alerts::send_outgoing(&out, &state.config.alerts, &state.http).await
+                {
+                    match sent {
+                        Ok(()) => log(&format!("{} failure alert sent by {sink}", zone.name)),
+                        Err(e) => log(&format!(
+                            "{} failure alert by {sink} failed: {e}",
+                            zone.name
+                        )),
+                    }
+                }
+            }
         }
     }
     result
@@ -284,6 +362,14 @@ async fn run_zone_inner(
         }
     }
     names.sort();
+    if names.len() > MAX_NAMES_PER_ZONE {
+        log(&format!(
+            "{} has {} names; only the first {MAX_NAMES_PER_ZONE} are checked",
+            zone.name,
+            names.len()
+        ));
+        names.truncate(MAX_NAMES_PER_ZONE);
+    }
 
     let mut obs = observe_zone_records(client.clone(), &zone.name, started, &names)
         .await
@@ -568,6 +654,21 @@ async fn require_token(
         return forbidden(
             "forbidden_host",
             "without an API token, zoneblick only answers requests addressed to localhost",
+        );
+    } else if [
+        "forwarded",
+        "x-forwarded-for",
+        "x-forwarded-host",
+        "x-real-ip",
+        "via",
+    ]
+    .iter()
+    .any(|name| headers.contains_key(*name))
+    {
+        // A reverse proxy on this machine makes every visitor look local.
+        return forbidden(
+            "forbidden_proxy",
+            "this request came through a proxy; set an API token (zoneblick token) before putting zoneblick behind one",
         );
     }
 
@@ -919,6 +1020,7 @@ async fn set_muted(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let zone = normalise_zone(&body.zone).map_err(|_| bad_zone(&body.zone))?;
     let row = state.store().set_muted(&zone, &body.id, muted)?;
+    state.changed();
     Ok(Json(serde_json::json!({ "finding": row })))
 }
 
@@ -1039,15 +1141,6 @@ struct UiZone {
     last_run_unix: Option<u64>,
     running: bool,
     error: Option<String>,
-}
-
-#[derive(Serialize)]
-struct UiModel {
-    version: &'static str,
-    now_unix: u64,
-    next_run_unix: Option<u64>,
-    every: String,
-    zones: Vec<UiZone>,
 }
 
 fn tri(tested: bool, ok: bool) -> &'static str {
@@ -1327,7 +1420,26 @@ fn ui_zone(state: &AppState, store: &Store, zone: &str) -> Result<UiZone, StoreE
 }
 
 /// Everything the web UI shows, in one document.
-async fn api_ui(State(state): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, ApiError> {
+/// The zones part of the UI's data. It costs ten diffs per zone, so it
+/// is worked out once per change (a run starting or ending, a mute) and
+/// off the threads that serve requests.
+fn ui_zones(state: &AppState) -> Result<serde_json::Value, ApiError> {
+    let failed = |e: String| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "store_error", e);
+    // The run counter of the database is part of the key, so a run stored
+    // by `zoneblick run` on the same file is seen too.
+    let generation = state
+        .generation
+        .load(std::sync::atomic::Ordering::SeqCst)
+        .wrapping_mul(1_000_003)
+        .wrapping_add(state.store().latest_run_id()? as u64);
+    // Holding this lock while computing lets one request do the work and
+    // the others wait for its result.
+    let mut cache = state.ui_cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, zones)) = cache.as_ref()
+        && *at == generation
+    {
+        return Ok(zones.clone());
+    }
     let store = state.store();
     // Configured zones first, then any others already in the database.
     let mut names: Vec<String> = state.config.zones.iter().map(|z| z.name.clone()).collect();
@@ -1338,22 +1450,31 @@ async fn api_ui(State(state): State<Arc<AppState>>) -> Result<Json<serde_json::V
     }
     let mut zones = Vec::new();
     for name in &names {
-        zones.push(ui_zone(&state, &store, name)?);
+        zones.push(ui_zone(state, &store, name)?);
     }
-    let model = UiModel {
-        version: env!("CARGO_PKG_VERSION"),
-        now_unix: now_unix(),
-        next_run_unix: *state.next_run_unix.lock().expect("lock"),
-        every: state.config.schedule.every.clone(),
-        zones,
-    };
-    Ok(Json(serde_json::to_value(model).map_err(|e| {
-        ApiError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            e.to_string(),
-        )
-    })?))
+    let zones = serde_json::to_value(zones).map_err(|e| failed(e.to_string()))?;
+    *cache = Some((generation, zones.clone()));
+    Ok(zones)
+}
+
+async fn api_ui(State(state): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, ApiError> {
+    let worker = state.clone();
+    let zones = tokio::task::spawn_blocking(move || ui_zones(&worker))
+        .await
+        .map_err(|e| {
+            ApiError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                e.to_string(),
+            )
+        })??;
+    Ok(Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "now_unix": now_unix(),
+        "next_run_unix": *state.next_run_unix.lock().expect("lock"),
+        "every": state.config.schedule.every,
+        "zones": zones,
+    })))
 }
 
 #[cfg(test)]

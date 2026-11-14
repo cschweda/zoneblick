@@ -283,6 +283,10 @@ const AXFR_TIMEOUT: Duration = Duration::from_secs(20);
 pub async fn axfr_names(zone: &str, servers: &[IpAddr]) -> Result<Vec<String>, String> {
     let mut last = "there is no nameserver to ask".to_string();
     for address in servers {
+        if let Some(why) = crate::resolver::transport::never_contacted(*address) {
+            last = format!("{address}: not asked, a {why} address");
+            continue;
+        }
         let addr = SocketAddr::new(*address, 53);
         last = match tokio::time::timeout(AXFR_TIMEOUT, axfr_from(zone, addr)).await {
             Ok(Ok(names)) => return Ok(names),
@@ -296,6 +300,9 @@ pub async fn axfr_names(zone: &str, servers: &[IpAddr]) -> Result<Vec<String>, S
 /// Whether a server starts a zone transfer for us. Only the first message
 /// is read; nothing of the zone is kept.
 pub async fn axfr_allowed(zone: &str, address: IpAddr) -> bool {
+    if crate::resolver::transport::never_contacted(address).is_some() {
+        return false;
+    }
     let attempt = async {
         let name = Name::from_ascii(zone).ok()?;
         let mut query = Message::query();
@@ -356,7 +363,8 @@ pub async fn axfr_from(zone: &str, addr: SocketAddr) -> Result<Vec<String>, Stri
         if total > AXFR_BYTE_LIMIT {
             return Err("the transfer is too large".to_string());
         }
-        let msg = Message::from_vec(&buf).map_err(|e| e.to_string())?;
+        let msg = Message::from_vec(&buf)
+            .map_err(|e| crate::resolver::iterate::printable(&e.to_string()))?;
         if msg.metadata.message_type != MessageType::Response
             || msg.metadata.id != query.metadata.id
         {

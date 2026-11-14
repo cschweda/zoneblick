@@ -20,6 +20,10 @@
 
 set -eu
 
+# Everything runs from main, called on the last line, so that a download
+# cut off half way runs nothing at all.
+main() {
+
 REPO="cschweda/zoneblick"
 VERSION="${ZONEBLICK_VERSION:-}"
 PREFIX="${ZONEBLICK_PREFIX:-/usr/local}"
@@ -41,7 +45,7 @@ done
 have() { command -v "$1" >/dev/null 2>&1; }
 
 fetch() { # fetch URL FILE
-  if have curl; then curl -fsSL "$1" -o "$2"
+  if have curl; then curl --proto '=https' --tlsv1.2 -fsSL "$1" -o "$2"
   elif have wget; then wget -q "$1" -O "$2"
   else fail "curl or wget is needed"
   fi
@@ -120,7 +124,8 @@ setup_service() {
 bind = "127.0.0.1:8053"
 data_dir = "/var/lib/zoneblick"
 # Needed before binding to anything but localhost. Make one with:
-#   zoneblick token "$(openssl rand -hex 32)"
+#   TOKEN=$(openssl rand -hex 32); echo "$TOKEN"; printf '%s' "$TOKEN" | zoneblick token
+# It is also needed before putting a reverse proxy in front of zoneblick.
 # token_sha256 = ""
 
 [schedule]
@@ -195,3 +200,6 @@ fi
 
 say ""
 say "Try it:  zoneblick check example.org"
+}
+
+main "$@"

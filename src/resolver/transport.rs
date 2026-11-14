@@ -202,6 +202,21 @@ impl Client {
             .await
     }
 
+    /// [`Client::http_get`], connecting to `address` whatever the system
+    /// resolver would say the URL's host is. For hosts whose address is
+    /// chosen by the zone being checked: the caller resolves the name
+    /// itself and refuses addresses that are not public.
+    pub async fn http_get_at(&self, url: &str, address: IpAddr) -> HttpOutcome {
+        self.http_fetch(
+            url,
+            &[],
+            Some(address),
+            HTTP_BODY_LIMIT,
+            Duration::from_secs(10),
+        )
+        .await
+    }
+
     /// [`Client::http_get`] with its own body limit and timeout.
     pub async fn http_get_with(&self, url: &str, limit: usize, timeout: Duration) -> HttpOutcome {
         self.http_get_auth(url, None, limit, timeout).await
@@ -234,6 +249,17 @@ impl Client {
         limit: usize,
         timeout: Duration,
     ) -> HttpOutcome {
+        self.http_fetch(url, headers, None, limit, timeout).await
+    }
+
+    async fn http_fetch(
+        &self,
+        url: &str,
+        headers: &[(&str, String)],
+        pin: Option<IpAddr>,
+        limit: usize,
+        timeout: Duration,
+    ) -> HttpOutcome {
         let outcome = match &self.backend {
             Backend::Replay(_) => {
                 self.http_replay
@@ -243,7 +269,7 @@ impl Client {
                         message: "no recorded exchange for this URL".to_string(),
                     })
             }
-            Backend::Live(_) => live_http_get(url, headers, limit, timeout).await,
+            Backend::Live(_) => live_http_get(url, headers, pin, limit, timeout).await,
         };
         let mut rec = self.http_recording.lock().expect("recording lock");
         if !rec.iter().any(|e| e.url == url) {
@@ -287,6 +313,15 @@ impl Client {
     }
 
     async fn exchange_live(&self, config: &NetConfig, spec: &QuerySpec) -> RawOutcome {
+        // A zone can name any address as its nameserver. No real one is
+        // on this machine's loopback or link-local range, so those are
+        // never queried: a hostile zone must not get zoneblick to probe
+        // services of the machine it runs on.
+        if let Some(why) = never_contacted(spec.server) {
+            return RawOutcome::NetError {
+                message: format!("not queried: {} is a {why} address", spec.server),
+            };
+        }
         let (id, wire) = match build_query(spec, config.edns_payload) {
             Ok(q) => q,
             Err(message) => return RawOutcome::NetError { message },
@@ -326,6 +361,7 @@ impl Client {
 async fn live_http_get(
     url: &str,
     headers: &[(&str, String)],
+    pin: Option<IpAddr>,
     limit: usize,
     timeout: Duration,
 ) -> HttpOutcome {
@@ -333,12 +369,24 @@ async fn live_http_get(
     let error = |e: reqwest::Error| HttpOutcome::Error {
         message: e.to_string(),
     };
-    let client = match reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
-        .user_agent(concat!("zoneblick/", env!("CARGO_PKG_VERSION")))
-        .build()
-    {
+        .user_agent(concat!("zoneblick/", env!("CARGO_PKG_VERSION")));
+    if let Some(address) = pin {
+        let parsed = reqwest::Url::parse(url).ok();
+        let host = parsed
+            .as_ref()
+            .and_then(|u| u.host_str().map(str::to_string));
+        let port = parsed.as_ref().and_then(|u| u.port_or_known_default());
+        let (Some(host), Some(port)) = (host, port) else {
+            return HttpOutcome::Error {
+                message: "the address is not a usable URL".to_string(),
+            };
+        };
+        builder = builder.resolve(&host, SocketAddr::new(address, port));
+    }
+    let client = match builder.build() {
         Ok(client) => client,
         Err(e) => return error(e),
     };
@@ -368,6 +416,32 @@ async fn live_http_get(
     HttpOutcome::Response {
         status,
         body: String::from_utf8_lossy(&body).into_owned(),
+    }
+}
+
+/// Why zoneblick never opens a connection to an address, if it does not:
+/// loopback, link-local (which includes cloud metadata services),
+/// unspecified, multicast and broadcast addresses, also when written as
+/// IPv4-mapped IPv6. Private ranges are allowed, because internal zones
+/// with internal nameservers are a normal thing to watch.
+pub fn never_contacted(address: IpAddr) -> Option<&'static str> {
+    let address = match address {
+        IpAddr::V6(a) => match a.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(a),
+        },
+        v4 => v4,
+    };
+    match address {
+        IpAddr::V4(a) if a.is_loopback() => Some("loopback"),
+        IpAddr::V4(a) if a.is_link_local() => Some("link-local"),
+        IpAddr::V4(a) if a.is_unspecified() || a.is_broadcast() => Some("reserved"),
+        IpAddr::V4(a) if a.is_multicast() => Some("multicast"),
+        IpAddr::V6(a) if a.is_loopback() => Some("loopback"),
+        IpAddr::V6(a) if a.is_unspecified() => Some("reserved"),
+        IpAddr::V6(a) if a.is_multicast() => Some("multicast"),
+        IpAddr::V6(a) if a.segments()[0] & 0xffc0 == 0xfe80 => Some("link-local"),
+        _ => None,
     }
 }
 

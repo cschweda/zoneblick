@@ -345,3 +345,132 @@ async fn record_data_cannot_carry_control_characters_into_output() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_zone_that_lists_hundreds_of_nameservers_is_cut_short() {
+    use zoneblick::observe::QType;
+    use zoneblick::resolver::probe::MAX_NS_NAMES;
+    // The zone's own servers list 300 extra nameservers, none of which
+    // resolves. Chasing each would take minutes against live tarpits.
+    let zone = "good.example.";
+    let mut world = good_world();
+    let mut listed = vec![ns(zone, "ns1.good.example."), ns(zone, "ns2.good.example.")];
+    for i in 0..300 {
+        listed.push(ns(zone, &format!("ns{i}.tarpit.example.")));
+    }
+    for server in [NS1, NS3] {
+        world.answer(server, zone, QType::Ns, &listed);
+    }
+    let fixture = world.fixture(zone);
+    let client = Arc::new(Client::replay(&fixture));
+    let obs = zoneblick::resolver::observe_zone(client.clone(), zone, fixture.started_at_unix)
+        .await
+        .unwrap();
+    assert_eq!(obs.ns_hosts.len(), 302);
+    let skipped = obs
+        .ns_hosts
+        .iter()
+        .filter(|h| {
+            h.resolve_error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("not checked: the zone lists more than"))
+        })
+        .count();
+    assert_eq!(skipped, 302 - MAX_NS_NAMES);
+    // The query count stays small: a few per name that was followed up.
+    assert!(
+        client.queries_sent() < 400,
+        "{} queries",
+        client.queries_sent()
+    );
+    // And the flood itself is reported.
+    let findings = run_all(&obs);
+    assert!(
+        findings.iter().any(|f| f.check_id == "DEL-01"),
+        "{findings:?}"
+    );
+}
+
+#[test]
+fn zoneblick_never_connects_to_this_machine_or_a_metadata_service() {
+    use zoneblick::resolver::policy::not_public;
+    use zoneblick::resolver::transport::never_contacted;
+    let ip = |s: &str| s.parse::<std::net::IpAddr>().unwrap();
+    for refused in [
+        "127.0.0.1",
+        "127.9.9.9",
+        "169.254.169.254",
+        "0.0.0.0",
+        "255.255.255.255",
+        "224.0.0.251",
+        "::1",
+        "::",
+        "fe80::1",
+        "ff02::1",
+        "::ffff:127.0.0.1",
+        "::ffff:169.254.169.254",
+    ] {
+        assert!(never_contacted(ip(refused)).is_some(), "{refused}");
+        assert!(not_public(ip(refused)).is_some(), "{refused}");
+    }
+    // Private ranges may hold real nameservers of internal zones, so DNS
+    // goes there, but pages are fetched from public addresses only.
+    for private in [
+        "10.0.0.5",
+        "192.168.1.1",
+        "172.16.0.9",
+        "100.64.0.1",
+        "fd00::5",
+        "::ffff:10.0.0.5",
+    ] {
+        assert!(never_contacted(ip(private)).is_none(), "{private}");
+        assert!(not_public(ip(private)).is_some(), "{private}");
+    }
+    for public in ["93.184.215.14", "2606:2800:21f:cb07:6820:80da:af6b:8b2c"] {
+        assert!(never_contacted(ip(public)).is_none() && not_public(ip(public)).is_none());
+    }
+}
+
+#[test]
+fn escapes_in_record_data_stay_escaped_in_drift_evidence() {
+    use zoneblick::zonefile::{comparable, parse};
+    // The run recorded these with the control characters already written
+    // as \DDD. Reading them as zone-file fields must not turn them back.
+    for (rtype, recorded) in [
+        ("TXT", r#""ok \027[2J\027[H\010::stop-commands::x""#),
+        ("CAA", r#"0 issue "ca.example\027]0;owned\007""#),
+        ("CNAME", r"evil\027[31m.example.net."),
+    ] {
+        let shown = comparable(rtype, recorded);
+        assert!(!shown.chars().any(|c| c.is_control()), "{rtype}: {shown:?}");
+    }
+    // The same for a zone file that itself holds escapes.
+    let sets = parse("example.org.", "www TXT \"a\\027[2Jb\\010c\"\n").unwrap();
+    assert!(
+        !sets[0].rdata[0].chars().any(|c| c.is_control()),
+        "{sets:?}"
+    );
+    // Values that differ only in such bytes still compare as different.
+    assert_ne!(
+        comparable("TXT", r#""a\027b""#),
+        comparable("TXT", r#""a\028b""#)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_database_is_private_to_its_owner() {
+    use std::os::unix::fs::PermissionsExt;
+    let path = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("private.sqlite");
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+    let store = zoneblick::store::Store::open(&path).unwrap();
+    store.add_zone("example.org.", 1).unwrap();
+    for suffix in ["", "-wal", "-shm"] {
+        let file = format!("{}{suffix}", path.display());
+        if let Ok(meta) = std::fs::metadata(&file) {
+            assert_eq!(meta.permissions().mode() & 0o077, 0, "{file}");
+        }
+    }
+}

@@ -664,3 +664,120 @@ async fn every_response_carries_the_hardening_headers() {
         );
     }
 }
+
+#[tokio::test]
+async fn without_a_token_requests_through_a_proxy_are_refused() {
+    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
+    let base = serve(router(state)).await;
+    let http = reqwest::Client::new();
+    // A reverse proxy on the same machine keeps "Host: 127.0.0.1" but adds
+    // one of these; without a token that would open the API to everyone.
+    for header in [
+        "X-Forwarded-For",
+        "X-Real-IP",
+        "Forwarded",
+        "Via",
+        "X-Forwarded-Host",
+    ] {
+        let r = http
+            .get(format!("{base}/api/v1/zones"))
+            .header(header, "203.0.113.9")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 403, "{header}");
+        let body: Value = r.json().await.unwrap();
+        assert_eq!(body["error"]["kind"], "forbidden_proxy", "{header}");
+    }
+    let r = http
+        .post(format!("{base}/api/v1/runs"))
+        .header("X-Forwarded-For", "203.0.113.9")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 403);
+
+    // With a token set, a proxy is fine: the token is what counts.
+    let hash = token_hash("s3cret-token-for-the-proxy");
+    let state = AppState::with_store(
+        config(&format!("[server]\ntoken_sha256 = \"{hash}\"")),
+        Store::open_in_memory().unwrap(),
+        drifting(),
+    );
+    let base = serve(router(state)).await;
+    let r = http
+        .get(format!("{base}/api/v1/zones"))
+        .header("X-Forwarded-For", "203.0.113.9")
+        .bearer_auth("s3cret-token-for-the-proxy")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_that_does_not_finish_is_stopped_and_alerted_once() {
+    let received: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = received.clone();
+    let receiver = axum::Router::new().route(
+        "/hook",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let sink = sink.clone();
+            async move {
+                sink.lock().unwrap().push(body);
+                "ok"
+            }
+        }),
+    );
+    let hook = serve(receiver).await;
+
+    // The first two runs hang (as a tarpit nameserver would make them),
+    // the third answers.
+    let runs = AtomicUsize::new(0);
+    let good = fixture("drift.example.before.json");
+    let factory: ClientFactory = Arc::new(move |_zone| {
+        if runs.fetch_add(1, Ordering::SeqCst) < 2 {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+        }
+        Arc::new(Client::replay(&good))
+    });
+    let extra =
+        format!("[schedule]\nrun_timeout = \"1s\"\n[alerts.webhook]\nurl = \"{hook}/hook\"");
+    let state = AppState::with_store(config(&extra), Store::open_in_memory().unwrap(), factory);
+    let zone = state.config.zones[0].clone();
+
+    let err = run_zone(&state, &zone, "test").await.unwrap_err();
+    assert!(err.contains("did not finish within 1s"), "{err}");
+    {
+        let got = received.lock().unwrap();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0]["kind"], "run_failed");
+        assert_eq!(got[0]["severity"], "critical");
+        assert_eq!(
+            got[0]["title"],
+            "zoneblick: drift.example. could not be checked"
+        );
+    }
+    // Still failing: no second alert.
+    assert!(run_zone(&state, &zone, "test").await.is_err());
+    assert_eq!(received.lock().unwrap().len(), 1);
+
+    // The zone is not stuck in "running", and metrics show the failure.
+    let base = serve(router(state.clone())).await;
+    let (_, ui) = get(&format!("{base}/api/v1/ui")).await;
+    assert_eq!(ui["zones"][0]["running"], false);
+    assert!(
+        ui["zones"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("did not finish")
+    );
+
+    // Let the stalled runs' threads end, then a good run clears the error.
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    assert!(run_zone(&state, &zone, "test").await.is_ok());
+    let (_, ui) = get(&format!("{base}/api/v1/ui")).await;
+    assert_eq!(ui["zones"][0]["error"], Value::Null);
+    assert!(ui["zones"][0]["last_run_id"].as_i64().unwrap() >= 1);
+}

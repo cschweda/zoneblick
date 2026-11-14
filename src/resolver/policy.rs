@@ -140,7 +140,53 @@ pub(crate) async fn resolve_target(
     }
 }
 
-async fn fetch_mta_sts(client: &Client, zone: &str, record: String) -> MtaSts {
+/// Why zoneblick will not fetch a page from an address, if it will not:
+/// anything that is not a public address. The hosts in question are named
+/// by the zone being checked, and a zone can point a name at this
+/// machine, at a private network, or at a cloud metadata service.
+pub fn not_public(address: std::net::IpAddr) -> Option<&'static str> {
+    let unmapped = match address {
+        std::net::IpAddr::V6(a) => a
+            .to_ipv4_mapped()
+            .map(std::net::IpAddr::V4)
+            .unwrap_or(address),
+        v4 => v4,
+    };
+    super::transport::never_contacted(address)
+        .or_else(|| crate::checks::deep::special_use(unmapped))
+}
+
+/// The address to fetch a page of `host` from: resolved by zoneblick
+/// itself, following aliases, and refused unless every address found is
+/// public.
+async fn public_address(resolver: &Resolver, host: &str) -> Result<std::net::IpAddr, String> {
+    let mut name = host.to_string();
+    for _ in 0..6 {
+        for qtype in [QType::A, QType::Aaaa] {
+            let lookup = resolver.lookup(&name, qtype).await;
+            let addresses: Vec<std::net::IpAddr> =
+                lookup.rdata.iter().filter_map(|r| r.parse().ok()).collect();
+            if let Some((bad, why)) = addresses
+                .iter()
+                .find_map(|a| not_public(*a).map(|why| (a, why)))
+            {
+                return Err(format!("not fetched: {name} has the {why} address {bad}"));
+            }
+            if let Some(address) = addresses.first() {
+                return Ok(*address);
+            }
+            if qtype == QType::A
+                && let Some(next) = lookup.cname.filter(|c| *c != name)
+            {
+                name = next;
+                break;
+            }
+        }
+    }
+    Err(format!("not fetched: no address found for {host}"))
+}
+
+async fn fetch_mta_sts(resolver: &Resolver, client: &Client, zone: &str, record: String) -> MtaSts {
     let host = zone.trim_end_matches('.');
     let policy_url = format!("https://mta-sts.{host}/.well-known/mta-sts.txt");
     let mut out = MtaSts {
@@ -153,7 +199,16 @@ async fn fetch_mta_sts(client: &Client, zone: &str, record: String) -> MtaSts {
         max_age: None,
         mx_patterns: Vec::new(),
     };
-    match client.http_get(&policy_url).await {
+    // A replayed run answers from its fixture and connects to nothing.
+    let fetched = if client.is_live() {
+        match public_address(resolver, &format!("mta-sts.{zone}")).await {
+            Ok(address) => client.http_get_at(&policy_url, address).await,
+            Err(message) => HttpOutcome::Error { message },
+        }
+    } else {
+        client.http_get(&policy_url).await
+    };
+    match fetched {
         HttpOutcome::Error { message } => out.error = Some(printable(&message)),
         HttpOutcome::Response { status, body } => {
             out.http_status = Some(status);
@@ -303,7 +358,7 @@ pub(crate) async fn collect_policy(
         .map(|r| txt_value(r))
         .find(|v| v.to_ascii_lowercase().starts_with("v=stsv1"));
     let mta_sts = match sts_record {
-        Some(record) => Some(fetch_mta_sts(client, zone, record).await),
+        Some(record) => Some(fetch_mta_sts(resolver, client, zone, record).await),
         None => None,
     };
 
@@ -396,6 +451,7 @@ const MAX_SERVICE_PROBES: usize = 20;
 /// fetch the hostname's front page once and see whether the service says
 /// that nobody has claimed the site. Nothing else is sent.
 pub(crate) async fn service_probes(
+    resolver: &Resolver,
     client: &Client,
     targets: &[TargetResolution],
 ) -> Vec<ServiceProbe> {
@@ -426,7 +482,15 @@ pub(crate) async fn service_probes(
             error: None,
             unclaimed: false,
         };
-        match client.http_get(&url).await {
+        let fetched = if client.is_live() {
+            match public_address(resolver, &t.target).await {
+                Ok(address) => client.http_get_at(&url, address).await,
+                Err(message) => HttpOutcome::Error { message },
+            }
+        } else {
+            client.http_get(&url).await
+        };
+        match fetched {
             HttpOutcome::Error { message } => probe.error = Some(printable(&message)),
             HttpOutcome::Response { status, body } => {
                 probe.status = Some(status);

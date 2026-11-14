@@ -212,6 +212,12 @@ fn is_ttl(text: &str) -> bool {
 /// `fields` are the fields of the record data; names are made absolute
 /// against `origin`. `None` when the data cannot be read as `rtype`.
 fn canonical(rtype: &str, fields: &[Token], origin: &str) -> Option<String> {
+    // Reading the fields undoes escapes such as `\027`, so the result is
+    // made safe to print again before it goes anywhere.
+    canonical_raw(rtype, fields, origin).map(|value| crate::resolver::iterate::printable(&value))
+}
+
+fn canonical_raw(rtype: &str, fields: &[Token], origin: &str) -> Option<String> {
     let field = |i: usize| fields.get(i).map(|t| t.text.as_str());
     match rtype {
         "A" => Some(field(0)?.parse::<Ipv4Addr>().ok()?.to_string()),
@@ -246,7 +252,7 @@ pub fn comparable(rtype: &str, rdata: &str) -> String {
         .and_then(|mut l| l.pop())
         .map(|l| l.tokens)
         .unwrap_or_default();
-    canonical(rtype, &tokens, ".").unwrap_or_else(|| rdata.to_string())
+    canonical(rtype, &tokens, ".").unwrap_or_else(|| crate::resolver::iterate::printable(rdata))
 }
 
 /// Read a zone file for `zone` (a normalised name).

@@ -105,7 +105,11 @@ pub fn parse_rfc3339(text: &str) -> Option<u64> {
                 _ => return None,
             };
             let (h, m) = rest[1..].split_once(':')?;
-            sign * (h.parse::<i64>().ok()? * 3600 + m.parse::<i64>().ok()? * 60)
+            let (h, m) = (h.parse::<u8>().ok()?, m.parse::<u8>().ok()?);
+            if h > 23 || m > 59 {
+                return None;
+            }
+            sign * (i64::from(h) * 3600 + i64::from(m) * 60)
         }
     };
     let secs =

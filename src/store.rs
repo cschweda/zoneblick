@@ -253,6 +253,18 @@ fn corrupt(what: &str, value: &str) -> StoreError {
 impl Store {
     /// Open the database file, creating it and its tables when it is new.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
+        // The database lists what is wrong with the zones, so a new one is
+        // readable by its owner only. SQLite gives its side files the
+        // same permissions. An existing file is left as it is.
+        #[cfg(unix)]
+        if !path.exists() {
+            use std::os::unix::fs::OpenOptionsExt;
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(path);
+        }
         let conn = Connection::open(path)?;
         // WAL keeps readers and the writer out of each other's way.
         conn.pragma_update(None, "journal_mode", "WAL")?;
@@ -295,6 +307,13 @@ impl Store {
             .ok_or_else(|| StoreError::UnknownZone {
                 zone: zone.to_string(),
             })
+    }
+
+    /// The ID of the newest run of any zone; 0 for an empty store.
+    pub fn latest_run_id(&self) -> Result<i64, StoreError> {
+        Ok(self
+            .conn
+            .query_row("SELECT COALESCE(MAX(id), 0) FROM runs", [], |r| r.get(0))?)
     }
 
     /// A small value kept between restarts, such as when the last digest

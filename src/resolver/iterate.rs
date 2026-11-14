@@ -47,9 +47,17 @@ pub(crate) fn norm(name: &Name) -> String {
 pub(crate) fn printable(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
+        // Direction overrides, and characters that are invisible or
+        // break a line without being control characters.
         let direction_override = matches!(
             c,
-            '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+            '\u{200b}'..='\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{2060}'..='\u{2069}'
+                | '\u{061c}'
+                | '\u{feff}'
         );
         if c.is_control() {
             // DNS presentation style: backslash and three decimal digits.
@@ -84,11 +92,17 @@ pub(crate) fn parse_response(spec: &QuerySpec, wire: &[u8]) -> Result<Message, S
     if msg.metadata.message_type != MessageType::Response {
         return Err("not a response".to_string());
     }
-    // Some servers drop the question on errors such as FORMERR; accept that.
-    if let Some(q) = msg.queries.first()
-        && (norm(q.name()) != spec.qname || q.query_type() != record_type(spec.qtype))
-    {
-        return Err("response is for a different question".to_string());
+    // Some servers drop the question on errors such as FORMERR; accept
+    // that, but an answer without its question could be an answer to
+    // anything.
+    match msg.queries.first() {
+        Some(q) if norm(q.name()) != spec.qname || q.query_type() != record_type(spec.qtype) => {
+            return Err("response is for a different question".to_string());
+        }
+        None if msg.metadata.response_code == hickory_proto::op::ResponseCode::NoError => {
+            return Err("response has no question section".to_string());
+        }
+        _ => {}
     }
     Ok(msg)
 }

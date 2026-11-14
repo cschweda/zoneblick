@@ -1,6 +1,6 @@
 # A GitHub Action that checks a DNS zone with zoneblick.
 #
-#   - uses: cschweda/zoneblick@v0.12.0
+#   - uses: cschweda/zoneblick@v0.12.1
 #     with:
 #       zone: example.org
 #       expect: dns/example.org.zone   # optional: a zone file to compare with
@@ -40,7 +40,7 @@ inputs:
     description: The database file. Restore it with actions/cache to see what changed since the last run.
     default: ""
   version:
-    description: The zoneblick release to use, such as v0.12.0. Default is the release this action was pinned to, or the newest.
+    description: The zoneblick release to use, such as v0.12.1. Default is the release this copy of the action belongs to.
     default: ""
 
 outputs:
@@ -55,14 +55,23 @@ runs:
       shell: bash
       env:
         WANTED: ${{ inputs.version }}
-        ACTION_REF: ${{ github.action_ref }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
+        # The release to install is the one this copy of the action was
+        # cut from, read from its own Cargo.toml, unless `version` says
+        # otherwise. It is never "the newest": pinning the action by tag
+        # or commit also pins the binary.
         version="$WANTED"
-        case "$ACTION_REF" in v[0-9]*.[0-9]*.[0-9]*) [ -n "$version" ] || version="$ACTION_REF" ;; esac
+        if [ -z "$version" ]; then
+          version="v$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ACTION_PATH/Cargo.toml" | head -n 1)"
+        fi
+        case "$version" in
+          v[0-9]*.[0-9]*.[0-9]*) ;;
+          *) echo "::error::cannot tell which zoneblick release to install; set the version input"; exit 1 ;;
+        esac
         dir="$RUNNER_TEMP/zoneblick-bin"
         mkdir -p "$dir"
-        sh "$ACTION_PATH/install.sh" --no-service --prefix "$dir" ${version:+--version "$version"}
+        sh "$ACTION_PATH/install.sh" --no-service --prefix "$dir" --version "$version"
         echo "$dir/bin" >> "$GITHUB_PATH"
     - name: Check the zone
       id: run

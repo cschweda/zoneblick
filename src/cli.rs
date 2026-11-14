@@ -690,6 +690,14 @@ async fn try_run(args: &RunArgs, color: bool) -> Result<CommandOutput, CliError>
         }
     }
     names.sort();
+    if names.len() > crate::serve::MAX_NAMES_PER_ZONE {
+        notes.push_str(&format!(
+            "zoneblick: {zone} has {} names; only the first {} are checked\n",
+            names.len(),
+            crate::serve::MAX_NAMES_PER_ZONE
+        ));
+        names.truncate(crate::serve::MAX_NAMES_PER_ZONE);
+    }
 
     let mut observed = observe_zone_records(client.clone(), &zone, started_at, &names).await;
     if let Ok(obs) = &mut observed {

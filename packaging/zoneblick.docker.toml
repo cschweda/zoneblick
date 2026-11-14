@@ -7,7 +7,8 @@ bind = "0.0.0.0:8053"
 data_dir = "/data"
 # Required, because the bind address above is not localhost. Pick a long
 # random token, then put its hash here:
-#   docker run --rm ghcr.io/cschweda/zoneblick:latest token "$(openssl rand -hex 32)"
+#   TOKEN=$(openssl rand -hex 32); echo "$TOKEN"
+#   printf '%s' "$TOKEN" | docker run --rm -i ghcr.io/cschweda/zoneblick:latest token
 # Keep the token itself; the web UI asks for it.
 token_sha256 = "REPLACE_WITH_THE_OUTPUT_OF_THE_TOKEN_COMMAND"
 

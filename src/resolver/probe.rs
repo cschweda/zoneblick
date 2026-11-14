@@ -44,6 +44,14 @@ pub fn normalise_zone(input: &str) -> Result<String, ResolveError> {
 
 /// Observe one zone: delegation path, nameserver addresses and per-server
 /// answers. This does all the network I/O of a `check` run.
+/// At most this many nameserver names of a zone are resolved and probed.
+/// The root has 13; no sane zone comes near this.
+pub const MAX_NS_NAMES: usize = 26;
+/// At most this many addresses of one nameserver name are probed.
+pub const MAX_NS_ADDRESSES: usize = 8;
+/// At most this many nameserver names without an address are followed up.
+const MAX_UNRESOLVED_NS: usize = 10;
+
 pub async fn observe_zone(
     client: Arc<Client>,
     zone: &str,
@@ -80,15 +88,26 @@ pub async fn observe_zone(
     let mut probes: Vec<ServerProbe> = Vec::new();
     let mut probed: BTreeSet<IpAddr> = BTreeSet::new();
     let mut pending: Vec<String> = hosts.keys().cloned().collect();
+    // Whoever serves the zone chooses how many nameservers it lists and
+    // how many addresses each has. Both are capped, so that a hostile or
+    // hijacked zone cannot keep a run busy for hours.
+    let mut resolved_names = 0;
     for _round in 0..2 {
         let mut tasks = JoinSet::new();
         for name in &pending {
             let host = hosts.get_mut(name).expect("pending host exists");
+            if resolved_names >= MAX_NS_NAMES {
+                host.resolve_error = Some(format!(
+                    "not checked: the zone lists more than {MAX_NS_NAMES} nameservers"
+                ));
+                continue;
+            }
+            resolved_names += 1;
             let res = resolver.resolve_host(name.clone(), 0).await;
             host.resolved = res.addresses;
             host.cname = res.cname;
             host.resolve_error = res.error;
-            for address in host.addresses() {
+            for address in host.addresses().into_iter().take(MAX_NS_ADDRESSES) {
                 if !vantage.can_reach(&address) || !probed.insert(address) {
                     continue;
                 }
@@ -138,6 +157,7 @@ pub async fn observe_zone(
         .values()
         .filter(|h| h.resolved.is_empty() && !is_ancestor_or_equal(&zone, &h.name))
         .map(|h| h.name.clone())
+        .take(MAX_UNRESOLVED_NS)
         .collect();
     let policy = collect_policy(&resolver, &client, &zone, &unresolved_ns).await;
 
@@ -289,7 +309,7 @@ pub async fn observe_zone_records(
         policy
             .targets
             .extend(cname_targets(&resolver, &obs.records).await);
-        policy.services = service_probes(&client, &policy.targets).await;
+        policy.services = service_probes(&resolver, &client, &policy.targets).await;
     }
     Ok(obs)
 }

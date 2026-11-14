@@ -199,6 +199,14 @@ pub struct ScheduleConfig {
     /// "off": never.
     #[serde(default)]
     pub deep: Option<String>,
+    /// A run of one zone that takes longer than this is stopped and
+    /// reported as failed.
+    #[serde(default = "default_run_timeout")]
+    pub run_timeout: String,
+}
+
+fn default_run_timeout() -> String {
+    "15m".to_string()
 }
 
 fn default_every() -> String {
@@ -215,6 +223,7 @@ impl Default for ScheduleConfig {
             every: default_every(),
             max_qps_per_server: default_qps(),
             deep: None,
+            run_timeout: default_run_timeout(),
         }
     }
 }
@@ -361,6 +370,7 @@ impl Config {
         config.retention.limits()?;
         config.deep_interval()?;
         config.digest_interval()?;
+        config.run_timeout()?;
         for (section, chat) in [
             ("slack", &config.alerts.slack),
             ("discord", &config.alerts.discord),
@@ -455,6 +465,11 @@ impl Config {
             None | Some("off") => Ok(None),
             Some(text) => parse_duration(text).map(Some),
         }
+    }
+
+    /// How long a run of one zone may take.
+    pub fn run_timeout(&self) -> Result<Duration, ConfigError> {
+        parse_duration(&self.schedule.run_timeout)
     }
 
     /// How often the digest is sent; `None` when it is off.

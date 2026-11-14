@@ -205,3 +205,13 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - The GitHub Action is a composite action that calls `install.sh`; it runs against the live DNS, so the release workflow tries it once after publishing and CI does not.
 - Web UI: the page already asked for the API token; "login" came down to adding "Sign out". The timeline shows the latest 200 runs. `docs/demo.html` does not have the timeline.
 
+## 0.12.1: red team / blue team review
+
+- The review and its results are in the README under "Security review". Decisions taken while fixing:
+- Run deadline: 15 minutes per zone by default (`[schedule] run_timeout`), enforced in the daemon. The CLI has no deadline; the caps on nameserver names (26) and addresses (8 per name) bound it, and a person can press Ctrl-C.
+- A failed run alerts once, when failures start, through every sink. It is sent as critical: a zone that cannot be checked may be a hijacked one.
+- Private address ranges are still queried over DNS, because internal zones are a real use. Loopback, link-local, multicast and unspecified addresses never are. Pages (MTA-STS policy, hosting-service page) are fetched from public addresses only, resolved by zoneblick and pinned for the connection.
+- No-token mode stays the default on localhost, for a tool that must work with no setup. It refuses proxied requests. Requiring a token always, or a unix socket, was considered and left for later.
+- The UI model is cached per "generation" (bumped when a run starts or ends and on a mute) combined with the newest run ID in the database.
+- Not done: signed releases or build attestations, pinning the container base image by digest, verifying DNSSEC denials, rate-limiting token guesses. They are listed as open in the README.
+

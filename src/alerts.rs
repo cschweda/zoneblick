@@ -291,7 +291,8 @@ pub async fn send_outgoing(
             .await
             .and_then(|r| r.error_for_status())
             .map(|_| ())
-            .map_err(|e| e.to_string());
+            // The topic address is the secret when no token is used.
+            .map_err(|e| e.without_url().to_string());
         results.push(("ntfy", result));
     }
     if let Some(email) = &config.email {
