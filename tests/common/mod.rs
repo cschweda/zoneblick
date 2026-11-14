@@ -911,3 +911,61 @@ fn policy_world_http(w: &mut World) {
         w.nxdomain(TLD_SERVER, gone, qtype, "example.");
     }
 }
+
+/// [`policy_world`] with mail transport records that are all wrong in
+/// some way: no TLS reporting although MTA-STS is published, a TLSA record
+/// with a digest of the wrong length in an unsigned zone, a revoked DKIM
+/// key under `google`, no key under `news`, and a BIMI record although
+/// DMARC is `p=none`.
+pub fn mail_world() -> World {
+    let mut world = policy_world();
+    let zone = POLICY_ZONE;
+    // usage 3, selector 1, matching 1, and a digest that is too short.
+    let tlsa = raw(
+        "_25._tcp.mx.policy.example.",
+        RecordType::TLSA,
+        vec![3, 1, 1, 0xab, 0xcd],
+    );
+    for server in [NS1, NS3] {
+        world.nxdomain(server, "_smtp._tls.policy.example.", QType::Txt, zone);
+        world.serve_name(
+            server,
+            zone,
+            "default._bimi.policy.example.",
+            &[txt(
+                "default._bimi.policy.example.",
+                "v=BIMI1; l=https://policy.example/logo.svg",
+            )],
+        );
+        world.serve_name(
+            server,
+            zone,
+            "google._domainkey.policy.example.",
+            &[txt("google._domainkey.policy.example.", "v=DKIM1; p=")],
+        );
+        world.nxdomain(server, "news._domainkey.policy.example.", QType::Txt, zone);
+        world.answer(
+            server,
+            "_25._tcp.mx.policy.example.",
+            QType::Tlsa,
+            std::slice::from_ref(&tlsa),
+        );
+    }
+    // The selector named by the user is looked up from the root again.
+    let selector = "news._domainkey.policy.example.";
+    world.delegate_tld(selector, QType::Txt);
+    world.referral(
+        TLD_SERVER,
+        selector,
+        QType::Txt,
+        &[
+            ns(zone, "ns1.policy.example."),
+            ns(zone, "ns2.policy.example."),
+        ],
+        &[
+            addr("ns1.policy.example.", NS1),
+            addr("ns2.policy.example.", NS3),
+        ],
+    );
+    world
+}

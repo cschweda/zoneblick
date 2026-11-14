@@ -637,3 +637,30 @@ async fn the_ui_gets_a_timeline_and_can_compare_any_two_runs() {
         "{err}"
     );
 }
+
+#[tokio::test]
+async fn every_response_carries_the_hardening_headers() {
+    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
+    let base = serve(router(state)).await;
+    let http = reqwest::Client::new();
+    for path in [
+        "/",
+        "/api/v1/health",
+        "/api/v1/zones",
+        "/api/v1/metrics",
+        "/nope",
+    ] {
+        let r = http.get(format!("{base}{path}")).send().await.unwrap();
+        let h = r.headers();
+        assert_eq!(h["x-content-type-options"], "nosniff", "{path}");
+        assert_eq!(h["x-frame-options"], "DENY", "{path}");
+        assert_eq!(h["referrer-policy"], "no-referrer", "{path}");
+        // The page itself may be revalidated; API answers are never stored.
+        let cache = h["cache-control"].to_str().unwrap();
+        assert_eq!(
+            cache,
+            if path == "/" { "no-cache" } else { "no-store" },
+            "{path}"
+        );
+    }
+}

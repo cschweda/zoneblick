@@ -1,0 +1,10 @@
+; The zone drift.example. as it is meant to be. Used by the tests and by
+; the README's example of `zoneblick run --expect`.
+$ORIGIN drift.example.
+$TTL 300
+@        IN MX   10 mail
+@        IN TXT  "v=spf1 mx -all"
+@        IN CAA  0 issue "ca.example"
+www      IN A    192.0.2.10
+api      IN CNAME app.hosting.example.
+shop     IN A    192.0.2.20

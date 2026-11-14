@@ -102,7 +102,8 @@ pub fn pol_06_tls_reporting(obs: &ZoneObservation) -> Vec<Finding> {
     if problems.is_empty() {
         return Vec::new();
     }
-    let mut details = problems.clone();
+    // The first problem is the summary; the rest and the record follow.
+    let mut details: Vec<String> = problems[1..].to_vec();
     details.extend(records.iter().map(|r| format!("record: {r}")));
     vec![finding(
         "POL-06",
@@ -372,7 +373,7 @@ pub fn pol_08_dkim(obs: &ZoneObservation) -> Vec<Finding> {
             dkim_problem(&records[0])
         };
         if let Some((severity, why)) = problem {
-            let mut details = vec![why.clone()];
+            let mut details = Vec::new();
             details.extend(records.iter().map(|r| {
                 // Keys are long; the start is enough to recognise one.
                 let short: String = r.chars().take(80).collect();
@@ -441,7 +442,7 @@ pub fn pol_09_bimi(obs: &ZoneObservation) -> Vec<Finding> {
     if problems.is_empty() {
         return Vec::new();
     }
-    let mut details = problems.clone();
+    let mut details: Vec<String> = problems[1..].to_vec();
     details.push(format!("record: {record}"));
     vec![finding(
         "POL-09",

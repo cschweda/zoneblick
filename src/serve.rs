@@ -617,7 +617,28 @@ pub fn router(state: Arc<AppState>) -> Router {
                 "no such page".to_string(),
             )
         })
+        .layer(middleware::from_fn(harden))
         .with_state(state)
+}
+
+/// Headers every response carries: browsers must not guess content types,
+/// must not show the page in a frame, must not send its address along to
+/// other sites, and must not keep API answers, which list what is wrong
+/// with the zones, in a cache.
+async fn harden(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    let set =
+        |headers: &mut axum::http::HeaderMap, name: header::HeaderName, value: &'static str| {
+            headers
+                .entry(name)
+                .or_insert(axum::http::HeaderValue::from_static(value));
+        };
+    set(headers, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
+    set(headers, header::X_FRAME_OPTIONS, "DENY");
+    set(headers, header::REFERRER_POLICY, "no-referrer");
+    set(headers, header::CACHE_CONTROL, "no-store");
+    response
 }
 
 async fn ui_page() -> impl IntoResponse {

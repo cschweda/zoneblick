@@ -121,14 +121,14 @@ td.g{color:var(--ok)}td.b{color:var(--crit);font-weight:500}
 .path{font-family:var(--mono);font-size:13px;line-height:2;color:var(--muted);overflow-x:auto;white-space:nowrap}
 .path b{color:var(--text);font-weight:500}
 
-.hist{display:grid;grid-template-columns:minmax(200px,260px) minmax(0,1fr);gap:24px;padding-top:6px}
+.hist{display:grid;grid-template-columns:minmax(150px,190px) minmax(0,1fr);gap:20px;padding-top:6px}
 .runs{list-style:none;margin:0;padding:0}
 .runs button{width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--line);padding:10px 8px 10px 0;display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:13px}
 .runs button:hover{background:var(--panel)}
 .runs button[aria-current="true"]{background:var(--panel);box-shadow:inset 3px 0 0 var(--accent);padding-left:10px}
 .runs .ch{color:var(--muted)}.runs .ch.has{color:var(--text)}
-.diff{font-family:var(--mono);font-size:13px;line-height:1.9;border:1px solid var(--line);background:var(--panel);padding:10px 0;overflow-x:auto;white-space:pre}
-.diff div{padding:0 14px}
+.diff{font-family:var(--mono);font-size:13px;line-height:1.7;border:1px solid var(--line);background:var(--panel);padding:10px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.diff div{padding:2px 14px 2px 30px;text-indent:-16px}
 .diff .del{color:var(--crit);background:rgba(255,90,69,.09)}
 .diff .add{color:var(--ok);background:rgba(116,211,160,.08)}
 .diff .ctx{color:var(--muted)}
@@ -277,6 +277,8 @@ function worst(z){var w="ok";open(z).forEach(function(f){if(SEV[f.sev]<SEV[w])w=
 function count(sev){var n=0;zones.forEach(function(z){open(z).forEach(function(f){if(f.sev===sev)n++;});});return n;}
 function pill(sev,text){return el("span",{class:"pill "+sev,text:text||SEVNAME[sev]});}
 function current(){return zones.filter(function(z){return z.name===state.zone;})[0];}
+/* Keep the address in step with the tab and zone on screen. */
+function link(){try{history.replaceState(null,"","#"+state.tab+(state.zone?"="+label(state.zone):""));}catch(e){}}
 
 /* ---------- summary ---------- */
 function renderSummary(){
@@ -313,7 +315,7 @@ function renderZones(){
     var w=worst(z),counts=el("span",{class:"counts"});
     ["crit","warn","note"].forEach(function(s){var n=open(z).filter(function(f){return f.sev===s;}).length;if(n)counts.appendChild(el("span",{class:"pill n "+s,text:String(n),title:n+" "+SEVNAME[s].toLowerCase()}));});
     if(w==="ok")counts.appendChild(pill("ok","Clean"));
-    ul.appendChild(el("li",null,[el("button",{type:"button","aria-current":String(z.name===state.zone),onclick:function(){state.zone=z.name;state.run=null;state.base=null;renderZones();renderDetail();}},[
+    ul.appendChild(el("li",null,[el("button",{type:"button","aria-current":String(z.name===state.zone),onclick:function(){state.zone=z.name;state.run=null;state.base=null;link();renderZones();renderDetail();}},[
       el("span",{class:"stripe "+w,"aria-hidden":"true"}),
       el("span",{class:"zn"},[label(z.name),el("span",{class:"zmeta",text:z.last_run_id?z.names+" names · "+z.ns.length+" nameservers":"not checked yet"})]),
       counts
@@ -333,7 +335,7 @@ function renderDetail(){
   if(z.error)d.appendChild(el("p",{class:"zerr",text:"The last run of this zone failed: "+z.error}));
   var tabs=el("div",{class:"tabs",role:"tablist"});
   [["findings","Findings",open(z).length],["servers","Nameservers",z.ns.length],["history","History",z.history.length]].forEach(function(t){
-    tabs.appendChild(el("button",{class:"tab",type:"button",role:"tab","aria-selected":String(state.tab===t[0]),onclick:function(){state.tab=t[0];try{history.replaceState(null,"","#"+t[0]);}catch(e){}renderDetail();}},[t[1],el("span",{class:"c",text:String(t[2])})]));
+    tabs.appendChild(el("button",{class:"tab",type:"button",role:"tab","aria-selected":String(state.tab===t[0]),onclick:function(){state.tab=t[0];link();renderDetail();}},[t[1],el("span",{class:"c",text:String(t[2])})]));
   });
   d.appendChild(tabs);
   d.appendChild(state.tab==="findings"?viewFindings(z):state.tab==="servers"?viewServers(z):viewHistory(z));
@@ -483,8 +485,12 @@ $("signout").addEventListener("click",function(){
   renderSummary();renderChips();renderZones();renderDetail();
   load();
 });
-/* A link can open a tab: #findings, #servers or #history. */
-if(["findings","servers","history"].indexOf(location.hash.slice(1))>=0)state.tab=location.hash.slice(1);
+/* A link can open a tab, and a zone: #history or #history=example.org. */
+(function(){
+  var parts=decodeURIComponent(location.hash.slice(1)).split("=");
+  if(["findings","servers","history"].indexOf(parts[0])>=0)state.tab=parts[0];
+  if(parts[1])state.zone=parts[1].replace(/\.?$/,".");
+})();
 $("q").addEventListener("input",function(e){state.q=e.target.value.trim();renderZones();});
 renderSummary();renderChips();renderZones();renderDetail();
 load().then(function(){if(anyRunning())setTimeout(poll,2000);});

@@ -32,6 +32,10 @@ fn hand_built_fixtures_are_current() {
         ("good.example.json", good_world().fixture("good.example.")),
         ("policy.example.json", policy_world().fixture(POLICY_ZONE)),
         (
+            "policy.example.mail.json",
+            mail_world().fixture(POLICY_ZONE),
+        ),
+        (
             "drift.example.before.json",
             drift_world(false).fixture_at(DRIFT_ZONE, STARTED_AT),
         ),

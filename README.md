@@ -26,6 +26,26 @@ What changed between two stored runs of a zone:
 
 ![Terminal output of zoneblick diff: a CNAME target modified on every nameserver, a TXT record removed, an A record changed on one nameserver only, an A record added, and a new consistency finding opened](screenshots/diff.png)
 
+A zone compared with the zone file it is meant to match (`run --expect`). Three record sets differ from the file and one is served that the file does not have:
+
+![Terminal output of zoneblick run with a zone file: a consistency warning, three DRF-01 findings for record sets that differ from the file or are missing, and one DRF-02 finding for a record that is served but not in the file](screenshots/drift.png)
+
+The mail checks, in a test zone whose mail records are wrong in several ways: a revoked DKIM key, a missing one, TLSA records that have no effect, no TLS reporting, and a BIMI record without enforced DMARC:
+
+![Terminal output of zoneblick check for a test zone: one critical finding for an SPF include of an unregistered domain, four warnings covering MTA-STS, TLSA and two DKIM selectors, and four notices covering DMARC, CAA, TLS reporting and BIMI](screenshots/mail.png)
+
+What a deep run adds for a real, signed zone, read from its JSON output: the chain of trust from the root, the signature check of every record set, and the domain's registration:
+
+![Terminal output of a deep run of example.com piped through jq: the chain of trust is secure at the root, at com and at example.com, 72 record-set signatures are valid, and the registration shows the registrar, three lock statuses and an expiry date in August 2027](screenshots/deep.png)
+
+The digest, here for two real zones after four runs each:
+
+![Terminal output of zoneblick digest: two zones, two open findings, and for each zone the number of runs, the open findings by severity and the finding opened in the period](screenshots/digest.png)
+
+The web UI's history tab, for a test zone that changed in its tenth run. The strip is the timeline, one bar per stored run; below it, the changes between the selected run and the one before:
+
+![The zoneblick web interface on the history tab of drift.example: a timeline of ten runs with the last one marked as a warning, a list of the runs, and the change list of run 10 with a changed CNAME, a removed TXT record, two changed address records and a newly opened finding](screenshots/ui-history.png)
+
 The web UI that `zoneblick serve` provides. This picture is of the [demo](https://zoneblick.com/demo.html), which is the same interface filled with invented sample data:
 
 ![The zoneblick web interface, shown with sample data: a list of zones on the left and the findings for example.org on the right](screenshots/demo-ui.png)
@@ -525,7 +545,7 @@ Record data comes from the DNS, so in Slack messages `&`, `<` and `>` are sent a
 
 ### The web UI
 
-Open the `bind` address in a browser. The page lists your zones with their open findings, a nameserver table, the delegation path, and a history: a timeline with one bar per stored run (up to 200), coloured by the worst finding of that run, and the changes between any run and the one before it, or any other run you pick. "Run checks now" starts a run of every zone, "Deep check of this zone" a deep run of the selected one, and each finding has a Mute button. When a token is set, the page asks for it once per browser session and "Sign out" forgets it. `#findings`, `#servers` and `#history` at the end of the address open that tab. The page is a single file compiled into the binary; it loads nothing from other sites.
+Open the `bind` address in a browser. The page lists your zones with their open findings, a nameserver table, the delegation path, and a history: a timeline with one bar per stored run (up to 200), coloured by the worst finding of that run, and the changes between any run and the one before it, or any other run you pick. "Run checks now" starts a run of every zone, "Deep check of this zone" a deep run of the selected one, and each finding has a Mute button. When a token is set, the page asks for it once per browser session and "Sign out" forgets it. `#findings`, `#servers` and `#history` at the end of the address open that tab, and `#history=example.org` opens it for one zone. The page is a single file compiled into the binary; it loads nothing from other sites.
 
 ### The API
 
