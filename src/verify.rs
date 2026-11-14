@@ -153,6 +153,13 @@ fn wildcard_owner(owner: &[u8], labels: u8) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// At most this many signature verifications are tried for one record
+/// set. A real set has one or two signatures and one key per tag.
+pub const MAX_ATTEMPTS: usize = 16;
+/// At most this many keys of a zone are kept from one answer. Real zones
+/// publish two to six.
+pub const MAX_KEYS: usize = 32;
+
 /// Try every signature over a record set owned by `owner`.
 ///
 /// `rdatas` is the record data of each record in canonical form (names in
@@ -168,7 +175,11 @@ pub fn verify_rrset(
 ) -> Verdict {
     let owner_wire = name_wire(owner);
     let mut tried = false;
-    for rrsig in rrsigs {
+    // Whoever serves the zone chooses how many signatures and keys there
+    // are, and can give many keys the same tag. Each attempt costs real
+    // CPU time, so the number of attempts per record set is bounded.
+    let mut attempts = 0;
+    for rrsig in rrsigs.iter().take(MAX_ATTEMPTS * 4) {
         if rrsig.len() < 19 || u16::from_be_bytes([rrsig[0], rrsig[1]]) != rtype {
             continue;
         }
@@ -195,6 +206,14 @@ pub fn verify_rrset(
                 continue;
             };
             debug_assert_eq!(key_tag(&raw), key.key_tag);
+            if attempts >= MAX_ATTEMPTS {
+                return if tried {
+                    Verdict::Invalid
+                } else {
+                    Verdict::Untried
+                };
+            }
+            attempts += 1;
             match verify_one(algorithm, &raw[4..], &message, sig) {
                 Some(true) => return Verdict::Valid,
                 Some(false) => tried = true,
@@ -212,6 +231,56 @@ pub fn verify_rrset(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_flood_of_keys_and_signatures_costs_a_bounded_number_of_attempts() {
+        use crate::dnssec::parse_dnskey;
+        // 300 different Ed25519 keys that all have the same key tag: the
+        // tag is a checksum, so moving one unit between two bytes keeps it.
+        let mut keys = Vec::new();
+        for j in 0..300u16 {
+            let mut rdata = vec![1, 1, 3, 15];
+            rdata.extend([100u8; 32]);
+            let (a, b) = ((j % 100) as u8, (j / 100) as u8);
+            rdata[6] += a;
+            rdata[8] -= a;
+            rdata[10] += b;
+            rdata[12] -= b;
+            keys.push(parse_dnskey(&rdata).unwrap());
+        }
+        let tag = keys[0].key_tag;
+        assert!(
+            keys.iter().all(|k| k.key_tag == tag),
+            "the keys share a tag"
+        );
+        // 300 junk signatures naming that tag.
+        let mut sig = vec![0u8; 18];
+        sig[0..2].copy_from_slice(&1u16.to_be_bytes());
+        sig[2] = 15;
+        sig[3] = 3;
+        sig[8..12].copy_from_slice(&2_000_000_000u32.to_be_bytes());
+        sig[16..18].copy_from_slice(&tag.to_be_bytes());
+        sig.extend(name_wire("example.test."));
+        sig.extend([9u8; 64]);
+        let sigs: Vec<Vec<u8>> = (0..300u16)
+            .map(|i| {
+                let mut s = sig.clone();
+                let last = s.len() - 1;
+                s[last] = i as u8;
+                s
+            })
+            .collect();
+        let refs: Vec<&[u8]> = sigs.iter().map(Vec::as_slice).collect();
+        let started = std::time::Instant::now();
+        let verdict = verify_rrset("www.example.test.", 1, &[vec![192, 0, 2, 1]], &refs, &keys);
+        // 90,000 pairings are on offer; at most MAX_ATTEMPTS are tried.
+        assert_eq!(verdict, Verdict::Invalid);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+    }
 
     #[test]
     fn a_wildcard_answer_is_signed_under_the_wildcard_name() {

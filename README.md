@@ -2,7 +2,7 @@
 
 A self-hosted DNS zone watchdog. zoneblick asks every authoritative nameserver for every record you care about, checks the answers, and keeps a history, so you know when your DNS drifts.
 
-**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 40 checks for every run and 21 more with `--deep`, which also follows the DNSSEC chain of trust from the root, verifies denial proofs, compares mail servers' certificates with their TLSA records and watches the domain's registration. `zoneblick plan` checks a zone file before it is deployed, several daemons can compare what they see from different places, and release files carry a verifiable build provenance. The current release, `v0.13.0`, is an early pre-release.
+**Status:** early, but usable end to end. `zoneblick check` checks a zone once: delegation, nameserver consistency, DNSSEC, mail policy and takeover exposure. `zoneblick run` stores each run in a SQLite file and `zoneblick diff` shows what changed. `zoneblick serve` runs as a daemon: it checks your zones on a schedule, sends alerts when something changes, and serves a JSON API and a web UI. It can find more names in certificate logs, by zone transfer or at your DNS host (Cloudflare, Route 53, Gandi, Hetzner, DigitalOcean), compare against a pinned baseline or a zone file, mute findings you have accepted, export findings as JSON, CSV or SARIF, and thin out old runs by itself. There are 40 checks for every run and 21 more with `--deep`, which also follows the DNSSEC chain of trust from the root, verifies denial proofs, compares mail servers' certificates with their TLSA records and watches the domain's registration. `zoneblick plan` checks a zone file before it is deployed, several daemons can compare what they see from different places, and release files carry a verifiable build provenance. The current release, `v0.13.1`, is an early pre-release.
 
 - Website: https://zoneblick.com
 - Demo with sample data: https://zoneblick.com/demo.html
@@ -86,7 +86,7 @@ On Linux with systemd, **run as root** it also sets up the daemon: a `zoneblick`
 
 | Option | Effect |
 |---|---|
-| `--version v0.13.0` | Install that release instead of the newest |
+| `--version v0.13.1` | Install that release instead of the newest |
 | `--prefix DIR` | Install the binary to `DIR/bin` |
 | `--no-service` | Binary only; no user, config or service |
 
@@ -98,11 +98,11 @@ Each release has a `.deb` and an `.rpm` for x86_64 and ARM 64-bit on the [releas
 
 ```
 # Debian and Ubuntu (use arm64 on ARM)
-curl -fsSLO https://github.com/cschweda/zoneblick/releases/download/v0.13.0/zoneblick_0.13.0_amd64.deb
-sudo dpkg -i zoneblick_0.13.0_amd64.deb
+curl -fsSLO https://github.com/cschweda/zoneblick/releases/download/v0.13.1/zoneblick_0.13.1_amd64.deb
+sudo dpkg -i zoneblick_0.13.1_amd64.deb
 
 # Fedora and RHEL (use aarch64 on ARM)
-sudo rpm -i https://github.com/cschweda/zoneblick/releases/download/v0.13.0/zoneblick-0.13.0-1.x86_64.rpm
+sudo rpm -i https://github.com/cschweda/zoneblick/releases/download/v0.13.1/zoneblick-0.13.1-1.x86_64.rpm
 ```
 
 There is no package repository, so updates are not automatic: install the newer package over the old one. The `.deb` is installed and started on a GitHub runner as part of every release build. The `.rpm` is built and its contents listed there, but it has not been installed on a real Fedora or RHEL system.
@@ -121,10 +121,10 @@ The formula, [`Formula/zoneblick.rb`](Formula/zoneblick.rb), installs the releas
 From 0.13.0 on, every release file (archives, `.deb`, `.rpm`, `SHA256SUMS`) and the container image has a build provenance attestation: a statement signed through GitHub and recorded in a public transparency log, saying that this exact file was built by this repository's release workflow from the release's tag. The checksum file alone cannot show that, because it comes from the same place as the binaries.
 
 ```
-gh attestation verify zoneblick-v0.13.0-x86_64-unknown-linux-musl.tar.gz \
+gh attestation verify zoneblick-v0.13.1-x86_64-unknown-linux-musl.tar.gz \
   --repo cschweda/zoneblick \
   --signer-workflow cschweda/zoneblick/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.13.0
+  --source-ref refs/tags/v0.13.1
 
 gh attestation verify oci://ghcr.io/cschweda/zoneblick:0.13.0 --repo cschweda/zoneblick
 ```
@@ -151,7 +151,7 @@ Then open `http://127.0.0.1:8053` and enter the token. The container listens on 
 
 ### Download a binary
 
-Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.13.0`.
+Each release on the [releases page](https://github.com/cschweda/zoneblick/releases) has a ready-built binary for these systems. The current release is `v0.13.1`.
 
 | System | File name ends in |
 |---|---|
@@ -163,12 +163,12 @@ Each release on the [releases page](https://github.com/cschweda/zoneblick/releas
 
 The Linux binaries are statically linked, so they run on any distribution with no other packages. The Windows binary also runs on ARM PCs through emulation.
 
-Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.13.0` to install another release.
+Each set of commands below downloads the binary, installs it and runs a first check. Change `v0.13.1` to install another release.
 
 **Linux**
 
 ```
-V=v0.13.0
+V=v0.13.1
 T=$(uname -m)-unknown-linux-musl
 
 curl -LO https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.tar.gz
@@ -181,7 +181,7 @@ zoneblick check example.org
 **macOS**
 
 ```
-V=v0.13.0
+V=v0.13.1
 A=$(uname -m); [ "$A" = arm64 ] && A=aarch64
 T=$A-apple-darwin
 
@@ -196,7 +196,7 @@ zoneblick check example.org
 **Windows (PowerShell)**
 
 ```
-$V = "v0.13.0"
+$V = "v0.13.1"
 $T = "x86_64-pc-windows-msvc"
 
 Invoke-WebRequest "https://github.com/cschweda/zoneblick/releases/download/$V/zoneblick-$V-$T.zip" -OutFile zoneblick.zip
@@ -241,7 +241,7 @@ You need a stable [Rust toolchain](https://rustup.rs), version 1.88 or later, an
 cargo install --git https://github.com/cschweda/zoneblick
 ```
 
-Add `--tag v0.13.0 --locked` to build exactly one release with the dependency versions it was tested with. This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
+Add `--tag v0.13.1 --locked` to build exactly one release with the dependency versions it was tested with. This builds the latest source and puts the `zoneblick` binary in `~/.cargo/bin`, which rustup adds to your `PATH`. Check it with `zoneblick --version`. The same command works on Linux, macOS and Windows.
 
 To install from a local checkout instead:
 
@@ -507,6 +507,8 @@ It checks all zones at startup and then once per interval. Stop it with Ctrl-C. 
 bind = "127.0.0.1:8053"           # where the API and web UI listen; or "unix:/run/zoneblick/zoneblick.sock"
 data_dir = "/var/lib/zoneblick"    # holds zoneblick.sqlite
 # token_sha256 = "..."             # required unless bind is localhost
+# tls_cert = "/etc/zoneblick/cert.pem"   # with tls_key: serve HTTPS
+# tls_key = "/etc/zoneblick/key.pem"
 
 [schedule]
 every = "1h"                       # 45s, 30m, 1h, 2d
@@ -561,7 +563,21 @@ Every section is optional. Unknown keys are refused, so a typo is reported inste
 
 ### A socket file in place of a port
 
-`bind = "unix:/run/zoneblick/zoneblick.sock"` makes the daemon listen on a socket file with mode `0660`: only its own user and group can connect, which a localhost port cannot offer. `curl --unix-socket /run/zoneblick/zoneblick.sock http://localhost/api/v1/zones` talks to it, and a reverse proxy can be pointed at it. The directory must exist and belong to the daemon's user. A proxy in front still needs a token, as with a port. There is no built-in TLS: for HTTPS, put a proxy in front.
+`bind = "unix:/run/zoneblick/zoneblick.sock"` makes the daemon listen on a socket file with mode `0660`: only its own user and group can connect, which a localhost port cannot offer. `curl --unix-socket /run/zoneblick/zoneblick.sock http://localhost/api/v1/zones` talks to it, and a reverse proxy can be pointed at it. The directory must exist and belong to the daemon's user. A proxy in front still needs a token, as with a port.
+
+### HTTPS
+
+With `tls_cert` and `tls_key` under `[server]`, the daemon serves HTTPS itself: no proxy is needed to keep the token off the wire.
+
+```toml
+[server]
+bind = "0.0.0.0:8443"
+token_sha256 = "..."
+tls_cert = "/etc/zoneblick/fullchain.pem"   # the certificate and its chain, PEM
+tls_key = "/etc/zoneblick/privkey.pem"      # readable by the zoneblick user only
+```
+
+The files are read again when they change, so a renewed certificate is used without a restart; if the new files do not work, the old certificate stays in use and the log says why. TLS 1.2 and 1.3 are offered. A handshake has five seconds, and one address may have eight in progress. There is no automatic certificate issuance and no redirect from plain HTTP: the port speaks HTTPS only. It was tested with a self-signed certificate on one machine.
 
 ### Vantage points
 
@@ -903,7 +919,7 @@ When the run fails, the document is shorter:
 The repository is also a GitHub Action, for checking a zone from a workflow, for example when a pull request changes a zone file:
 
 ```yaml
-- uses: cschweda/zoneblick@v0.13.0
+- uses: cschweda/zoneblick@v0.13.1
   with:
     zone: example.org
     expect: dns/example.org.zone   # optional
@@ -988,66 +1004,103 @@ One binary, one config file, one SQLite file, on your own server.
 | `.github/workflows/ci.yml` | Lint and tests on Linux, macOS and Windows |
 | `docs/` | The project website, served by GitHub Pages |
 
-## Security review
+## Security audits
 
-zoneblick reads data that other people control: every DNS answer, every page it fetches, every API reply. Version 0.12.0 was put through a red team / blue team review on 2026-11-13. The red team was two parts: an independent reviewer that read the code as an attacker, with the threat model below, and hands-on attacks against running instances and the parsers. The blue team fixed what broke and added a regression test for each fix; the fixes are in 0.12.1. An automated review of that release then found three weaknesses in the fixes themselves, which 0.12.2 closes; they are marked below. This was one review by the project itself, not a third-party audit.
+zoneblick reads data that other people control: every DNS answer, every page it fetches, every API reply, every zone file in a pull request. This section is the record of every security audit of it, newest first; older audits are kept in short form. They are reviews by the project itself, not third-party audits. Each has a red team (an independent reviewer reading the code as an attacker, plus hands-on attacks on running instances and parsers) and a blue team (the fixes, each with a regression test).
+
+| Audit | Version audited | Date | Found | Fixed in |
+|---|---|---|---|---|
+| [2](#audit-2-version-0130) | 0.13.0 | 2026-11-14 | 2 high, 4 medium, 9 low | 0.13.1 |
+| [Commit reviews](#automated-review-of-each-commit) | every commit from 0.12.0 on | continuous | 14 medium | the next commit or release |
+| [1](#audit-1-version-0120-in-short) | 0.12.0 | 2026-11-13 | 2 high, 2 medium, 7 low | 0.12.1, 0.12.2 |
 
 **Who the attackers are**
 
 | Attacker | Controls | Wants |
 |---|---|---|
 | A hostile or hijacked zone, or any third-party zone a record points into | DNS answers, record contents, how long answers take | To crash or stall the tool, hide a change, inject into its output, or make it connect somewhere internal |
-| A hostile or compromised outside service (crt.sh, an RDAP server, a DNS host's API) | HTTP replies | The same, or to be sent a credential |
+| A hostile or compromised outside service (crt.sh, an RDAP server, a DNS host's API, a mail server, another zoneblick daemon used as a vantage point) | HTTP, SMTP and API replies | The same, or to be sent a credential |
 | A network attacker or a web page in the user's browser | Requests to the daemon | To read findings, mute them, or start runs |
 | Another user on the same machine | Local files and loopback | To read findings or secrets |
-| The supply chain | Releases, the install script, the GitHub Action | To run other code than the one that was reviewed |
+| The supply chain, or a pull request | Releases, the install script, the GitHub Action, a zone file under review | To run other code than the one that was reviewed, or to forge what a CI log says |
+
+### Open now
+
+Known, and not fixed. This list is current as of 0.13.1.
+
+- **Without a token, a reverse proxy can still expose the API.** zoneblick refuses requests that carry a proxy's headers or come as HTTP/1.0 (what nginx sends by default), but a proxy can be configured to show neither. Nothing zoneblick sees can tell such a request from a local one. Set a token before putting anything in front of it. Both audits flagged this; making a token mandatory would close it and is an open decision.
+- **Without a token, every local user and process can use the API** when the daemon listens on a localhost port, the default of the install script and the packages. Set a token, or listen on a socket file.
+- **No limit on token guesses**, and the stored hash is unsalted SHA-256. Fine for a long random token; a short or reused one is not.
+- **A stripped proof hides a broken chain.** An answer that claims there is no DS record and brings no proof reads "unknown", not "broken".
+- **DANE trust-anchor records (usage 2) are not verified.** A match against a certificate the server merely sent proves nothing, so such a match is left without a verdict; only usage 3 is checked for real.
+- **Plain HTTP for the hosting-service page** (TKO-02): someone on the network path can add or remove the "unclaimed" text.
+- **Webhook and ntfy addresses may be `http://`**, since self-hosted receivers on a private network are common.
+- **The install script trusts GitHub's answer about which release is newest.** Whoever controls that answer can pick an older release, though only one with a valid build provenance. Without the GitHub CLI the script checks the checksum only, and says so.
+- **Packages carry no package signature**; the build provenance attestation is the verification.
+- **Names with unusual bytes** (escaped dots, bytes above 127) can get wrong NSEC and signature verdicts. It is a wrong answer, not a crash.
+- **The DNS and TLS libraries were fuzzed through zoneblick, not reviewed**, and dependencies were not checked against advisory databases.
+
+### Audit 2: version 0.13.0
+
+Audited on 2026-11-14, after 0.13.0 added the DNSSEC denial proofs, the mail-certificate check, vantage points, `zoneblick plan`, the socket listener and release provenance. Fixes are in 0.13.1.
 
 **What the red team did**
 
-- Read every parser that indexes into bytes from the network, every place where data from the DNS reaches an output, every outgoing request, the API guard, the packaging and the release workflow.
-- Replayed 3,200 runs over recorded DNS answers with random bytes flipped, messages cut short or replaced by noise, across eight test zones, through the whole pipeline: resolver, deep probes, checks, and the text, JSON and SARIF output. Fed 40,000 random inputs to the record, signature, zone-file, JSON, XML, date and config parsers.
-- Sent 25 hostile requests to two local daemons, one with a token and one without: missing and wrong tokens, the token in the wrong place, DNS-rebinding `Host` values, cross-site POSTs, form and oversized bodies, script and SQL fragments in parameters, path traversal.
-- Published records that carry terminal escape sequences, HTML, and line breaks, and looked for them in every output.
+- Read all the new code as an attacker, and tried again to get past every fix from audit 1.
+- Ran 400 chains of trust over signed answers with keys, DS records and signatures damaged at random; 20,000 random certificates and TLSA records; 20,000 random zone files through `plan`; mail servers that send endless lines, no line ends, garbage, or text where the TLS handshake should be.
+- Stood up hostile vantage daemons: escape sequences and line breaks in every field, a redirect to another server, a 9 MB reply.
+- Benchmarked signature verification with keys forced to share one key tag.
+- Opened 400 silent connections against the new HTTPS listener.
 
 **What broke, and the fix**
 
-| Severity | Finding | Fix |
+| Severity | Finding | Fix in 0.13.1 |
 |---|---|---|
-| High | **A zone could stall the daemon.** A zone that lists thousands of nameservers behind slow servers kept one run busy for hours. Zones are checked one after another and nothing is reported until a run ends, so no alert went out for that zone or any other. | A run of one zone is stopped after `run_timeout` (15 minutes) and counts as failed. A failed run now sends an alert. At most 26 nameserver names and 8 addresses per name are followed; the rest are marked "not checked" and the zone gets DEL-01 and DEL-02 findings. Each run has its own task, so a crash in one cannot stop the others. |
-| High | **No token plus a reverse proxy meant an open API.** Without a token zoneblick trusted requests addressed to `127.0.0.1`. nginx and Apache send exactly that by default, so the documented setup "localhost plus a proxy" let anyone read findings, mute them and start runs. | Without a token, requests that carry a proxy's headers are refused. The README and the starter config now say that a token comes before a proxy. |
-| Medium | **Escape sequences in zone-file drift output.** Record data is made safe to print when it is recorded, but the drift comparison read it back as zone-file fields, which turned `\027` back into a real escape character. A TXT value could clear the terminal and print a fake result, or inject workflow commands into a GitHub Actions log. | The comparison form is made safe to print again. Zero-width characters and Unicode line separators are now escaped everywhere too. |
-| Medium | **Pinning the Action did not pin the binary.** Pinned to a commit, the Action installed the newest release. | The Action installs the release its own copy belongs to, read from its `Cargo.toml`. It never installs "the newest". |
-| Low | **Fetching pages from internal addresses.** The MTA-STS policy and the hosting-service page were fetched from wherever the system resolver said the name was, so a zone could point that name at this machine, a private network or a cloud metadata service. Only a status code came back, never the page. | zoneblick resolves the name itself and connects to that address only when every address is public. *0.12.2:* a record name holding `/`, `@` or `:`, or one that reads as an IP address, could turn the web address into one for another host and slip past that; such names are not fetched. IPv6 addresses that carry an IPv4 address inside (NAT64, 6to4, Teredo) and three more special IPv4 blocks now count as not public. |
-| Low | **DNS queries to any address a zone names.** A zone could list `127.0.0.1` or a link-local address as its nameserver and have zoneblick query it. | Loopback, link-local, multicast and unspecified addresses are never queried or asked for a zone transfer. Private ranges still are: internal zones with internal nameservers are a normal thing to watch (NET-02 reports them in a deep run). |
-| Low | The ntfy topic address, which is the secret when no token is used, appeared in the log when sending failed. | Removed from the error text, as was already done for Slack, Discord and webhooks. |
-| Low | Names found by discovery could grow without limit, and every name costs queries on every run. | At most 1,000 names per zone are checked. *0.12.2:* the limit cut names in alphabetical order, so a flood of discovered names could push out one you listed. Names from the config, `--name` and the zone file are now always kept, and reaching the limit sends an alert once. |
-| Low | The web UI's data was worked out on every request, ten diffs per zone, while holding the database lock. | Worked out once per change and off the request threads. |
-| Low | A database created by `zoneblick run` was readable by other local users. The documented way to hash a token put the token in the process list. | New database files are created `0600`. The documentation uses standard input for the token. |
-| Low | An answer with no question section was accepted for any response code. | Only for error codes. |
-| Info | A timezone offset with a huge number overflowed in date parsing. The install script could run half-downloaded. API answers lacked `nosniff`, frame and cache headers. | Offsets are range-checked. The script runs from a function called on its last line and tells `curl` to use HTTPS only. Every response carries `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, and API answers `Cache-Control: no-store`. |
+| High | **A zone could pin every CPU core with signature checks.** The key tag that links a signature to a key is a 16-bit checksum, so a zone can publish hundreds of keys with the same tag and hundreds of junk signatures; every pairing was tried. One answer cost about 22 seconds per nameserver, and the run deadline from audit 1 could not interrupt it. | At most 16 verifications per record set and 32 keys per answer. A flood of 300 keys and 300 signatures now costs the same as a normal answer. |
+| High | **The proxy protection from audit 1 missed nginx's default.** A bare `proxy_pass` adds none of the headers zoneblick looked for. | Requests that arrive as HTTP/1.0, which is what nginx sends unless told otherwise, are refused too. This is still a heuristic; see [Open now](#open-now). |
+| Medium | **`zoneblick plan` printed raw control characters.** The record-type field of a zone file, and the parser's error messages, carried escaped line breaks and escape characters through to the terminal: in CI, a pull request's zone file could write its own lines into the log. | A record type must be letters, digits and hyphens. Every quoted piece of a file is made safe to print, and so is every error message and every line of the plan. |
+| Medium | **A SHA-1 DS record matched any key with the right tag.** Its digest was not computed, so a forged key set with a fitting tag read as "secure". | SHA-1 digests are computed and compared. A DS record with a digest type zoneblick cannot compute matches nothing. |
+| Medium | **The daemon followed redirects** on alert and vantage requests, so a hostile vantage point could send it to an internal address. | Redirects are off for every request the daemon makes. |
+| Medium | **One client could fill every TLS handshake slot** of the new HTTPS listener (found by the commit review). | At most 8 handshakes per address, 5 seconds each, and a connection that finds no slot is closed, not queued. |
+| Low | A vantage point could put megabytes into findings, the database and alerts. | At most 20 values of 200 characters are quoted; reports over 2 MB are refused. |
+| Low | A DANE trust-anchor record "matched" when the server merely appended the authority's public certificate. | Such a match no longer counts; see [Open now](#open-now). |
+| Low | Starting on a socket path that held a regular file replaced the file. The socket could be made in a directory other users can write to. | zoneblick refuses to start when the path holds anything but a socket, or when the directory is writable by others or owned by someone else. |
+| Low | A slow deep phase made the whole run fail, on every run. | The deep phase gets half the run's time; when it overruns, the ordinary results are stored and it is not retried until it is next due. |
+| Low | Smaller: the web UI could show a stale error for one cycle; site-local IPv6 counted as public; the install script's `wget` path did not insist on HTTPS; a `*` in the Action's `names` input matched files. | All fixed. |
 
 **What held**
 
-- **Parsers.** No crash and no hang in 3,200 corrupted runs and 40,000 random inputs, and the code review found every index into network bytes behind a length check. Referrals are capped at 24 and must lead downward, alias chains at 8, SPF at 30 lookups, NSEC3 at 2,500 iterations.
-- **The API.** No request got past the token. Without a token, requests for other host names (DNS rebinding) were refused. POSTs from other sites, form bodies and bodies over 2 MB were refused. Parameters go into SQL as parameters only. The token is compared by hash in constant time, and must be at least 16 characters.
-- **The web UI.** Data reaches the page as text nodes only; there is no `innerHTML`. A content security policy forbids framing and loading from elsewhere.
-- **Outputs.** Control characters and direction overrides in record data are escaped before they are stored, so they do not reach the terminal, JSON, SARIF, CSV (which also guards against spreadsheet formulas), Slack, Discord, email or ntfy headers.
-- **Outgoing requests.** Redirects are never followed, TLS is verified, bodies and times are capped. Credentials go only to fixed hosts, are never recorded, never logged, and IDs from a reply are checked before they go into a URL.
-- **Packaging.** Action inputs reach the shell through quoted environment variables. Third-party actions are pinned by commit. A release publishes only when the tag matches the crate version. The service runs as its own user with a private data directory; the container runs unprivileged.
+- **DNSSEC proofs.** No crash in any proof or signature path. A forged NSEC3 salt, a wildcard-expanded proof and a proof from the wrong side of a delegation are all rejected. No legitimate answer was found that reads as broken.
+- **The mail-certificate check.** No hang (every read and write is held to a 30-second deadline), no crash on hostile certificates, text before the handshake is refused, and only public addresses are connected to.
+- **Vantage points.** Nothing a hostile daemon sends reaches a finding, alert, terminal or the web UI unescaped. It can add findings of its own kind but cannot suppress others. Tokens go only to `https://` addresses and are not sent on to another host.
+- **Release provenance.** The list of releases without provenance is exact, a "newest release" that is on it is refused, and verification pins the repository, the workflow and the tag. A crafted release name cannot reach a file path.
+- **The audit 1 fixes**, apart from the proxy one: the loopback and link-local refusal is on every path that opens a connection, the address pin cannot be sidestepped, the name limit keeps the user's names, and a run cannot leave a zone stuck or leak tasks.
 
-**Known and not fixed**
+### Automated review of each commit
 
-- **Releases have a build provenance, not a project signature** (from 0.13.0). The attestation shows that a file was built by the release workflow from the tagged commit; the install script checks it only when the GitHub CLI is installed and signed in, and otherwise says that it did not. The `.deb` and `.rpm` carry no package signature. The container base image is pinned by digest. *This was "releases are not signed" before 0.13.0.*
-- **Without a token, every local user and process can use the API** when the daemon listens on a localhost port, which is the default of the install script and the packages. Set a token, or from 0.13.0 listen on a [socket file](#a-socket-file-in-place-of-a-port) that only the daemon's group can open.
-- **The daemon speaks plain HTTP.** On a non-loopback bind the token crosses the network unencrypted unless a TLS proxy is in front. Built-in TLS would need one more direct dependency and was not added.
-- **No limit on token guesses**, and the stored hash is unsalted SHA-256. Fine for a long random token; a short or reused one is not.
-- **DNSSEC denials are verified from 0.13.0**, with one gap: an answer that claims there is no DS record and brings no proof at all is reported as "unknown", not "broken", so stripping the proof hides a broken chain from SEC-13 (SEC-01 still compares the DS and key sets).
-- **Plain HTTP for the hosting-service page** (TKO-02): someone on the network path can add or remove the "unclaimed" text.
-- **Webhook and ntfy addresses may be `http://`**, since self-hosted receivers on a private network are common. Slack and Discord must be `https://`.
-- **Names with unusual bytes** (escaped dots, bytes above 127) can get wrong NSEC and signature verdicts, because two escape conventions meet. It is a wrong answer, not a crash.
-- **The DNS library's own message parser** was fuzzed through the corrupted-answer runs but not reviewed line by line, and dependencies were not checked against advisory databases.
+Every commit since 0.12.0 was also read by an automated security reviewer, which flagged these before they reached a release, or within one release:
 
-The tests are in [`tests/hostile.rs`](tests/hostile.rs) and [`tests/serve.rs`](tests/serve.rs) and run with the rest in CI. To report a security problem, open a GitHub security advisory on the repository.
+- Slack alerts passed `<!channel>` and links through from record data (0.12.0).
+- A certificate list cut off at 2,000 entries was treated as complete (0.12.0).
+- The cap on signature queries counted results, not queries sent (0.12.0).
+- Three weaknesses in the audit 1 fixes: a record name with `/` or `@` could sidestep the address pin, IPv6 forms that embed IPv4 counted as public, and the name limit could drop names the user listed (fixed in 0.12.2).
+- The provenance check could be switched off by a version number alone, and accepted an attestation from any workflow (before 0.13.0).
+- The no-DS proof accepted wildcard-expanded records and records without the delegation's NS bit (before 0.13.0).
+- The socket file was briefly reachable with wider permissions (before 0.13.0).
+- The mail-server deadline could be stretched, twice (before 0.13.0).
+- The HTTPS listener's handshake slots, listed under audit 2.
+
+### Audit 1: version 0.12.0, in short
+
+Audited on 2026-11-13; fixes in 0.12.1 and 0.12.2. The red team replayed 3,200 runs over corrupted DNS answers, fed 40,000 random inputs to the parsers, sent 25 hostile requests to two daemons, and published records carrying escape sequences.
+
+- **High, fixed:** a zone listing thousands of slow nameservers stalled the daemon for hours with no alert. Runs now have a deadline, failed runs alert, and nameserver names and addresses are capped.
+- **High, partly fixed:** with no token, a reverse proxy made the API public. Proxied requests are refused; audit 2 found the gap that remains.
+- **Medium, fixed:** escape sequences in zone-file drift output; pinning the GitHub Action did not pin the binary.
+- **Low, fixed:** pages fetched from internal addresses; DNS queries to loopback and link-local addresses; a secret in the log; unlimited discovered names; the web UI's data recomputed under a lock; a world-readable database and a token on the command line; answers without a question accepted; missing security headers.
+- **Held:** the parsers (no crash, no hang), the API token and cross-site checks, the web UI (text nodes only), output escaping on every other path, outgoing requests (no redirects on fetches, verified TLS, credentials to fixed hosts only), and the packaging.
+
+The tests from all audits are in [`tests/hostile.rs`](tests/hostile.rs), [`tests/serve.rs`](tests/serve.rs) and [`tests/dnssec.rs`](tests/dnssec.rs) and run with the rest in CI. To report a security problem, open a GitHub security advisory on the repository.
 
 ## Responsible use
 

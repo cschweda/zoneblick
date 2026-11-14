@@ -62,6 +62,17 @@ pub fn sec_01_ds_without_key(obs: &ZoneObservation) -> Vec<Finding> {
     let Some(ds) = parent_ds(obs).filter(|ds| !ds.is_empty()) else {
         return Vec::new();
     };
+    // DS records with a digest zoneblick cannot compute say nothing here;
+    // with only such records there is nothing to judge.
+    let ds: Vec<Ds> = ds
+        .iter()
+        .filter(|d| crate::dnssec::ds_usable(d))
+        .cloned()
+        .collect();
+    if ds.is_empty() {
+        return Vec::new();
+    }
+    let ds = &ds;
     let broken: Vec<(&ServerDnssec, &Vec<Dnskey>)> = key_views(obs)
         .into_iter()
         .filter(|(_, keys)| {

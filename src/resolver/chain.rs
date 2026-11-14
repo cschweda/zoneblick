@@ -459,11 +459,27 @@ async fn trusted_keys(
         ));
     }
     let raw = raw_rdata(&msg, zone, RecordType::DNSKEY);
+    if raw.len() > crate::verify::MAX_KEYS {
+        return Err((
+            "unknown",
+            format!(
+                "{zone} publishes {} keys, more than zoneblick will check ({})",
+                raw.len(),
+                crate::verify::MAX_KEYS
+            ),
+        ));
+    }
     let keys: Vec<Dnskey> = raw.iter().copied().filter_map(parse_dnskey).collect();
     if keys.is_empty() {
         return Err((
             "bogus",
             format!("the parent has a DS record for {zone}, but {zone} publishes no keys"),
+        ));
+    }
+    if !ds.iter().any(crate::dnssec::ds_usable) {
+        return Err((
+            "unknown",
+            format!("the DS records for {zone} use only digest types zoneblick cannot check"),
         ));
     }
     let anchored: Vec<Dnskey> = keys

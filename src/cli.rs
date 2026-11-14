@@ -509,7 +509,12 @@ fn failed(zone: &str, json: bool, e: &CliError) -> CommandOutput {
         let doc = FailureReport::new(&zone, e.kind(), e.to_string());
         output.stdout = json::render(&doc);
     } else {
-        output.stderr = format!("zoneblick: {e}\n");
+        // An error may quote a name or a file's contents; whatever it
+        // quotes, it stays on one line and holds no control characters.
+        output.stderr = format!(
+            "zoneblick: {}\n",
+            crate::resolver::iterate::printable(&e.to_string())
+        );
     }
     output
 }

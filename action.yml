@@ -1,6 +1,6 @@
 # A GitHub Action that checks a DNS zone with zoneblick.
 #
-#   - uses: cschweda/zoneblick@v0.13.0
+#   - uses: cschweda/zoneblick@v0.13.1
 #     with:
 #       zone: example.org
 #       expect: dns/example.org.zone   # optional: a zone file to compare with
@@ -94,7 +94,10 @@ runs:
         DB: ${{ inputs.db }}
       run: |
         args=(run "$ZONE" --db "${DB:-$RUNNER_TEMP/zoneblick.sqlite}")
+        # Split on spaces only; a * in the input must not match files.
+        set -f
         for name in $NAMES; do args+=(--name "$name"); done
+        set +f
         if [ -n "$EXPECT" ]; then args+=(--expect "$EXPECT"); fi
         if [ "$DEEP" = "true" ]; then args+=(--deep); fi
         if [ -n "$SARIF" ]; then args+=(--sarif "$SARIF"); fi

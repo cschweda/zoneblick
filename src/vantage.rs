@@ -89,7 +89,7 @@ pub fn servers_of(probes: &[ServerProbe]) -> Vec<VantageServer> {
 }
 
 /// A report may be at most this large.
-const REPORT_LIMIT: usize = 8 * 1024 * 1024;
+const REPORT_LIMIT: usize = 2 * 1024 * 1024;
 
 /// Ask one vantage point for its report on a zone.
 pub async fn fetch(

@@ -662,3 +662,26 @@ fn a_hostile_zone_file_cannot_crash_the_plan_or_inject_into_its_output() {
         started.elapsed()
     );
 }
+
+#[test]
+fn only_real_record_types_are_taken_from_a_zone_file() {
+    use zoneblick::plan::{Plan, lint};
+    use zoneblick::zonefile::parse_full;
+    let zone = "example.org.";
+    // The type field is where the last review's injection came in: an
+    // escaped line break and escape character where a type should be.
+    for evil in [
+        "www CNAME a.example.org.\nwww X\\010::error\\032title=pwned::owned\\027[2J 1\n",
+        "www \\027[2J 1\n",
+        "www A-TYPE-THAT-IS-FAR-TOO-LONG-TO-BE-ONE 1\n",
+        "www \"A\" 192.0.2.1\n@ TYPE\\000 1\n",
+    ] {
+        let message = parse_full(zone, evil).unwrap_err();
+        assert!(message.contains("is not a record type"), "{message}");
+        assert!(!message.chars().any(|c| c.is_control()), "{message:?}");
+    }
+    // Unknown but well-formed types are read past and can be named safely.
+    let parsed = parse_full(zone, "www CNAME a\nwww TYPE65534 \\# 0\nwww NEW-TYPE x\n").unwrap();
+    let out = Plan::new(zone, "f", lint(zone, &parsed), None).render();
+    assert!(out.contains("NEW-TYPE, TYPE65534"), "{out}");
+}

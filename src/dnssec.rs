@@ -161,19 +161,32 @@ fn name_wire(name: &str) -> Vec<u8> {
 }
 
 /// The digest a DS record for this key must carry, in lowercase hex.
-/// `None` when the digest type cannot be computed here (SHA-1 and GOST).
+/// `None` when the digest type cannot be computed here (GOST and unknown
+/// ones).
 pub fn ds_digest(owner: &str, dnskey_rdata: &[u8], digest_type: u8) -> Option<String> {
     let mut data = name_wire(owner);
     data.extend_from_slice(dnskey_rdata);
     match digest_type {
+        1 => Some(hex(ring::digest::digest(
+            &ring::digest::SHA1_FOR_LEGACY_USE_ONLY,
+            &data,
+        )
+        .as_ref())),
         2 => Some(hex(&Sha256::digest(&data))),
         4 => Some(hex(&Sha384::digest(&data))),
         _ => None,
     }
 }
 
-/// Does this DS record point at this key? Key tag and algorithm must agree,
-/// and so must the digest when it can be computed.
+/// True for a DS record whose digest zoneblick can compute and so check.
+pub fn ds_usable(ds: &Ds) -> bool {
+    matches!(ds.digest_type, 1 | 2 | 4)
+}
+
+/// Does this DS record point at this key? Key tag, algorithm and digest
+/// must all agree. A record with a digest type that cannot be computed
+/// here never matches: the key tag is a 16-bit checksum that anyone can
+/// make a key fit, so it proves nothing by itself.
 pub fn ds_matches(owner: &str, ds: &Ds, key: &Dnskey) -> bool {
     if ds.key_tag != key.key_tag || ds.algorithm != key.algorithm {
         return false;
@@ -181,10 +194,7 @@ pub fn ds_matches(owner: &str, ds: &Ds, key: &Dnskey) -> bool {
     let Some(rdata) = unhex(&key.rdata) else {
         return false;
     };
-    match ds_digest(owner, &rdata, ds.digest_type) {
-        Some(digest) => digest == ds.digest,
-        None => true,
-    }
+    ds_digest(owner, &rdata, ds.digest_type).is_some_and(|digest| digest == ds.digest)
 }
 
 /// The name of a signing algorithm (IANA DNSSEC algorithm numbers).
@@ -315,7 +325,7 @@ mod tests {
         assert_eq!(digest, ds_digest("example.com.", &rdata, 2).unwrap());
         assert_ne!(digest, ds_digest("example.org.", &rdata, 2).unwrap());
         assert_eq!(ds_digest("example.com.", &rdata, 4).unwrap().len(), 96);
-        assert!(ds_digest("example.com.", &rdata, 1).is_none());
+        assert!(ds_digest("example.com.", &rdata, 3).is_none());
 
         let key = parse_dnskey(&rdata).unwrap();
         let ds = Ds {
@@ -328,13 +338,25 @@ mod tests {
         assert!(!ds_matches("example.org.", &ds, &key));
         let other = parse_dnskey(&sample_key(2)).unwrap();
         assert!(!ds_matches("example.com.", &ds, &other));
-        // A SHA-1 DS can only be matched on key tag and algorithm.
+        // A SHA-1 DS is checked by its digest like the others.
         let sha1 = Ds {
             digest_type: 1,
-            digest: "00".to_string(),
+            digest: ds_digest("example.com.", &sample_key(1), 1).unwrap(),
+            ..ds.clone()
+        };
+        assert_eq!(sha1.digest.len(), 40);
+        assert!(ds_matches("example.com.", &sha1, &key));
+        let forged = Ds {
+            digest: "00".repeat(20),
+            ..sha1
+        };
+        assert!(!ds_matches("example.com.", &forged, &key));
+        // A digest type that cannot be computed matches nothing.
+        let gost = Ds {
+            digest_type: 3,
             ..ds
         };
-        assert!(ds_matches("example.com.", &sha1, &key));
+        assert!(!ds_usable(&gost) && !ds_matches("example.com.", &gost, &key));
     }
 
     #[test]

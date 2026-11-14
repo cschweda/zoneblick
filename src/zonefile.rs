@@ -334,6 +334,17 @@ pub fn parse_full(zone: &str, text: &str) -> Result<ParsedZone, String> {
         let Some(rtype) = rest.first().map(|t| t.text.to_ascii_uppercase()) else {
             return Err(format!("line {n}: no record type"));
         };
+        // A record type is letters, digits and hyphens. Anything else is
+        // not a type, and must not travel on into messages.
+        if rtype.is_empty()
+            || rtype.len() > 20
+            || !rtype.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(format!(
+                "line {n}: '{}' is not a record type",
+                shown(&rtype)
+            ));
+        }
         if !is_ancestor_or_equal(zone, name.trim_start_matches("*.")) {
             return Err(format!("line {n}: {name} is not inside the zone {zone}"));
         }

@@ -326,9 +326,16 @@ impl Plan {
         }
     }
 
-    /// The plan as text for a terminal.
+    /// The plan as text for a terminal. Every piece that came from the
+    /// file or the network is made safe to print, here as well as where
+    /// it was read.
     pub fn render(&self) -> String {
-        let mut out = format!("zoneblick plan {}\nfile: {}\n", self.zone, self.file);
+        let safe = |text: &str| crate::resolver::iterate::printable(text);
+        let mut out = format!(
+            "zoneblick plan {}\nfile: {}\n",
+            safe(&self.zone),
+            safe(&self.file)
+        );
         out.push_str("\nIssues in the file\n");
         if self.issues.is_empty() {
             out.push_str("  None.\n");
@@ -338,7 +345,7 @@ impl Plan {
                 "  {:<8} {}  {}\n",
                 i.severity.as_str().to_uppercase(),
                 i.id,
-                i.message
+                safe(&i.message)
             ));
         }
         match &self.changes {
@@ -348,7 +355,7 @@ impl Plan {
                 if changes.is_empty() {
                     out.push_str("  Nothing: the nameservers already serve what the file says.\n");
                 }
-                let join = |v: &[String]| v.join(", ");
+                let join = |v: &[String]| safe(&v.join(", "));
                 for c in changes {
                     match c.kind {
                         "add" => out.push_str(&format!(

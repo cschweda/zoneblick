@@ -53,7 +53,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 fetch() { # fetch URL FILE
   if have curl; then curl --proto '=https' --tlsv1.2 -fsSL "$1" -o "$2"
-  elif have wget; then wget -q "$1" -O "$2"
+  elif have wget; then wget -q --https-only "$1" -O "$2"
   else fail "curl or wget is needed"
   fi
 }

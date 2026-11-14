@@ -527,3 +527,99 @@ async fn a_missing_ds_record_must_be_proven_by_the_parent() {
     assert_eq!(link.status, "bogus", "{link:?}");
     assert!(link.detail.unwrap().contains("not signed"));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn corrupted_signed_answers_never_crash_the_chain_or_make_it_secure() {
+    use zoneblick::resolver::chain::{chain_of_trust, record_signatures};
+    use zoneblick::resolver::{Client, RawOutcome, observe_zone_records};
+    let (world, anchors) = chained_world(20);
+    let fixture = world.fixture(SIGNED_ZONE);
+    // The exchanges that carry signed data: only these are damaged, so
+    // that every run gets as far as the chain.
+    let signed: Vec<usize> = fixture
+        .exchanges
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| {
+            // What the chain reads: key sets and DS sets, over UDP.
+            e.query.dnssec
+                && e.query.transport == zoneblick::observe::Transport::Udp
+                && matches!(
+                    e.query.qtype,
+                    zoneblick::observe::QType::Dnskey | zoneblick::observe::QType::Ds
+                )
+        })
+        .map(|(i, _)| i)
+        .collect();
+    assert!(signed.len() >= 5, "{}", signed.len());
+    let mut seed: u64 = 0x00c0_ffee_1234_5678;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let (mut runs, mut all_secure) = (0, 0);
+    for _ in 0..400 {
+        let mut hostile = fixture.clone();
+        let mut damaged = false;
+        for _ in 0..1 + next() % 3 {
+            let at = signed[(next() % signed.len() as u64) as usize];
+            if let RawOutcome::Response { wire } = &mut hostile.exchanges[at].outcome {
+                match next() % 4 {
+                    0 => wire.truncate((next() % (wire.len() as u64 + 1)) as usize),
+                    _ => {
+                        // Flip bytes in the second half, where the record
+                        // data and signatures are.
+                        for _ in 0..1 + next() % 4 {
+                            let half = wire.len() / 2;
+                            let i = half + (next() % (wire.len() - half).max(1) as u64) as usize;
+                            let before = wire[i];
+                            wire[i] = next() as u8;
+                            damaged |= wire[i] != before;
+                        }
+                    }
+                }
+            }
+        }
+        let client = std::sync::Arc::new(Client::replay(&hostile));
+        let Ok(obs) = observe_zone_records(
+            client.clone(),
+            SIGNED_ZONE,
+            hostile.started_at_unix,
+            &["www.signed.example.".to_string()],
+        )
+        .await
+        else {
+            continue;
+        };
+        let chain = chain_of_trust(&client, &obs, &anchors).await;
+        let sigs = record_signatures(&client, &obs).await;
+        runs += 1;
+        // Statuses are always one of the known words.
+        for link in &chain {
+            assert!(
+                ["secure", "insecure", "bogus", "unknown"].contains(&link.status.as_str()),
+                "{link:?}"
+            );
+        }
+        for s in &sigs {
+            assert!(
+                ["valid", "invalid", "expired", "unsigned", "untried"].contains(&s.status.as_str()),
+                "{s:?}"
+            );
+        }
+        if damaged && chain.len() == 3 && chain.iter().all(|l| l.status == "secure") {
+            all_secure += 1;
+        }
+    }
+    assert!(runs > 200, "{runs} runs reached the chain");
+    // A flipped byte can land where it does not matter: a TTL in the
+    // message, or the key set of the second nameserver, which the chain
+    // does not ask. But a fully secure verdict must not be the usual
+    // result of damaged keys, DS records and signatures.
+    assert!(
+        all_secure * 3 < runs,
+        "{all_secure} of {runs} damaged runs were all secure"
+    );
+}

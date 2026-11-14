@@ -169,6 +169,10 @@ pub fn not_public(address: std::net::IpAddr) -> Option<&'static str> {
                 // Forms that carry an IPv4 address inside, which a
                 // gateway turns back into a connection to that address:
                 // NAT64, 6to4, Teredo, and IPv4-compatible addresses.
+                // Site-local addresses, deprecated but still private.
+                if s[0] & 0xffc0 == 0xfec0 {
+                    return Some("site-local");
+                }
                 let embeds_ipv4 = (s[0] == 0x0064 && s[1] == 0xff9b)
                     || s[0] == 0x2002
                     || (s[0] == 0x2001 && s[1] == 0)

@@ -246,19 +246,29 @@ pub async fn run_zone_level(
         }
     };
     state.running.lock().expect("lock").remove(&zone.name);
+    // The error state is settled first and the change announced after,
+    // so that no reader caches the state in between.
+    let was_failing = match &result {
+        Ok(_) => state
+            .errors
+            .lock()
+            .expect("lock")
+            .remove(&zone.name)
+            .is_some(),
+        Err(e) => state
+            .errors
+            .lock()
+            .expect("lock")
+            .insert(zone.name.clone(), e.clone())
+            .is_some(),
+    };
     state.changed();
     match &result {
         Ok(id) => {
-            state.errors.lock().expect("lock").remove(&zone.name);
             log(&format!("{} run #{id} stored ({trigger})", zone.name));
         }
         Err(e) => {
-            let first = state
-                .errors
-                .lock()
-                .expect("lock")
-                .insert(zone.name.clone(), e.clone())
-                .is_none();
+            let first = !was_failing;
             log(&format!("{} run failed: {e}", zone.name));
             // A zone that cannot be checked is itself news: a hijacked
             // delegation can look exactly like this. Say so once, when the
@@ -476,12 +486,32 @@ async fn run_zone_inner(
         _ => false,
     };
     if force_deep || deep_due {
-        crate::resolver::add_deep(client.clone(), &mut obs).await;
+        // Marked as tried before it starts, and given half of the run's
+        // time: a deep phase that a slow nameserver drags out must not
+        // cost the run its ordinary results, nor be retried every time.
         state
             .deep_at
             .lock()
             .expect("lock")
             .insert(zone.name.clone(), started);
+        let budget = state
+            .config
+            .run_timeout()
+            .unwrap_or(Duration::from_secs(900))
+            / 2;
+        let mut deep_obs = obs.clone();
+        match tokio::time::timeout(
+            budget,
+            crate::resolver::add_deep(client.clone(), &mut deep_obs),
+        )
+        .await
+        {
+            Ok(()) => obs = deep_obs,
+            Err(_) => log(&format!(
+                "{} deep checks did not finish in time and were left out of this run",
+                zone.name
+            )),
+        }
     }
     // A zone transfer, when the zone asks for that and a server allows it.
     // Names it finds are checked from the next run on.
@@ -635,10 +665,36 @@ pub async fn serve(
         };
         // A socket file left by an earlier run is in the way; anything
         // else at that path is not ours to remove.
-        if let Ok(meta) = std::fs::symlink_metadata(&path)
-            && meta.file_type().is_socket()
-        {
-            std::fs::remove_file(&path).map_err(failed)?;
+        use std::os::unix::fs::MetadataExt;
+        let refuse = |why: String| ServeError::Socket {
+            path: path.clone(),
+            source: std::io::Error::other(why),
+        };
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_socket() => {
+                std::fs::remove_file(&path).map_err(failed)?;
+            }
+            // Moving the new socket into place would replace it.
+            Ok(_) => {
+                return Err(refuse(
+                    "something that is not a socket is already there; zoneblick will not replace it"
+                        .to_string(),
+                ));
+            }
+            Err(_) => {}
+        }
+        // The directory must be the daemon's own: in one that others can
+        // write to, they could swap files under the socket being made.
+        let parent = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => std::path::PathBuf::from("."),
+        };
+        let parent_meta = std::fs::metadata(&parent).map_err(failed)?;
+        if parent_meta.mode() & 0o022 != 0 {
+            return Err(refuse(format!(
+                "the directory {} can be written to by other users; use one that only the daemon's user can write to",
+                parent.display()
+            )));
         }
         // The socket is made inside a directory only this user can enter,
         // given its permissions there, and then moved into place. That
@@ -646,11 +702,18 @@ pub async fn serve(
         // socket file starts out with.
         use std::os::unix::fs::DirBuilderExt;
         let nursery = path.with_extension(format!("new-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&nursery);
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&nursery)
             .map_err(failed)?;
+        let ours = std::fs::symlink_metadata(&nursery).map_err(failed)?;
+        if ours.uid() != parent_meta.uid() {
+            let _ = std::fs::remove_dir(&nursery);
+            return Err(refuse(format!(
+                "the directory {} belongs to another user; use one that belongs to the daemon's user",
+                parent.display()
+            )));
+        }
         let made = nursery.join("s");
         let listener = tokio::net::UnixListener::bind(&made).map_err(failed);
         // The owner and the group may connect; nobody else. This is what
@@ -812,17 +875,22 @@ async fn require_token(
             "forbidden_host",
             "without an API token, zoneblick only answers requests addressed to localhost",
         );
-    } else if [
-        "forwarded",
-        "x-forwarded-for",
-        "x-forwarded-host",
-        "x-real-ip",
-        "via",
-    ]
-    .iter()
-    .any(|name| headers.contains_key(*name))
+    } else if request.version() < axum::http::Version::HTTP_11
+        || [
+            "forwarded",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-real-ip",
+            "via",
+        ]
+        .iter()
+        .any(|name| headers.contains_key(*name))
     {
         // A reverse proxy on this machine makes every visitor look local.
+        // nginx, unless told otherwise, speaks HTTP/1.0 to what it
+        // proxies and adds none of those headers; browsers and API
+        // clients speak 1.1 or later. Neither sign is proof: a proxy can
+        // be set up to show none, which is why a token must come first.
         return forbidden(
             "forbidden_proxy",
             "this request came through a proxy; set an API token (zoneblick token) before putting zoneblick behind one",

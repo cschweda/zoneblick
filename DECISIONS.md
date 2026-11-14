@@ -231,3 +231,14 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - Vantage points are pull-based over the existing API: no agent, no new protocol. The comparison is with the other side's latest stored run, not a simultaneous one. Tokens go only to https addresses.
 - Not done: live tests of the five DNS-host integrations. They need an account and a token at each host.
 
+## 0.13.1: second audit, and HTTPS
+
+- Built-in HTTPS, with `tokio-rustls` as a direct dependency, approved by the owner; it was already in the dependency tree. Handshakes run in their own tasks with a five-second limit, at most eight per client address, and are dropped, not queued, when all 256 slots are taken. Certificate files are read again when their modification time changes. No ACME, no HTTP-to-HTTPS redirect.
+- The README keeps one record of all security audits, newest first, older ones in short form, with a single "Open now" list that is kept current.
+- Signature verification is bounded per record set (16 attempts) and per answer (32 keys) rather than moved to a blocking thread: with the bound the cost is that of a normal answer.
+- The no-token proxy problem is not solved, only narrowed (HTTP/1.0 refused). Making a token mandatory would solve it and would break every existing no-token install; that is the owner's decision and is listed as open.
+- DANE usage 2 gives no verdict rather than a path validation, which would need a certificate-path library as a direct dependency.
+- A DS record with a digest type that cannot be computed matches nothing. SEC-01 ignores such records, so a zone with only those gets no SEC-01 finding rather than a false one.
+- The deep phase has half the run's time and is marked as tried before it starts.
+- The socket's directory must not be writable by group or others and must have the same owner as a directory the daemon just made in it; there is no direct way to ask for the process's user without another dependency.
+

@@ -10,6 +10,11 @@ use crate::output::utc;
 use crate::resolver::iterate::printable;
 use crate::vantage::{servers_of, sets_of};
 
+/// At most this many values of a vantage point's record set are quoted
+/// in a finding, each cut to this many characters.
+const MAX_VALUES: usize = 20;
+const MAX_VALUE_CHARS: usize = 200;
+
 /// A vantage point's run older than this, compared with this run, is
 /// called stale and not compared.
 const STALE_SECS: u64 = 86_400;
@@ -38,7 +43,23 @@ pub fn van_01_records_differ(obs: &ZoneObservation) -> Vec<Finding> {
             };
             let theirs: BTreeSet<&String> = set.rdata.iter().collect();
             if theirs != local.iter().collect() {
-                let shown: Vec<String> = set.rdata.iter().map(|r| printable(r)).collect();
+                // A vantage point is another machine; what it sends is
+                // quoted in part, never in bulk.
+                let mut shown: Vec<String> = set
+                    .rdata
+                    .iter()
+                    .take(MAX_VALUES)
+                    .map(|r| {
+                        let safe = printable(r);
+                        match safe.char_indices().nth(MAX_VALUE_CHARS) {
+                            Some((at, _)) => format!("{}...", &safe[..at]),
+                            None => safe,
+                        }
+                    })
+                    .collect();
+                if set.rdata.len() > MAX_VALUES {
+                    shown.push(format!("and {} more", set.rdata.len() - MAX_VALUES));
+                }
                 differing
                     .entry((key.0.as_str(), key.1.as_str()))
                     .or_default()

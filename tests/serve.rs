@@ -1000,3 +1000,68 @@ async fn data_from_a_vantage_point_is_escaped_in_findings() {
     assert!(text.contains("\\\\027[2J"), "{text}");
     assert!(!text.contains("x\\n::error"), "{text}");
 }
+
+#[tokio::test]
+async fn without_a_token_an_old_style_proxy_request_is_refused() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let state = AppState::with_store(config(""), Store::open_in_memory().unwrap(), drifting());
+    let base = serve(router(state)).await;
+    let addr = base.trim_start_matches("http://").to_string();
+    // What nginx sends by default: HTTP/1.0, the upstream's own address
+    // as Host, and no forwarding header at all.
+    let ask = |version: &'static str| {
+        let addr = addr.clone();
+        async move {
+            let mut stream = tokio::net::TcpStream::connect(&addr).await.unwrap();
+            let request = format!(
+                "GET /api/v1/zones HTTP/{version}\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+            );
+            stream.write_all(request.as_bytes()).await.unwrap();
+            let mut answer = String::new();
+            stream.read_to_string(&mut answer).await.unwrap();
+            answer
+        }
+    };
+    let old = ask("1.0").await;
+    assert!(
+        old.starts_with("HTTP/1.0 403") || old.starts_with("HTTP/1.1 403"),
+        "{old}"
+    );
+    assert!(old.contains("forbidden_proxy"), "{old}");
+    let new = ask("1.1").await;
+    assert!(new.starts_with("HTTP/1.1 200"), "{new}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_socket_file_is_only_made_where_it_is_safe() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("sock");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let start = |path: &std::path::Path| {
+        let extra = format!("[server]\nbind = \"unix:{}\"\n", path.display());
+        let state =
+            AppState::with_store(config(&extra), Store::open_in_memory().unwrap(), drifting());
+        zoneblick::serve::serve(state, async {})
+    };
+
+    // A file that is not a socket is never replaced.
+    let precious = dir.join("precious.sqlite");
+    std::fs::write(&precious, "data").unwrap();
+    let err = start(&precious).await.unwrap_err().to_string();
+    assert!(err.contains("not a socket"), "{err}");
+    assert_eq!(std::fs::read_to_string(&precious).unwrap(), "data");
+
+    // A directory other users can write to is refused.
+    let shared = dir.join("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let err = start(&shared.join("z.sock")).await.unwrap_err().to_string();
+    assert!(err.contains("can be written to by other users"), "{err}");
+    assert!(
+        std::fs::read_dir(&shared).unwrap().next().is_none(),
+        "nothing was left behind"
+    );
+}

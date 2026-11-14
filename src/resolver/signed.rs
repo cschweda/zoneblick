@@ -145,7 +145,10 @@ pub(crate) async fn collect_dnssec(
             let (dnskeys, dnskey_sigs) =
                 match ask_signed(&client, address, &zone, QType::Dnskey).await {
                     Ok(msg) if is_authoritative_answer(&msg) => {
-                        let raw = raw_rdata(&msg, &zone, RecordType::DNSKEY);
+                        // More keys than any real zone has are not kept:
+                        // each one costs time in every later check.
+                        let mut raw = raw_rdata(&msg, &zone, RecordType::DNSKEY);
+                        raw.truncate(crate::verify::MAX_KEYS);
                         let mut keys: Vec<Dnskey> =
                             raw.iter().copied().filter_map(parse_dnskey).collect();
                         keys.sort();

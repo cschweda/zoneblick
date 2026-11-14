@@ -567,14 +567,28 @@ async fn mail_certificates(client: &Client, obs: &ZoneObservation) -> Vec<crate:
             });
             match tokio::time::timeout(std::time::Duration::from_secs(45), read).await {
                 Ok(Ok(Ok(chain))) => {
-                    let verdicts: Vec<Option<bool>> = entry
-                        .records
-                        .iter()
-                        .map(|r| super::smtp::tlsa_matches(r, &chain))
-                        .collect();
-                    entry.matched = if verdicts.contains(&Some(true)) {
+                    // A usage-3 record is proven by the handshake: the
+                    // server holds the key of the certificate it showed.
+                    // A usage-2 record names an authority's certificate,
+                    // which is public and which anyone can append to a
+                    // chain; whether the server's certificate really
+                    // comes from it is not checked here, so a usage-2
+                    // match settles nothing either way.
+                    let (mut proven, mut unverified, mut mismatch) = (false, false, false);
+                    for record in &entry.records {
+                        let trust_anchor = record.trim_start().starts_with('2');
+                        match super::smtp::tlsa_matches(record, &chain) {
+                            Some(true) if trust_anchor => unverified = true,
+                            Some(true) => proven = true,
+                            Some(false) => mismatch = true,
+                            None => {}
+                        }
+                    }
+                    entry.matched = if proven {
                         Some(true)
-                    } else if verdicts.contains(&Some(false)) {
+                    } else if unverified {
+                        None
+                    } else if mismatch {
                         Some(false)
                     } else {
                         None
