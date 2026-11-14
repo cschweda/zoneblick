@@ -391,3 +391,90 @@ async fn a_ds_set_signed_by_the_wrong_key_breaks_the_chain() {
     assert_eq!(details.len(), 1);
     assert!(details[0].contains(NS3), "{details:?}");
 }
+
+/// [`chained_world`], but the parent has no DS record for the zone and
+/// answers with `proof`: the records of its authority section.
+async fn chain_without_ds(
+    proof: impl Fn(u64, u64) -> Vec<hickory_proto::rr::Record>,
+) -> zoneblick::observe::ChainLink {
+    use zoneblick::observe::{QType, Transport};
+    let (mut world, anchors) = chained_world(20);
+    let (inception, expiration) = (STARTED_AT - 10 * 86_400, STARTED_AT + 20 * 86_400);
+    for transport in [Transport::Udp, Transport::Tcp] {
+        world.reply_signed(TLD_SERVER, transport, SIGNED_ZONE, QType::Ds, |m| {
+            m.metadata.authoritative = true;
+            m.authorities.extend(proof(inception, expiration));
+        });
+    }
+    let fixture = world.fixture(SIGNED_ZONE);
+    let client = zoneblick::resolver::Client::replay(&fixture);
+    let obs = observe_fixture(&fixture).await.unwrap();
+    let chain = zoneblick::resolver::chain::chain_of_trust(&client, &obs, &anchors).await;
+    assert_eq!(chain.len(), 3, "{chain:?}");
+    assert_eq!(chain[1].status, "secure");
+    chain.into_iter().next_back().unwrap()
+}
+
+/// An NSEC record at the zone's name in the parent: the next name, and a
+/// type list of NS, RRSIG and NSEC, with or without DS.
+fn nsec_rdata(with_ds: bool) -> Vec<u8> {
+    let mut rdata = zoneblick::verify::name_wire("signee.example.");
+    // Window 0, six bytes: NS is bit 2, DS bit 43, RRSIG 46, NSEC 47.
+    rdata.extend([0, 6, 0x20, 0, 0, 0, 0, if with_ds { 0x13 } else { 0x03 }]);
+    rdata
+}
+
+#[tokio::test]
+async fn a_missing_ds_record_must_be_proven_by_the_parent() {
+    use hickory_proto::rr::RecordType;
+    let signed_nsec = |with_ds: bool, seed: u8| {
+        move |inception: u64, expiration: u64| {
+            let nsec = nsec_rdata(with_ds);
+            vec![
+                raw(SIGNED_ZONE, RecordType::NSEC, nsec.clone()),
+                raw(
+                    SIGNED_ZONE,
+                    RecordType::RRSIG,
+                    rrsig_for(
+                        SIGNED_ZONE,
+                        47,
+                        seed,
+                        true,
+                        inception,
+                        expiration,
+                        "example.",
+                        std::slice::from_ref(&nsec),
+                    ),
+                ),
+            ]
+        }
+    };
+    // Signed by the parent's key, and the type list has no DS: proven.
+    let link = chain_without_ds(signed_nsec(false, 20)).await;
+    assert_eq!(link.status, "insecure", "{link:?}");
+    assert!(
+        link.detail
+            .unwrap()
+            .contains("proves that it has no DS record")
+    );
+
+    // The same record signed by a key the parent does not publish.
+    let link = chain_without_ds(signed_nsec(false, 55)).await;
+    assert_eq!(link.status, "bogus", "{link:?}");
+    assert!(link.detail.unwrap().contains("not validly signed"));
+
+    // A record whose type list does have DS proves nothing.
+    let link = chain_without_ds(signed_nsec(true, 20)).await;
+    assert_eq!(link.status, "unknown", "{link:?}");
+
+    // No proof at all: an answer anyone on the path could have made.
+    let link = chain_without_ds(|_, _| Vec::new()).await;
+    assert_eq!(link.status, "unknown", "{link:?}");
+    assert!(link.detail.unwrap().contains("no proof that there is none"));
+
+    // An unsigned record.
+    let link =
+        chain_without_ds(|_, _| vec![raw(SIGNED_ZONE, RecordType::NSEC, nsec_rdata(false))]).await;
+    assert_eq!(link.status, "bogus", "{link:?}");
+    assert!(link.detail.unwrap().contains("not signed"));
+}

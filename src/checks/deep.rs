@@ -487,6 +487,12 @@ pub fn sec_06_denial(obs: &ZoneObservation) -> Vec<Finding> {
             "no NSEC or NSEC3 record came with the answer"
         } else if !denial.signed {
             "the NSEC or NSEC3 records came without a signature"
+        } else if denial.proof_signatures.as_deref() == Some("invalid") {
+            "a signature over the NSEC or NSEC3 records does not verify with the zone's keys"
+        } else if denial.proof_signatures.as_deref() == Some("expired") {
+            "the signatures over the NSEC or NSEC3 records are outside their validity period"
+        } else if denial.proof_signatures.as_deref() == Some("unsigned") {
+            "one of the NSEC or NSEC3 records came without a signature"
         } else if denial.nsec3_proof == Some(false) {
             "the NSEC3 records do not prove that the name is missing"
         } else if denial.nsec3 == 0
@@ -1203,6 +1209,7 @@ mod tests {
             nsec3,
             signed,
             nsec3_proof: None,
+            proof_signatures: None,
         };
         let mut obs = sound();
         // An unsigned zone owes no proof.

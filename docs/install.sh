@@ -76,6 +76,7 @@ esac
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
+ASKED_VERSION="$VERSION"
 if [ -z "$VERSION" ]; then
   # The newest release, pre-releases included.
   fetch "https://api.github.com/repos/$REPO/releases?per_page=1" "$tmp/releases.json"
@@ -101,25 +102,34 @@ say "Checksum verified"
 
 # The checksum file comes from the same release as the binary, so it only
 # shows that the download is whole. The attestation shows where the file
-# was built. Releases before 0.13.0 have none.
-attested() { # attested VERSION: true for v0.13.0 and later
-  v=${1#v}; major=${v%%.*}; rest=${v#*.}; minor=${rest%%.*}
-  case "$major$minor" in *[!0-9]*) return 1 ;; esac
-  [ "$major" -gt 0 ] || [ "$minor" -ge 13 ]
-}
-if attested "$VERSION"; then
-  if have gh && gh auth status >/dev/null 2>&1; then
-    gh attestation verify "$tmp/$name.tar.gz" --repo "$REPO" >/dev/null 2>"$tmp/attest.err" \
-      || fail "the build provenance of $name.tar.gz does not verify; nothing was installed ($(head -n 1 "$tmp/attest.err"))"
-    say "Build provenance verified"
-  elif [ "$ATTEST" = "require" ]; then
-    fail "--require-attestation needs the GitHub CLI (gh), signed in; nothing was installed"
-  else
-    say "Build provenance not checked (needs the GitHub CLI, gh, signed in)"
-  fi
-elif [ "$ATTEST" = "require" ]; then
-  fail "$VERSION was released before build provenance was recorded; nothing was installed"
-fi
+# was built: by this project's release workflow, from the tag asked for.
+# These releases were made before attestations and have none; the list is
+# exact, so that no other version number can switch the check off.
+UNATTESTED=" v0.1.0 v0.1.1 v0.2.0 v0.3.0 v0.4.0 v0.5.0 v0.6.0 v0.6.1 v0.7.0 v0.8.0 v0.9.0 v0.10.0 v0.11.0 v0.12.0 v0.12.1 v0.12.2 "
+case "$UNATTESTED" in
+  *" $VERSION "*)
+    [ "$ATTEST" != "require" ] \
+      || fail "$VERSION was released before build provenance was recorded; nothing was installed"
+    # The newest release is always attested. If "newest" came out as one
+    # of the old ones, the answer about releases is not to be trusted.
+    [ -n "$ASKED_VERSION" ] \
+      || fail "the newest release was reported as $VERSION, which is older than it should be; pass --version to install it anyway"
+    say "Warning: $VERSION has no build provenance to check; only its checksum was verified"
+    ;;
+  *)
+    if have gh && gh auth status >/dev/null 2>&1; then
+      gh attestation verify "$tmp/$name.tar.gz" --repo "$REPO" \
+        --signer-workflow "$REPO/.github/workflows/release.yml" \
+        --source-ref "refs/tags/$VERSION" >/dev/null 2>"$tmp/attest.err" \
+        || fail "the build provenance of $name.tar.gz does not verify; nothing was installed ($(head -n 1 "$tmp/attest.err"))"
+      say "Build provenance verified"
+    elif [ "$ATTEST" = "require" ]; then
+      fail "--require-attestation needs the GitHub CLI (gh), signed in; nothing was installed"
+    else
+      say "Warning: build provenance not checked (needs the GitHub CLI, gh, signed in); only the checksum was verified"
+    fi
+    ;;
+esac
 
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
 

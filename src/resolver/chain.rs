@@ -109,6 +109,201 @@ fn names_a_known_key(signatures: &[&[u8]], keys: &[Dnskey]) -> bool {
     })
 }
 
+/// The records of one type and owner in a message section, as raw data.
+fn section_raw<'m>(
+    records: &'m [hickory_proto::rr::Record],
+    owner: &str,
+    rtype: RecordType,
+) -> Vec<&'m [u8]> {
+    records
+        .iter()
+        .filter(|rec| rec.record_type() == rtype && norm(&rec.name) == owner)
+        .filter_map(|rec| match &rec.data {
+            RData::Unknown { rdata, .. } => Some(rdata.anything.as_slice()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether the signature over one NSEC or NSEC3 record in the authority
+/// section holds. These records travel as raw data, which is the form
+/// they were signed in.
+fn judge_proof_record(
+    msg: &Message,
+    owner: &str,
+    rtype: RecordType,
+    keys: &[Dnskey],
+    now: u64,
+) -> &'static str {
+    let set: Vec<Vec<u8>> = section_raw(&msg.authorities, owner, rtype)
+        .into_iter()
+        .map(<[u8]>::to_vec)
+        .collect();
+    let code = u16::from(rtype);
+    let covering: Vec<&[u8]> = section_raw(&msg.authorities, owner, RecordType::RRSIG)
+        .into_iter()
+        .filter(|r| r.len() > 18 && u16::from_be_bytes([r[0], r[1]]) == code)
+        .collect();
+    if covering.is_empty() {
+        return "unsigned";
+    }
+    let timely: Vec<&[u8]> = covering
+        .into_iter()
+        .filter(|r| {
+            parse_rrsig(r).is_some_and(|sig| {
+                u64::from(sig.inception) <= now + 300 && now <= u64::from(sig.expiration)
+            })
+        })
+        .collect();
+    if timely.is_empty() {
+        return "expired";
+    }
+    if !names_a_known_key(&timely, keys) {
+        return "invalid";
+    }
+    match verify_rrset(owner, code, &set, &timely, keys) {
+        Verdict::Valid => "valid",
+        Verdict::Invalid => "invalid",
+        Verdict::Untried => "untried",
+    }
+}
+
+/// Whether every NSEC and NSEC3 record in the authority section of a
+/// denial is validly signed: the worst verdict over them. `None` when the
+/// message holds no such record.
+pub(crate) fn proof_signatures(msg: &Message, keys: &[Dnskey], now: u64) -> Option<&'static str> {
+    const WORST_FIRST: [&str; 5] = ["invalid", "expired", "unsigned", "untried", "valid"];
+    let mut owners: BTreeSet<(String, bool)> = BTreeSet::new();
+    for rec in &msg.authorities {
+        match rec.record_type() {
+            RecordType::NSEC => owners.insert((norm(&rec.name), false)),
+            RecordType::NSEC3 => owners.insert((norm(&rec.name), true)),
+            _ => false,
+        };
+    }
+    owners
+        .iter()
+        .map(|(owner, nsec3)| {
+            let rtype = if *nsec3 {
+                RecordType::NSEC3
+            } else {
+                RecordType::NSEC
+            };
+            judge_proof_record(msg, owner, rtype, keys, now)
+        })
+        .min_by_key(|status| WORST_FIRST.iter().position(|w| w == status))
+}
+
+/// True when a type bitmap (the tail of an NSEC or NSEC3 record) lists
+/// the record type `wanted`.
+fn bitmap_has(mut bitmap: &[u8], wanted: u16) -> bool {
+    while bitmap.len() >= 2 {
+        let (window, len) = (bitmap[0], bitmap[1] as usize);
+        let Some(bits) = bitmap.get(2..2 + len) else {
+            return false;
+        };
+        if u16::from(window) == wanted >> 8 {
+            let (byte, bit) = ((wanted & 0xff) as usize / 8, (wanted & 0xff) % 8);
+            return bits.get(byte).is_some_and(|b| b & (0x80 >> bit) != 0);
+        }
+        bitmap = &bitmap[2 + len..];
+    }
+    false
+}
+
+/// The length of an uncompressed name at the start of `bytes`.
+fn name_len(bytes: &[u8]) -> Option<usize> {
+    let mut at = 0;
+    loop {
+        let len = *bytes.get(at)? as usize;
+        at += 1;
+        if len == 0 {
+            return Some(at);
+        }
+        if len > 63 {
+            return None;
+        }
+        at += len;
+    }
+}
+
+/// What the parent's answer proves about a child that got no DS record.
+enum NoDs {
+    /// A validly signed record shows the child has no DS record (or is in
+    /// an unsigned stretch of the parent, with NSEC3 opt-out).
+    Proven,
+    /// The record that should show it is not validly signed.
+    BadSignature(&'static str),
+    /// The answer holds nothing that shows it either way.
+    NoProof,
+}
+
+/// Check the parent's proof that `child` has no DS record: an NSEC record
+/// at the child's name, or an NSEC3 record at its hash, whose type list
+/// has no DS; or an NSEC3 record with the opt-out flag that covers the
+/// hash. The record must be signed by the parent's keys.
+fn no_ds_proof(msg: &Message, child: &str, keys: &[Dnskey], now: u64) -> NoDs {
+    const DS: u16 = 43;
+    let verdict =
+        |owner: &str, rtype: RecordType| match judge_proof_record(msg, owner, rtype, keys, now) {
+            "valid" => NoDs::Proven,
+            // An algorithm zoneblick cannot check proves nothing either way.
+            "untried" => NoDs::NoProof,
+            bad => NoDs::BadSignature(bad),
+        };
+    for rdata in section_raw(&msg.authorities, child, RecordType::NSEC) {
+        if let Some(skip) = name_len(rdata)
+            && !bitmap_has(&rdata[skip..], DS)
+        {
+            return verdict(child, RecordType::NSEC);
+        }
+    }
+    for rec in &msg.authorities {
+        let RData::Unknown { rdata, .. } = &rec.data else {
+            continue;
+        };
+        if rec.record_type() != RecordType::NSEC3 {
+            continue;
+        }
+        let owner = norm(&rec.name);
+        let r = rdata.anything.as_slice();
+        let parsed = (|| {
+            let salt_len = *r.get(4)? as usize;
+            let salt = r.get(5..5 + salt_len)?;
+            let hash_len = *r.get(5 + salt_len)? as usize;
+            let next = r.get(6 + salt_len..6 + salt_len + hash_len)?;
+            let bitmap = r.get(6 + salt_len + hash_len..)?;
+            let at = super::deep::base32hex(owner.split('.').next()?)?;
+            Some((
+                r[0],
+                r[1],
+                u16::from_be_bytes([r[2], r[3]]),
+                salt,
+                at,
+                next,
+                bitmap,
+            ))
+        })();
+        let Some((algorithm, flags, iterations, salt, at, next, bitmap)) = parsed else {
+            continue;
+        };
+        if algorithm != 1 || iterations > 2500 {
+            continue;
+        }
+        let hash = super::deep::nsec3_hash(child, salt, iterations);
+        let matches = at == hash && !bitmap_has(bitmap, DS);
+        let covers = if at.as_slice() < next {
+            at.as_slice() < hash.as_slice() && hash.as_slice() < next
+        } else {
+            hash.as_slice() > at.as_slice() || hash.as_slice() < next
+        };
+        if matches || (covers && flags & 1 == 1) {
+            return verdict(&owner, RecordType::NSEC3);
+        }
+    }
+    NoDs::NoProof
+}
+
 /// Whether the signatures over one record set in an answer hold:
 /// `valid`, `invalid`, `expired`, `unsigned`, or `untried` when no
 /// signature could be tried (an algorithm zoneblick does not know).
@@ -321,11 +516,39 @@ pub async fn chain_of_trust(
         let raw = raw_rdata(&msg, child, RecordType::DS);
         let ds: Vec<Ds> = raw.iter().copied().filter_map(parse_ds).collect();
         if ds.is_empty() {
-            links.push(link(
-                child,
-                "insecure",
-                Some(format!("{} has no DS record for {child}", step.from_zone)),
-            ));
+            // A signed parent must prove that the DS record is absent;
+            // otherwise anyone on the path could strip it.
+            links.push(match no_ds_proof(&msg, child, &keys, now) {
+                NoDs::Proven => link(
+                    child,
+                    "insecure",
+                    Some(format!(
+                        "{} proves that it has no DS record for {child}",
+                        step.from_zone
+                    )),
+                ),
+                NoDs::BadSignature(why) => link(
+                    child,
+                    "bogus",
+                    Some(format!(
+                        "{} says it has no DS record for {child}, but the proof of that is {}",
+                        step.from_zone,
+                        match why {
+                            "expired" => "signed outside its validity period",
+                            "unsigned" => "not signed",
+                            _ => "not validly signed",
+                        }
+                    )),
+                ),
+                NoDs::NoProof => link(
+                    child,
+                    "unknown",
+                    Some(format!(
+                        "{} gave no DS record for {child} and no proof that there is none",
+                        step.from_zone
+                    )),
+                ),
+            });
             break;
         }
         let set: Vec<Vec<u8>> = raw.iter().map(|r| r.to_vec()).collect();

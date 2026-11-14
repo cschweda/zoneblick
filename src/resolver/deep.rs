@@ -117,6 +117,8 @@ async fn probe_server(
     zone: String,
     ns_name: String,
     address: IpAddr,
+    keys: Arc<Vec<crate::dnssec::Dnskey>>,
+    now: u64,
 ) -> ServerDeep {
     let edns_version = answer(probe(&client, address, &zone, Probe::EdnsVersion1).await);
     let edns_option = answer(probe(&client, address, &zone, Probe::EdnsUnknownOption).await);
@@ -169,7 +171,7 @@ async fn probe_server(
         parse_dnskey,
     )
     .await;
-    let denial = probe_denial(&client, address, &zone).await;
+    let denial = probe_denial(&client, address, &zone, &keys, now).await;
     ServerDeep {
         ns_name,
         address,
@@ -197,7 +199,7 @@ pub(crate) struct Nsec3 {
 }
 
 /// Decode base32 with the "extended hex" alphabet (RFC 4648), unpadded.
-fn base32hex(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn base32hex(text: &str) -> Option<Vec<u8>> {
     let (mut bits, mut have, mut out) = (0u32, 0, Vec::new());
     for c in text.bytes() {
         let v = match c.to_ascii_lowercase() {
@@ -314,7 +316,13 @@ fn wire_name(bytes: &[u8]) -> Option<(String, usize)> {
 
 /// Ask for a name that should not exist, with the DO bit, and note the
 /// proof that comes back.
-async fn probe_denial(client: &Client, server: IpAddr, zone: &str) -> Option<Denial> {
+async fn probe_denial(
+    client: &Client,
+    server: IpAddr,
+    zone: &str,
+    keys: &[crate::dnssec::Dnskey],
+    now: u64,
+) -> Option<Denial> {
     if zone == "." {
         return None;
     }
@@ -343,7 +351,13 @@ async fn probe_denial(client: &Client, server: IpAddr, zone: &str) -> Option<Den
         .filter_map(|(owner, rdata)| parse_nsec3(&owner, rdata))
         .collect();
     let nsec3_proof = nsec3_proves_absence(&nsec3, zone, &qname);
+    let proof_signatures = if keys.is_empty() {
+        None
+    } else {
+        super::chain::proof_signatures(&msg, keys, now).map(str::to_string)
+    };
     Some(Denial {
+        proof_signatures,
         nsec3_proof,
         qname,
         rcode: rcode_name(msg.metadata.response_code),
@@ -415,12 +429,21 @@ pub(crate) fn parse_origin(txt: &str) -> (Vec<u32>, Option<String>) {
 /// Run the deep probes for an observed zone and attach the result.
 pub async fn add_deep(client: Arc<Client>, obs: &mut ZoneObservation) {
     let mut tasks = JoinSet::new();
+    let keys: std::collections::BTreeSet<crate::dnssec::Dnskey> = obs
+        .dnssec
+        .iter()
+        .flat_map(|d| &d.servers)
+        .flat_map(|s| s.dnskeys.iter().flatten().cloned())
+        .collect();
+    let keys = Arc::new(keys.into_iter().collect::<Vec<_>>());
     for (ns_name, address) in responding_servers(&obs.probes) {
         tasks.spawn(probe_server(
             client.clone(),
             obs.zone.clone(),
             ns_name,
             address,
+            keys.clone(),
+            obs.started_at_unix,
         ));
     }
     let mut servers = Vec::new();
