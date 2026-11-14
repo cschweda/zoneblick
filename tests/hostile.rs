@@ -537,3 +537,128 @@ fn the_name_limit_never_drops_a_name_the_user_listed() {
     assert_eq!(cap_names(&mut few, &wanted), 0);
     assert_eq!(few, ["a.example.org.", "b.example.org."]);
 }
+
+#[test]
+fn certificates_and_tlsa_records_of_any_shape_are_survived() {
+    use zoneblick::resolver::smtp::{public_key_info, tlsa_matches};
+    let mut rng = Rng(0x7157_a000_dead_0001);
+    for _ in 0..20_000 {
+        let cert = rng.bytes(300);
+        let _ = public_key_info(&cert);
+        // DER that starts plausibly and then lies about its lengths.
+        let mut nested = vec![0x30, 0x82, rng.next() as u8, rng.next() as u8, 0x30, 0x84];
+        nested.extend(rng.bytes(40));
+        let _ = public_key_info(&nested);
+        let record = format!(
+            "{} {} {} {}",
+            rng.below(5),
+            rng.below(4),
+            rng.below(4),
+            rng.text(20)
+        );
+        let _ = tlsa_matches(&record, &[cert, nested]);
+        let _ = tlsa_matches(&rng.text(30), &[]);
+    }
+}
+
+#[test]
+fn a_hostile_mail_server_cannot_hang_or_crash_the_certificate_check() {
+    use std::io::Write;
+    use std::net::TcpListener;
+    use zoneblick::resolver::smtp::starttls_certificates;
+    // Each server sends its bytes at once and then holds the line open.
+    let serve = |bytes: Vec<u8>| {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.write_all(&bytes);
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        });
+        addr
+    };
+    let mut rng = Rng(0x5a17_0000_0000_0042);
+    let mut cases: Vec<Vec<u8>> = vec![
+        // A greeting that never ends its line.
+        [b"220 ".to_vec(), vec![b'a'; 100_000]].concat(),
+        // Continuation lines without end.
+        "220-more\r\n".repeat(10_000).into_bytes(),
+        // Not text at all.
+        vec![0xff; 5000],
+        // A code that is not a number, and an empty line.
+        b"abc hello\r\n".to_vec(),
+        b"\r\n".to_vec(),
+        // Unicode where the code should be: must not split a character.
+        "é20 hi\r\n".as_bytes().to_vec(),
+    ];
+    for _ in 0..20 {
+        cases.push(rng.bytes(400));
+    }
+    for bytes in cases {
+        let started = std::time::Instant::now();
+        let result = starttls_certificates(serve(bytes), "mail.example.test.");
+        assert!(result.is_err());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(15),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+}
+
+#[test]
+fn a_hostile_zone_file_cannot_crash_the_plan_or_inject_into_its_output() {
+    use zoneblick::plan::{Plan, lint, outside_targets};
+    use zoneblick::zonefile::parse_full;
+    let mut rng = Rng(0x91a7_0000_0000_0007);
+    let zone = "example.org.";
+    for _ in 0..20_000 {
+        let text = rng.text(80);
+        if let Err(message) = parse_full(zone, &text) {
+            assert!(
+                !message.chars().any(|c| c.is_control()),
+                "{message:?} from {text:?}"
+            );
+        }
+        if let Ok(parsed) = parse_full(zone, &text) {
+            let issues = lint(zone, &parsed);
+            let _ = outside_targets(zone, &parsed);
+            let out = Plan::new(zone, "f", issues, None).render();
+            assert!(
+                !out.chars().any(|c| c.is_control() && c != '\n'),
+                "{out:?} from {text:?}"
+            );
+        }
+    }
+    // A pull request's zone file that tries to speak to the CI log: the
+    // escapes for a line break and for ESC must stay escapes.
+    let evil = "www CNAME a\nwww TXT \"x\\010::error::owned\\027[2J\"\n";
+    // In a name, the same escapes make the file unreadable; the message
+    // that says so quotes the name and must not carry them either.
+    let refused = parse_full(zone, "x\\010::stop-commands::y A 192.0.2.1\n").unwrap_err();
+    assert!(!refused.chars().any(|c| c.is_control()), "{refused:?}");
+    let refused = parse_full(zone, "$\\010::error::x 1\n").unwrap_err();
+    assert!(!refused.chars().any(|c| c.is_control()), "{refused:?}");
+    let parsed = parse_full(zone, evil).unwrap();
+    let out = Plan::new(zone, "f", lint(zone, &parsed), None).render();
+    for line in out.lines() {
+        assert!(!line.trim_start().starts_with("::"), "{out}");
+    }
+    assert!(!out.contains('\u{1b}'));
+    // Many names under many wildcards and delegations stay fast.
+    let mut big = String::new();
+    for i in 0..3000 {
+        big.push_str(&format!(
+            "n{i} MX 10 t{i}.a.b.c.d\n*.w{i} A 192.0.2.1\ns{i} NS ns.s{i}\n"
+        ));
+    }
+    let started = std::time::Instant::now();
+    let parsed = parse_full(zone, &big).unwrap();
+    let _ = lint(zone, &parsed);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "{:?}",
+        started.elapsed()
+    );
+}

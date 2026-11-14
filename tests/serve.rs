@@ -840,3 +840,163 @@ async fn a_run_is_compared_with_another_vantage_point() {
         "{findings}"
     );
 }
+
+#[tokio::test]
+async fn a_hostile_vantage_point_cannot_inject_or_redirect() {
+    // Three stand-ins for a compromised vantage daemon: one that answers
+    // with escape sequences in its data, one that redirects (to carry the
+    // request, and its token, elsewhere), and one that never stops sending.
+    let seen_elsewhere = Arc::new(AtomicUsize::new(0));
+    let counter = seen_elsewhere.clone();
+    let elsewhere = serve(axum::Router::new().fallback(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+        async { "caught" }
+    }))
+    .await;
+    let evil_report = serde_json::json!({
+        "zone": "drift.example.",
+        "run_started_unix": u64::MAX,
+        "sets": [
+            {"name": "www.drift.example.", "rtype": "A", "rdata": ["\u{1b}[2J\u{1b}]0;owned\u{7}", "x\n::error::y"]},
+            {"name": "\u{1b}[31mevil", "rtype": "\n", "rdata": []}
+        ],
+        "servers": [{"ns_name": "\u{1b}[2Jns", "address": "198.51.100.1", "answered": false}]
+    })
+    .to_string();
+    let target = format!("{elsewhere}/steal");
+    let hostile = serve(
+        axum::Router::new()
+            .route(
+                "/evil/api/v1/vantage",
+                axum::routing::get(move || {
+                    let body = evil_report.clone();
+                    async move {
+                        (
+                            [(axum::http::header::CONTENT_TYPE, "application/json")],
+                            body,
+                        )
+                    }
+                }),
+            )
+            .route(
+                "/redirect/api/v1/vantage",
+                axum::routing::get(move || {
+                    let target = target.clone();
+                    async move { axum::response::Redirect::temporary(&target) }
+                }),
+            )
+            .route(
+                "/flood/api/v1/vantage",
+                axum::routing::get(|| async { "x".repeat(9 * 1024 * 1024) }),
+            ),
+    )
+    .await;
+
+    let extra = format!(
+        "[[vantage]]\nname = \"evil\"\nurl = \"{hostile}/evil\"\n[[vantage]]\nname = \"redirect\"\nurl = \"{hostile}/redirect\"\n[[vantage]]\nname = \"flood\"\nurl = \"{hostile}/flood\"\n"
+    );
+    let state = AppState::with_store(config(&extra), Store::open_in_memory().unwrap(), drifting());
+    let zone = state.config.zones[0].clone();
+    run_zone(&state, &zone, "test").await.unwrap();
+    assert_eq!(
+        seen_elsewhere.load(Ordering::SeqCst),
+        0,
+        "the redirect was followed"
+    );
+
+    let base = serve(router(state)).await;
+    let r = reqwest::Client::new()
+        .get(format!("{base}/api/v1/findings?state=open"))
+        .send()
+        .await
+        .unwrap();
+    let text = r.text().await.unwrap();
+    let findings: Value = serde_json::from_str(&text).unwrap();
+    let van: Vec<&Value> = findings["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["check_id"].as_str().unwrap().starts_with("VAN"))
+        .collect();
+    // The evil report's run time is absurd, so it is stale: not compared.
+    // All three end up as "gave nothing to compare with".
+    assert_eq!(van.len(), 1, "{van:?}");
+    assert_eq!(van[0]["check_id"], "VAN-03");
+    let details = van[0]["evidence"]["details"].to_string();
+    assert!(
+        details.contains("redirect: the vantage point answered HTTP 307"),
+        "{details}"
+    );
+    assert!(
+        details.contains("flood: the report is too large"),
+        "{details}"
+    );
+    // Nothing from the hostile side reaches stored findings unescaped.
+    let stored = serde_json::to_string(&findings).unwrap();
+    assert!(
+        !stored.contains("\\u001b") && !stored.contains("owned"),
+        "{stored}"
+    );
+}
+
+#[tokio::test]
+async fn data_from_a_vantage_point_is_escaped_in_findings() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let report = serde_json::json!({
+        "zone": "drift.example.",
+        "run_started_unix": now,
+        "sets": [{"name": "www.drift.example.", "rtype": "A",
+                  "rdata": ["\u{1b}[2J\u{1b}]0;owned\u{7}", "x\n::error::y"]}],
+        "servers": [{"ns_name": "\u{1b}[2Jns", "address": "198.51.100.1", "answered": false}]
+    })
+    .to_string();
+    let hostile = serve(axum::Router::new().route(
+        "/api/v1/vantage",
+        axum::routing::get(move || {
+            let body = report.clone();
+            async move {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    body,
+                )
+            }
+        }),
+    ))
+    .await;
+    let extra = format!("[[vantage]]\nname = \"evil\"\nurl = \"{hostile}\"\n");
+    let state = AppState::with_store(config(&extra), Store::open_in_memory().unwrap(), drifting());
+    let zone = state.config.zones[0].clone();
+    run_zone(&state, &zone, "test").await.unwrap();
+    let base = serve(router(state)).await;
+    let text = reqwest::Client::new()
+        .get(format!("{base}/api/v1/findings?state=open"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let findings: Value = serde_json::from_str(&text).unwrap();
+    let ids: Vec<&str> = findings["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["check_id"].as_str().unwrap())
+        .filter(|id| id.starts_with("VAN"))
+        .collect();
+    // The differences are reported...
+    assert!(
+        ids.contains(&"VAN-01") && ids.contains(&"VAN-02"),
+        "{ids:?}"
+    );
+    // ...with the control characters written out, not passed on.
+    assert!(
+        !text.contains("\\u001b") && !text.contains("\\u0007"),
+        "{text}"
+    );
+    assert!(text.contains("\\\\027[2J"), "{text}");
+    assert!(!text.contains("x\\n::error"), "{text}");
+}

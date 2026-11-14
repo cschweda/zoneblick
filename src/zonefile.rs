@@ -269,6 +269,17 @@ pub struct ParsedZone {
     pub seen: BTreeMap<(String, String), usize>,
 }
 
+/// A piece of the file as it may be quoted in an error message: made
+/// safe to print, since reading the file undoes escapes such as `\010`,
+/// and cut to a sensible length.
+fn shown(token: &str) -> String {
+    let safe = crate::resolver::iterate::printable(token);
+    match safe.char_indices().nth(60) {
+        Some((at, _)) => format!("{}...", &safe[..at]),
+        None => safe,
+    }
+}
+
 /// Read a zone file for `zone`, keeping track of every record in it.
 pub fn parse_full(zone: &str, text: &str) -> Result<ParsedZone, String> {
     let mut origin = zone.to_string();
@@ -286,12 +297,13 @@ pub fn parse_full(zone: &str, text: &str) -> Result<ParsedZone, String> {
                         .get(1)
                         .ok_or(format!("line {n}: $ORIGIN needs a name"))?;
                     origin = absolute(&value.text, &origin)
-                        .ok_or(format!("line {n}: '{}' is not a name", value.text))?;
+                        .ok_or(format!("line {n}: '{}' is not a name", shown(&value.text)))?;
                 }
                 "$TTL" => {}
                 other => {
                     return Err(format!(
-                        "line {n}: {other} is not supported; give one flat zone file"
+                        "line {n}: {} is not supported; give one flat zone file",
+                        shown(other)
                     ));
                 }
             }
@@ -301,7 +313,7 @@ pub fn parse_full(zone: &str, text: &str) -> Result<ParsedZone, String> {
         if !line.indented {
             owner = Some(
                 absolute(&first.text, &origin)
-                    .ok_or(format!("line {n}: '{}' is not a name", first.text))?,
+                    .ok_or(format!("line {n}: '{}' is not a name", shown(&first.text)))?,
             );
             rest = &rest[1..];
         }

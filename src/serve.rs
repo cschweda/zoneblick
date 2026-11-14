@@ -126,6 +126,10 @@ impl AppState {
             client_factory,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
+                // Alerts and vantage requests go where the config says
+                // and nowhere else: a redirect could lead a request, and
+                // what it carries, to another host.
+                .redirect(reqwest::redirect::Policy::none())
                 .user_agent(concat!("zoneblick/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .unwrap_or_default(),
