@@ -5,12 +5,13 @@
 # publishes the port on 127.0.0.1 of the host only.
 bind = "0.0.0.0:8053"
 data_dir = "/data"
-# Required, because the bind address above is not localhost. Pick a long
-# random token, then put its hash here:
+# The API and the web UI always ask for a token. Leave token_sha256 out and
+# the daemon makes one on its first start, in the data volume. Read it with:
+#   docker compose exec zoneblick /usr/local/bin/zoneblick token --show /etc/zoneblick.toml
+# To choose your own, store only its hash here:
 #   TOKEN=$(openssl rand -hex 32); echo "$TOKEN"
 #   printf '%s' "$TOKEN" | docker run --rm -i ghcr.io/cschweda/zoneblick:latest token
-# Keep the token itself; the web UI asks for it.
-token_sha256 = "REPLACE_WITH_THE_OUTPUT_OF_THE_TOKEN_COMMAND"
+# token_sha256 = "..."
 
 [schedule]
 every = "1h"

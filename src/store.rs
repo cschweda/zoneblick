@@ -254,8 +254,8 @@ impl Store {
     /// Open the database file, creating it and its tables when it is new.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         // The database lists what is wrong with the zones, so a new one is
-        // readable by its owner only. SQLite gives its side files the
-        // same permissions. An existing file is left as it is.
+        // readable by its owner only. On Unix, SQLite gives its side files
+        // the same permissions. An existing file is left as it is.
         #[cfg(unix)]
         if !path.exists() {
             use std::os::unix::fs::OpenOptionsExt;
@@ -265,10 +265,34 @@ impl Store {
                 .mode(0o600)
                 .open(path);
         }
+        // Windows has no file mode: the new file is made empty and its
+        // permissions are narrowed before SQLite writes anything to it.
+        #[cfg(windows)]
+        let new_on_windows = !path.exists()
+            && std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .is_ok()
+            && crate::private::restrict(path).is_ok();
         let conn = Connection::open(path)?;
         // WAL keeps readers and the writer out of each other's way.
         conn.pragma_update(None, "journal_mode", "WAL")?;
-        Self::init(conn)
+        let store = Self::init(conn)?;
+        // On Windows the side files take the directory's permissions, so
+        // those of a database made here are narrowed as well.
+        #[cfg(windows)]
+        if new_on_windows {
+            for suffix in ["-wal", "-shm"] {
+                let mut side = path.as_os_str().to_owned();
+                side.push(suffix);
+                let side = std::path::PathBuf::from(side);
+                if side.exists() {
+                    let _ = crate::private::restrict(&side);
+                }
+            }
+        }
+        Ok(store)
     }
 
     /// A store that lives only in memory, for tests.

@@ -276,20 +276,20 @@ Each release is published as a multi-architecture image (x86_64 and ARM 64-bit) 
 curl -fsSLO https://raw.githubusercontent.com/cschweda/zoneblick/main/compose.yaml
 curl -fsSL https://raw.githubusercontent.com/cschweda/zoneblick/main/packaging/zoneblick.docker.toml -o zoneblick.toml
 
-# choose a token and put its hash in zoneblick.toml as token_sha256
+# edit zoneblick.toml: list your zones
+docker compose up -d
+
+# the API token, which the daemon made on its first start
+docker compose exec zoneblick /usr/local/bin/zoneblick token --show /etc/zoneblick.toml
+```
+
+Then open `http://127.0.0.1:8053` and enter the token. `compose.yaml` publishes the port on the host's localhost only. The token is kept in the data volume. Reading it this way has not been tried on a published image yet; if it fails, choose your own token.
+
+To choose your own token, so that only its hash is stored, put the line this prints under `[server]` in `zoneblick.toml` before starting:
+
+```
 TOKEN=$(openssl rand -hex 32); echo "your token: $TOKEN"
 printf '%s' "$TOKEN" | docker run --rm -i ghcr.io/cschweda/zoneblick:latest token
-
-# edit zoneblick.toml: paste the hash, list your zones
-docker compose up -d
-```
-
-Then open `http://127.0.0.1:8053` and enter the token. `compose.yaml` publishes the port on the host's localhost only.
-
-From 0.14.0 you can also leave the token to the daemon: delete the `token_sha256` line from `zoneblick.toml`, start the container, and read the token it made (kept in the data volume) with the command below. This path has not been tried on a published image yet.
-
-```
-docker compose exec zoneblick /usr/local/bin/zoneblick token --show /etc/zoneblick.toml
 ```
 
 For a single check without the daemon, no config or volume is needed:
@@ -297,7 +297,8 @@ For a single check without the daemon, no config or volume is needed:
 ```
 docker run --rm ghcr.io/cschweda/zoneblick check example.org
 ```
- Data lives in the `zoneblick-data` volume. The image contains only the static binary and CA certificates and runs as an unprivileged user. Its base image is pinned by digest.
+
+Data lives in the `zoneblick-data` volume. The image contains only the static binary and CA certificates and runs as an unprivileged user. Its base image is pinned by digest.
 
 ### Download a binary
 
@@ -1159,6 +1160,7 @@ One binary, one config file, one SQLite file, on your own server.
 | `src/config.rs` | The `zoneblick.toml` configuration file |
 | `src/serve.rs` | The daemon: scheduler, API and UI data |
 | `src/tls.rs` | The daemon's own HTTPS listener |
+| `src/private.rs` | Limiting the database and the token file to their owner |
 | `src/alerts.rs` | Composing and sending alerts |
 | `src/runner.rs` | The store-and-compare step shared by `run` and `serve` |
 | `src/ui/index.html` | The web UI, compiled into the binary |
@@ -1193,7 +1195,7 @@ zoneblick reads data that other people control: every DNS answer, every page it 
 | Hostile DNS data | A run has a deadline and a failed run alerts. Nameserver names, addresses, discovered names, signature checks (16 per record set, 32 keys per answer) and signature queries are capped. An answer without the question is refused. DNSSEC proofs are verified, not believed. |
 | Output | Everything quoted from the DNS, a zone file or another daemon is made safe before it reaches a terminal, a CI log, a Slack or Discord message, the web UI or a spreadsheet (CSV formulas get a leading apostrophe). |
 | Outgoing requests | Pages are fetched from public addresses only; nothing is sent to loopback or link-local addresses; the address checked is the address connected to. No request follows a redirect. TLS certificates are verified. A provider credential goes to that provider's API host and nowhere else; a vantage token goes only over `https://`. Mail servers get `EHLO`, `STARTTLS` and `QUIT` under a 30-second deadline, and no mail. |
-| Secrets and data | The database and the token file are made readable by their owner only (on Unix). Credentials are read from files or the environment and are not written to the database, the log or a recorded fixture. `zoneblick token` reads the token from standard input so that it does not show in the process list. |
+| Secrets and data | The database and the token file are made readable by their owner only: by file mode on Unix, and, after 0.14.0, by an access list for the current user on Windows. Credentials are read from files or the environment and are not written to the database, the log or a recorded fixture. `zoneblick token` reads the token from standard input so that it does not show in the process list. |
 | The service | The systemd unit runs as the unprivileged `zoneblick` user with `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome` and `PrivateTmp`, and may write to `/var/lib/zoneblick` only. The container holds the static binary and CA certificates, runs as an unprivileged user, and its base image is pinned by digest. |
 | Supply chain | Every release file and the image carries a [build provenance attestation](#verifying-a-download) pinned to this repository, the release workflow and the tag; the install script and the Action verify it and the SHA-256. Pinning the Action pins the binary. Dependencies are locked in `Cargo.lock`. |
 | What it does to others | It only reads. It never tries to claim a dangling resource, sends no mail, keeps nothing of a zone transfer, limits itself to 5 queries per second per server, and sends no telemetry (see [Privacy](#privacy)). |
@@ -1206,9 +1208,9 @@ zoneblick reads data that other people control: every DNS answer, every page it 
 - Give DNS-host credentials read access only, in files that only the `zoneblick` user can read.
 - Keep the database and exports private: they are a list of your weak points.
 - Verify what you install: `gh attestation verify`, or `--require-attestation` on the install script.
-- On Windows, put the data directory where other users cannot read; see [Open now](#open-now).
+- On Windows with 0.14.0, put the data directory where other users cannot read; later versions limit the token file and the database themselves.
 
-**Limits of this analysis.** The audits are the project's own, not a third party's. 0.14.0 has had a review of its one change and no full audit yet. The DNS and TLS libraries were fuzzed through zoneblick but not reviewed, and dependencies have not been checked against advisory databases. zoneblick's DNSSEC verdicts cover the answers it asks for; it is not a general validator.
+**Limits of this analysis.** The audits are the project's own, not a third party's. 0.14.0 has had a review of its one change and no full audit yet; the Windows permissions fix has been run in CI only, not on a Windows machine with several users. The DNS and TLS libraries were fuzzed through zoneblick but not reviewed, and dependencies have not been checked against advisory databases. zoneblick's DNSSEC verdicts cover the answers it asks for; it is not a general validator.
 
 To report a security problem, open a GitHub security advisory on the repository.
 
@@ -1218,7 +1220,7 @@ This section is the record of every security audit of zoneblick, newest first; o
 
 | Audit | Version audited | Date | Found | Fixed in |
 |---|---|---|---|---|
-| [Review of the token change](#review-of-0140-the-mandatory-token) | 0.14.0 | 2026-11-14 | 2 low | open |
+| [Review of the token change](#review-of-0140-the-mandatory-token) | 0.14.0 | 2026-11-14 | 2 low | the next release |
 | [2](#audit-2-version-0130) | 0.13.0 | 2026-11-14 | 2 high, 4 medium, 9 low | 0.13.1; the proxy finding fully in 0.14.0 |
 | [Commit reviews](#automated-review-of-each-commit) | every commit from 0.12.0 on | continuous | 14 medium | the next commit or release |
 | [1](#audit-1-version-0120-in-short) | 0.12.0 | 2026-11-13 | 2 high, 2 medium, 7 low | 0.12.1, 0.12.2 |
@@ -1235,12 +1237,11 @@ This section is the record of every security audit of zoneblick, newest first; o
 
 ### Open now
 
-Known, and not fixed. This list is current as of 0.14.0, which closed the two items both audits had flagged (the API without a token behind a reverse proxy, and without a token for other local users) by making the token mandatory.
+Known, and not fixed. This list is current as of 2026-11-14. 0.14.0 closed the two items both audits had flagged (the API without a token behind a reverse proxy, and without a token for other local users) by making the token mandatory; the two findings of the review of 0.14.0 are fixed in the source and will be in the next release.
 
 - **A token the daemon made is stored as it is**, in a file only the daemon's user and root can read (`api-token` in the data directory). Anyone who can read that file can use the API. Set `token_sha256` to keep only a hash.
 - **No limit on token guesses**, and the stored hash is unsalted SHA-256. Fine for a long random token; a short or reused one is not.
-- **On Windows, the token file and the database get no permissions of their own.** They take those of the data directory, so other users of the machine may be able to read them. Owner-only permissions are set on Unix only.
-- **A vantage address with a user part passes as local.** A token may go over plain `http://` to a vantage point on this machine, and the check for "this machine" reads the start of the address: `http://127.0.0.1:80@other.example/` passes it and is sent, with the token, to `other.example`. Only someone who can edit the config file can write such an address.
+- **On Windows, SQLite's side files can be wider than the database.** The `-wal` and `-shm` files of a new database are limited to the current user, but ones SQLite makes again on a later start take the permissions of the data directory. They can hold recent runs.
 - **A stripped proof hides a broken chain.** An answer that claims there is no DS record and brings no proof reads "unknown", not "broken".
 - **DANE trust-anchor records (usage 2) are not verified.** A match against a certificate the server merely sent proves nothing, so such a match is left without a verdict; only usage 3 is checked for real.
 - **Plain HTTP for the hosting-service page** (TKO-02): someone on the network path can add or remove the "unclaimed" text.
@@ -1255,10 +1256,10 @@ Known, and not fixed. This list is current as of 0.14.0, which closed the two it
 0.14.0 changed one thing: the API token became mandatory, and the daemon makes one when the config has none. That removed code (the `Host` check and the two proxy heuristics, which existed only for running without a token) and added a little. The change was read on 2026-11-14, with one hands-on test of the config check. It is a review of that change, not an audit of the release.
 
 - **Held:** the token is 32 bytes from the system's random source. Its file is created new, never over an existing file, and readable by its owner only from the first moment; a file from an older version has its permissions narrowed when read. A file with fewer than 16 characters is refused, not used. Every route but `health` compares the token's hash in constant time, and no route trusts a request for being local. `token --show` refuses to run when only a hash is stored.
-- **Low, open:** on Windows the token file gets no permissions of its own.
-- **Low, open:** a vantage address such as `http://127.0.0.1:80@other.example/` passes as "this machine", so its token would cross the network in the clear. It takes write access to the config file.
+- **Low, fixed:** on Windows the token file and the database got no permissions of their own: they took those of the data directory, so other users of the machine could often read them. Both are now limited to the current user when they are made, the token file before the token is written to it. This uses `icacls`, which is part of Windows, and is tested in CI on Windows.
+- **Low, fixed:** a vantage address such as `http://127.0.0.1:80@other.example/` passed as "this machine", so its token would have crossed the network in the clear. It took write access to the config file. The address is now read the way the HTTP client reads it, and an address with a user name or password is refused.
 
-Both are listed under [Open now](#open-now).
+Both fixes are in the source after 0.14.0 and will be in the next release; 0.14.0 itself still has both.
 
 ### Audit 2: version 0.13.0
 

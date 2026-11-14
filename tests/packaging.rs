@@ -47,16 +47,19 @@ fn the_starter_config_in_the_install_script_is_valid() {
 }
 
 #[test]
-fn the_docker_config_is_valid_once_a_token_is_set() {
+fn the_docker_config_is_valid_with_and_without_a_token() {
     let text = read("packaging/zoneblick.docker.toml");
-    // As shipped it must be refused: the placeholder is not a hash.
-    assert!(Config::parse(&text).is_err());
-    let hash = "a".repeat(64);
-    let config =
-        Config::parse(&text.replace("REPLACE_WITH_THE_OUTPUT_OF_THE_TOKEN_COMMAND", &hash))
-            .unwrap();
+    // As shipped it sets no token: the daemon makes one on first start.
+    let config = Config::parse(&text).unwrap();
+    assert!(config.server.token_sha256.is_none());
     assert_eq!(config.server.bind, "0.0.0.0:8053");
     assert_eq!(config.db_path(), PathBuf::from("/data/zoneblick.sqlite"));
+    // The commented line, filled in, is accepted too.
+    let hash = "a".repeat(64);
+    let line = "# token_sha256 = \"...\"";
+    assert!(text.contains(line));
+    let config = Config::parse(&text.replace(line, &format!("token_sha256 = \"{hash}\""))).unwrap();
+    assert_eq!(config.server.token_sha256.as_deref(), Some(hash.as_str()));
 }
 
 #[test]

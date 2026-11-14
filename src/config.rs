@@ -416,22 +416,28 @@ impl Config {
         config.digest_interval()?;
         config.run_timeout()?;
         for v in &config.vantages {
-            let plain = v.url.starts_with("http://");
-            if !v.url.starts_with("https://") && !plain {
+            let parsed = reqwest::Url::parse(&v.url)
+                .ok()
+                .filter(|u| matches!(u.scheme(), "https" | "http") && u.host_str().is_some());
+            let Some(parsed) = parsed else {
                 return Err(ConfigError::Invalid(format!(
-                    "[[vantage]] {}: url must start with https:// or http://",
+                    "[[vantage]] {}: url must be an https:// or http:// address",
+                    v.name
+                )));
+            };
+            // `http://127.0.0.1@other.example/` names other.example. No
+            // vantage point needs a user part, so none is accepted.
+            if !parsed.username().is_empty() || parsed.password().is_some() {
+                return Err(ConfigError::Invalid(format!(
+                    "[[vantage]] {}: url must not hold a user name or password",
                     v.name
                 )));
             }
             // A token must not cross the network in the clear. This
-            // machine itself is not the network.
-            let local = ["http://127.0.0.1", "http://localhost", "http://[::1]"]
-                .iter()
-                .any(|l| {
-                    v.url
-                        .strip_prefix(l)
-                        .is_some_and(|rest| rest.is_empty() || rest.starts_with([':', '/']))
-                });
+            // machine itself is not the network. The host is the one the
+            // request will go to, as the HTTP client reads the address.
+            let plain = parsed.scheme() == "http";
+            let local = matches!(parsed.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"));
             if plain && !local && v.token_file.is_some() {
                 return Err(ConfigError::Invalid(format!(
                     "[[vantage]] {}: a token is only sent over https://",
@@ -655,6 +661,30 @@ smtp_host = "smtp.example.org"
         for bad in ["", "h", "10", "0m", "1 week", "-5m"] {
             assert!(parse_duration(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_vantage_token_only_leaves_this_machine_over_https() {
+        let with = |url: &str| {
+            Config::parse(&format!(
+                "[[vantage]]\nname = \"far\"\nurl = \"{url}\"\ntoken_file = \"/t\"\n"
+            ))
+        };
+        let err = |url: &str| with(url).unwrap_err().to_string();
+        assert!(with("https://far.example").is_ok());
+        assert!(with("http://127.0.0.1:8053").is_ok());
+        assert!(with("http://localhost/").is_ok());
+        assert!(with("http://[::1]:8053/").is_ok());
+        assert!(err("http://far.example").contains("only sent over https"));
+        // A user part makes the address name another host.
+        assert!(err("http://127.0.0.1:80@far.example/").contains("user name"));
+        assert!(err("http://localhost@far.example/").contains("user name"));
+        assert!(err("https://someone:secret@far.example/").contains("user name"));
+        // A name that only starts like this machine is not this machine.
+        assert!(err("http://127.0.0.1.far.example/").contains("only sent over https"));
+        assert!(err("http://localhost.far.example/").contains("only sent over https"));
+        assert!(err("ftp://far.example").contains("https:// or http://"));
+        assert!(err("http://").contains("https:// or http://"));
     }
 
     #[test]

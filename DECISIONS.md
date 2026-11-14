@@ -250,3 +250,8 @@ Choices made during implementation where `DESIGN.md` was silent or loose. One li
 - A vantage point on this machine may be reached over plain http with a token; any other needs https.
 - This breaks API clients that sent no token. It is in the README under "The API token".
 
+## After 0.14.0: fixes from the review of the token change
+
+- A `[[vantage]]` url is parsed with the HTTP client's own parser. "This machine" is decided from the parsed host, and a url with a user name or password is refused: `http://127.0.0.1:80@other.example/` used to pass as local.
+- On Windows the token file and a new database are limited to the current user with `icacls` (inheritance removed, one grant). No new dependency. It is best effort: if it fails, the daemon logs it for the token file and carries on. SQLite's side files are narrowed after the database is first opened; ones made on a later open take the directory's permissions again.
+- The Docker starter config ships without `token_sha256`, so the daemon makes the token; the hash stays as a commented option.

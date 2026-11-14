@@ -250,11 +250,7 @@ pub fn load_or_make_token(path: &std::path::Path) -> std::io::Result<String> {
                 ));
             }
             // An older file may have been made with wider permissions.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-            }
+            let _ = crate::private::restrict(path);
             Ok(token)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -267,6 +263,15 @@ pub fn load_or_make_token(path: &std::path::Path) -> std::io::Result<String> {
                 options.mode(0o600);
             }
             let mut file = options.open(path)?;
+            // Windows has no file mode: narrow the permissions of the
+            // still empty file before the token goes into it.
+            #[cfg(windows)]
+            if let Err(e) = crate::private::restrict(path) {
+                log(&format!(
+                    "could not limit {} to the current user ({e}); other users of this machine may be able to read it",
+                    path.display()
+                ));
+            }
             file.write_all(format!("{token}\n").as_bytes())?;
             log(&format!(
                 "made an API token; it is in {} (the web UI and the API ask for it)",
