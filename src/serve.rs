@@ -53,6 +53,11 @@ pub enum ServeError {
         addr: SocketAddr,
         source: std::io::Error,
     },
+    #[error("cannot listen on the socket file {path}: {source}")]
+    Socket {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
     #[error("the server stopped: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -592,17 +597,50 @@ pub async fn serve(
     state: Arc<AppState>,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<(), ServeError> {
-    let addr = state.config.bind_addr()?;
     let every = state.config.interval()?;
+    let started = |place: &str| {
+        log(&format!(
+            "zoneblick {} listening on {place}, {} zones, checking every {}",
+            env!("CARGO_PKG_VERSION"),
+            state.config.zones.len(),
+            state.config.schedule.every
+        ));
+    };
+    #[cfg(unix)]
+    if let Some(path) = state.config.socket_path() {
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+        let failed = |source| ServeError::Socket {
+            path: path.clone(),
+            source,
+        };
+        // A socket file left by an earlier run is in the way; anything
+        // else at that path is not ours to remove.
+        if let Ok(meta) = std::fs::symlink_metadata(&path)
+            && meta.file_type().is_socket()
+        {
+            std::fs::remove_file(&path).map_err(failed)?;
+        }
+        let listener = tokio::net::UnixListener::bind(&path).map_err(failed)?;
+        // The owner and the group may connect; nobody else. This is what
+        // keeps other local users out, with or without a token.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o660)).map_err(failed)?;
+        started(&format!("the socket file {}", path.display()));
+        if state.config.server.token_sha256.is_none() {
+            log("no API token is set; the API is open to users who may open the socket file");
+        }
+        let job = tokio::spawn(scheduler(state.clone(), every));
+        let result = axum::serve(listener, router(state))
+            .with_graceful_shutdown(shutdown)
+            .await;
+        job.abort();
+        let _ = std::fs::remove_file(&path);
+        return Ok(result?);
+    }
+    let addr = state.config.bind_addr()?;
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|source| ServeError::Bind { addr, source })?;
-    log(&format!(
-        "zoneblick {} listening on http://{addr}, {} zones, checking every {}",
-        env!("CARGO_PKG_VERSION"),
-        state.config.zones.len(),
-        state.config.schedule.every
-    ));
+    started(&format!("http://{addr}"));
     if state.config.server.token_sha256.is_none() {
         log("no API token is set; the API is open to this machine only");
     }

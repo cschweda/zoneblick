@@ -158,7 +158,9 @@ impl RetentionConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
-    /// Address the API and web UI listen on.
+    /// Address the API and web UI listen on: an address and port, or
+    /// `unix:<path>` for a socket file that only this machine's users with
+    /// access to the file can reach.
     #[serde(default = "default_bind")]
     pub bind: String,
     /// Directory that holds the database file.
@@ -383,8 +385,16 @@ impl Config {
                 )));
             }
         }
-        let bind = config.bind_addr()?;
-        if !bind.ip().is_loopback() && config.server.token_sha256.is_none() {
+        if config.socket_path().is_some() {
+            if !cfg!(unix) {
+                return Err(ConfigError::Invalid(
+                    "[server] bind = \"unix:...\" needs a Unix system".to_string(),
+                ));
+            }
+        } else if let bind = config.bind_addr()?
+            && !bind.ip().is_loopback()
+            && config.server.token_sha256.is_none()
+        {
             return Err(ConfigError::Invalid(format!(
                 "[server] bind = \"{bind}\" is reachable from other machines, so [server] token_sha256 must be set; make one with `zoneblick token`"
             )));
@@ -487,10 +497,19 @@ impl Config {
     pub fn bind_addr(&self) -> Result<SocketAddr, ConfigError> {
         self.server.bind.parse().map_err(|_| {
             ConfigError::Invalid(format!(
-                "[server] bind = \"{}\" is not an address and port, such as 127.0.0.1:8053",
+                "[server] bind = \"{}\" is not an address and port, such as 127.0.0.1:8053, nor a socket file, such as unix:/run/zoneblick/zoneblick.sock",
                 self.server.bind
             ))
         })
+    }
+
+    /// The socket file to listen on, when `bind` is `unix:<path>`.
+    pub fn socket_path(&self) -> Option<PathBuf> {
+        self.server
+            .bind
+            .strip_prefix("unix:")
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from)
     }
 
     pub fn db_path(&self) -> PathBuf {
@@ -567,6 +586,14 @@ smtp_host = "smtp.example.org"
         let err = |text: &str| Config::parse(text).unwrap_err().to_string();
         assert!(err("[server]\nbind = \"0.0.0.0:8053\"").contains("token_sha256"));
         assert!(err("[server]\nbind = \"localhost\"").contains("not an address and port"));
+        if cfg!(unix) {
+            let config = Config::parse("[server]\nbind = \"unix:/run/zoneblick/z.sock\"").unwrap();
+            assert_eq!(
+                config.socket_path(),
+                Some(PathBuf::from("/run/zoneblick/z.sock"))
+            );
+        }
+        assert!(err("[server]\nbind = \"unix:\"").contains("not an address and port"));
         assert!(err("[schedule]\nevery = \"soon\"").contains("not a length of time"));
         assert!(
             err("[[zone]]\nname = \"a.example\"\n[[zone]]\nname = \"A.example.\"")
