@@ -619,7 +619,8 @@ curl -fsSLO $B/zoneblick_0.15.0_amd64.deb
 sudo dpkg -i zoneblick_0.15.0_amd64.deb
 
 <span class="c"># Fedora and RHEL (aarch64 on ARM)</span>
-sudo rpm -i $B/zoneblick-0.15.0-1.x86_64.rpm</pre>
+sudo dnf install --nogpgcheck \
+  $B/zoneblick-0.15.0-1.x86_64.rpm</pre>
           </article>
           <article>
             <h3>Homebrew</h3>

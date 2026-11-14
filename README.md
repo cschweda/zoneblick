@@ -243,7 +243,7 @@ curl -fsSLO https://github.com/cschweda/zoneblick/releases/download/v0.15.0/zone
 sudo dpkg -i zoneblick_0.15.0_amd64.deb
 
 # Fedora and RHEL (use aarch64 on ARM)
-sudo rpm -i https://github.com/cschweda/zoneblick/releases/download/v0.15.0/zoneblick-0.15.0-1.x86_64.rpm
+sudo dnf install --nogpgcheck https://github.com/cschweda/zoneblick/releases/download/v0.15.0/zoneblick-0.15.0-1.x86_64.rpm
 ```
 
 After either, list your zones and read the token the web UI asks for:
@@ -254,7 +254,7 @@ sudo systemctl restart zoneblick
 sudo cat /var/lib/zoneblick/api-token
 ```
 
-There is no package repository, so updates are not automatic: install the newer package over the old one. The `.deb` is installed and started on a GitHub runner as part of every release build. The `.rpm` is built and its contents listed there, but it has not been installed on a real Fedora or RHEL system.
+There is no package repository, so updates are not automatic: install the newer package over the old one. The `.rpm` carries no signature, and current Fedora refuses such a package (`does not verify: no signature`) unless told to skip that check, which `--nogpgcheck` does; [verify the file's build provenance](#verifying-a-download) first if you want proof of where it came from. The `.deb` is installed and started on a GitHub runner as part of every release build. The `.rpm` of 0.15.0 was installed in a Fedora container on 2026-11-14: the package made the user, the config and the data directory, and the daemon started as its own user and made its token. It was not started through systemd there, and has not been tried on RHEL.
 
 ### Homebrew (macOS and Linux)
 
@@ -296,7 +296,7 @@ docker compose up -d
 docker compose exec zoneblick /usr/local/bin/zoneblick token --show /etc/zoneblick.toml
 ```
 
-Then open `http://127.0.0.1:8053` and enter the token. `compose.yaml` publishes the port on the host's localhost only. The token is kept in the data volume. Reading it this way has not been tried on a published image yet; if it fails, choose your own token.
+Then open `http://127.0.0.1:8053` and enter the token. `compose.yaml` publishes the port on the host's localhost only. The token is kept in the data volume. These steps were run against the published 0.15.0 image on 2026-11-14.
 
 To choose your own token, so that only its hash is stored, put the line this prints under `[server]` in `zoneblick.toml` before starting:
 
@@ -1009,7 +1009,7 @@ TKO-07 to LAL-01 are new in 0.15.0. Each asks someone other than your own namese
 - **POL-12 and POL-13, SPF and DMARC strength.** These read the records a light run already has. POL-13 adds one lookup per outside domain that DMARC reports are sent to: such a domain must publish `<your zone>._report._dmarc.<its domain>` or receivers will not send the reports (RFC 7489).
 - **LAL-01, lookalikes.** Up to 60 names are made from the zone's first label: a letter left out, two letters swapped, a letter doubled, letters replaced by ones that look alike (`o` and `0`, `l` and `1`, `m` and `rn`), and the same name under `com`, `net`, `org`, `co` and `io`. Each is looked up; one that is registered and has mail servers is reported once, when it first appears. It may well be yours, or an honest neighbour: mute it then. Keyboard slips, added words and other alphabets are not tried, so this is far short of what a brand-protection service does.
 
-Tested against real services: REG-05, TLS-01, NET-03, the public resolvers, the blocklist lookups and LAL-01 were run against the author's zone, and RES-01 against `dnssec-failed.org`, a zone kept broken on purpose for such tests. Not yet tried against a live case: a lame delegated name (TKO-07), a mail server reached on port 25 (POL-11; the port is blocked where zoneblick is developed), an invalid route, and a real blocklist listing. Those rest on tests with hand-built observations.
+Tested against real services: REG-05, TLS-01, NET-03, the public resolvers, the blocklist lookups and LAL-01 were run against the author's zone, and RES-01 against `dnssec-failed.org`, a zone kept broken on purpose for such tests. POL-11's connection was run from a GitHub runner, where port 25 is open, against the author's mail servers and read their certificates. The blocklist lookups were run against the test entries Spamhaus and SpamCop keep listed for that purpose, and the route check against RIPE's routing beacon, which is invalid on purpose; both are in the test that uses the live network (`cargo test -- --ignored`). TKO-07 has an end-to-end test over recorded DNS exchanges, with a hosting company's nameserver that refuses the delegated name. Not seen in the wild yet: a real lame delegation, a mail server without STARTTLS or with a bad certificate, and a real listing of a real mail address.
 
 **Takeover checks.** TKO-01, TKO-02 and the CNAME part of TKO-03 look at the CNAME records of the names you list, so they need `run` or `serve`; `check` covers the apex only. "Not registered" is decided from DNS alone: the name does not exist and the server that says so belongs to a top-level domain, which means the domain itself is not delegated. Domains under two-level suffixes such as `co.uk` are not recognised this way and are reported as TKO-01 instead. DEL-06 uses the same test for the domains of nameservers. zoneblick never tries to claim anything.
 
@@ -1153,7 +1153,7 @@ It downloads the release binary for the runner (Linux or macOS), checks its SHA-
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test                 # offline
-cargo test -- --ignored    # the one test that uses the live network
+cargo test -- --ignored    # the two tests that use the live network
 ```
 
 Tests never use the network. Checks are tested against hand-built observations, and the resolver against recorded DNS exchanges in `tests/fixtures/`, replayed through the same code path as a live run. The `broken.example`, `good.example`, `drift.example`, `signed.example` and `policy.example` test zones are generated from `tests/common/mod.rs`; `example.com.json` is a recording of a real run. After an intended change, regenerate the generated files with `ZONEBLICK_REGEN=1 cargo test`.
@@ -1222,7 +1222,8 @@ One binary, one config file, one SQLite file, on your own server.
 | `src/cli.rs` | The commands |
 | `tests/` | Offline tests and DNS fixtures |
 | `screenshots/` | The images in this README |
-| `.github/workflows/ci.yml` | Lint and tests on Linux, macOS and Windows |
+| `.github/workflows/ci.yml` | Lint and tests on Linux, macOS and Windows, and dependencies against the advisory database |
+| `.github/workflows/smoke.yml` | Started by hand: tries a published release as a user would (the `.rpm` on Fedora, the image with its own token, a deep check with mail connections) |
 | `docs/` | The project website, served by GitHub Pages |
 
 ## Security
@@ -1300,7 +1301,7 @@ Known, and not fixed. This list is current as of 0.15.0. 0.14.0 closed the two i
 - **Plain HTTP for the hosting-service page** (TKO-02): someone on the network path can add or remove the "unclaimed" text.
 - **Webhook and ntfy addresses may be `http://`**, since self-hosted receivers on a private network are common. From 0.15.0 the daemon warns at its start when such an address is not on this machine or a private network.
 - **The install script trusts GitHub's answer about which release is newest.** Whoever controls that answer can pick an older release, though only one with a valid build provenance. Without the GitHub CLI the script checks the checksum only, and says so.
-- **Packages carry no package signature**; the build provenance attestation is the verification.
+- **Packages carry no package signature**; the build provenance attestation is the verification. Current Fedora will not install the `.rpm` without `--nogpgcheck` for that reason.
 - **Names with unusual bytes** (escaped dots, bytes above 127) can get wrong NSEC and signature verdicts. It is a wrong answer, not a crash.
 - **The DNS and TLS libraries were fuzzed through zoneblick, not reviewed.** Dependencies are checked against the RustSec advisory database in CI on every change and once a week (from 0.15.0); on 2026-11-14 none of the 209 had a known vulnerability.
 - **The eleven deep checks added in 0.15.0 have had no audit.** They read certificates from servers that a zone names, JSON from RIPEstat, and answers from blocklists and public resolvers, and they open connections to ports 25 and 443. They follow the rules the audits established (public addresses only, no redirects, limits on every count, a deadline on every connection, names from certificates kept only when they look like DNS names), and the certificate reader is tested against a certificate cut short at every length and against noise. A red team has not attacked them yet.
