@@ -2,28 +2,28 @@
 class Zoneblick < Formula
   desc "Self-hosted DNS zone watchdog"
   homepage "https://zoneblick.com"
-  version "0.13.0"
+  version "0.13.1"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
     on_arm do
-      url "https://github.com/cschweda/zoneblick/releases/download/v0.13.0/zoneblick-v0.13.0-aarch64-apple-darwin.tar.gz"
-      sha256 "393927a36da40bb521e7e96558647dde5be2aaf90c8d8b679a27c2b070fc649b"
+      url "https://github.com/cschweda/zoneblick/releases/download/v0.13.1/zoneblick-v0.13.1-aarch64-apple-darwin.tar.gz"
+      sha256 "93ad8b9da05369e426b2b21f09dbd7e4214b1251d35a54d64d6dbd7c792cb6c7"
     end
     on_intel do
-      url "https://github.com/cschweda/zoneblick/releases/download/v0.13.0/zoneblick-v0.13.0-x86_64-apple-darwin.tar.gz"
-      sha256 "d4a446dada8ccab2f671ab6e26bdeea86e4379863b37de126a26a9e7ccd569d0"
+      url "https://github.com/cschweda/zoneblick/releases/download/v0.13.1/zoneblick-v0.13.1-x86_64-apple-darwin.tar.gz"
+      sha256 "0ebe5ca70f32709237ab75ad40b4155d9e6f560719e51bfe8ecac09188070f7d"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/cschweda/zoneblick/releases/download/v0.13.0/zoneblick-v0.13.0-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "90f1e04746558251ebb47c52c7dbda8a67df0737cb9598afba24fa71281655f2"
+      url "https://github.com/cschweda/zoneblick/releases/download/v0.13.1/zoneblick-v0.13.1-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "7ecc4453bc022c1c48bd9c24d904902f4fe3c36b8ba33b4734ed7bb50c030db3"
     end
     on_intel do
-      url "https://github.com/cschweda/zoneblick/releases/download/v0.13.0/zoneblick-v0.13.0-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "02dd9df1cfff48245a6c1cbf600cce5e6939451eed7909d534b4b81021f7f4ed"
+      url "https://github.com/cschweda/zoneblick/releases/download/v0.13.1/zoneblick-v0.13.1-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "92236120923887bd37e90a1d6c9a1728613fdf06b6c1915da1c7c3425a3f2870"
     end
   end
 
