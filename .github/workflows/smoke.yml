@@ -1,0 +1,82 @@
+# Try a published release the way a user would, in places the release
+# build does not reach: the .rpm on Fedora, the container image with a
+# token the daemon makes itself, and a deep check from a network that may
+# allow outgoing mail connections. Started by hand:
+#   gh workflow run smoke.yml -f version=v0.15.0
+
+name: smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The release to try, for example v0.15.0"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  rpm:
+    name: the .rpm on Fedora
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Install the package
+        run: |
+          rpm -i "https://github.com/cschweda/zoneblick/releases/download/${VERSION}/zoneblick-${VERSION#v}-1.x86_64.rpm"
+          zoneblick --version | grep -F "${VERSION#v}"
+      - name: What the package set up
+        run: |
+          id zoneblick
+          test -f /etc/zoneblick/zoneblick.toml
+          rpm -ql zoneblick
+          stat -c '%U %a %n' /var/lib/zoneblick /etc/zoneblick/zoneblick.toml
+      - name: The daemon starts as its own user and makes a token
+        run: |
+          dnf -q -y install util-linux curl >/dev/null
+          runuser -u zoneblick -- zoneblick serve --config /etc/zoneblick/zoneblick.toml > /tmp/serve.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8053/api/v1/health && break; sleep 1; done
+          cat /tmp/serve.log
+          test "$(stat -c '%U %a' /var/lib/zoneblick/api-token)" = "zoneblick 600"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8053/api/v1/zones)" = 401
+          TOKEN=$(cat /var/lib/zoneblick/api-token)
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8053/api/v1/zones)" = 200
+
+  docker:
+    name: the image, with the token the daemon makes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start it as the README says
+        run: |
+          curl -fsSLO "https://raw.githubusercontent.com/cschweda/zoneblick/${VERSION}/compose.yaml"
+          curl -fsSL "https://raw.githubusercontent.com/cschweda/zoneblick/${VERSION}/packaging/zoneblick.docker.toml" -o zoneblick.toml
+          sed -i "s|zoneblick:latest|zoneblick:${VERSION#v}|" compose.yaml
+          docker compose up -d
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8053/api/v1/health && break; sleep 1; done
+          docker compose logs
+      - name: Read the token and use it
+        run: |
+          TOKEN=$(docker compose exec -T zoneblick /usr/local/bin/zoneblick token --show /etc/zoneblick.toml)
+          test "${#TOKEN}" = 64
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8053/api/v1/zones)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8053/api/v1/zones)" = 200
+      - name: One check without the daemon
+        run: docker run --rm "ghcr.io/cschweda/zoneblick:${VERSION#v}" check example.com || test $? -le 2
+
+  mail:
+    name: a deep check, to see whether port 25 can be reached from here
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install with the install script
+        run: curl -fsSL https://zoneblick.com/install.sh | sh -s -- --version "$VERSION" --no-service
+      - name: What the mail servers of a zone presented
+        # Nothing here fails the job: many networks block outgoing port 25,
+        # and then the entries carry an error and the check says nothing.
+        run: |
+          zoneblick check gmail.com --deep --json > report.json || true
+          jq '.deep.served_tls' report.json
+          jq -r '.findings[] | "\(.severity) \(.check_id) \(.summary)"' report.json

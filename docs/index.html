@@ -626,6 +626,8 @@ sudo rpm -i $B/zoneblick-0.15.0-1.x86_64.rpm</pre>
             <p>For macOS and Linux. The formula installs the release binary and checks its SHA-256; nothing is compiled.</p>
 <pre tabindex="0">brew tap cschweda/zoneblick \
   https://github.com/cschweda/zoneblick
+<span class="c"># newer Homebrew asks you to trust a tap from outside</span>
+brew trust cschweda/zoneblick
 brew install zoneblick</pre>
           </article>
           <article class="wide">

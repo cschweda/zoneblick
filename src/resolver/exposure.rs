@@ -300,7 +300,7 @@ fn mail_addresses(obs: &ZoneObservation) -> Vec<(std::net::Ipv4Addr, String)> {
 /// Read a blocklist's answer. Lists answer `127.0.x.y` for a listing;
 /// Spamhaus answers `127.255.255.x` when it refuses the query itself,
 /// which says nothing about the subject.
-fn blocklist_answer(lookup: &Lookup) -> (Vec<String>, Option<String>) {
+pub fn blocklist_answer(lookup: &Lookup) -> (Vec<String>, Option<String>) {
     match lookup.status.as_str() {
         "answer" => {
             let codes: Vec<String> = lookup

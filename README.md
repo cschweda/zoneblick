@@ -260,10 +260,11 @@ There is no package repository, so updates are not automatic: install the newer 
 
 ```
 brew tap cschweda/zoneblick https://github.com/cschweda/zoneblick
+brew trust cschweda/zoneblick      # newer Homebrew refuses a tap from outside until you trust it
 brew install zoneblick
 ```
 
-The formula, [`Formula/zoneblick.rb`](Formula/zoneblick.rb), installs the release binary and checks its SHA-256; nothing is compiled. The release workflow rewrites it for each new release. It has passed a syntax check only: it has not been installed with `brew` yet.
+The formula, [`Formula/zoneblick.rb`](Formula/zoneblick.rb), installs the release binary and checks its SHA-256; nothing is compiled. The release workflow rewrites it for each new release. It was installed and run with Homebrew 7.0.11 on an Apple Silicon Mac on 2026-11-14 (version 0.15.0); it has not been tried on Intel or on Linux. Without `brew trust`, that Homebrew stops with "Refusing to load formula ... from untrusted tap"; older versions do not know the command and do not need it.
 
 ### Verifying a download
 

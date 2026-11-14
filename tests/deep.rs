@@ -106,3 +106,144 @@ async fn a_deep_run_collects_the_probes_and_reports() {
     expect("NSB-04", Severity::Notice, "ns1.good.example.");
     assert_eq!(found.len(), 5, "{found:?}");
 }
+
+/// A hosting company's nameserver, on an address that counts as public.
+const HOSTER: &str = "8.8.4.4";
+
+/// `good.example.` with `shop` delegated to a hosting company's
+/// nameserver, which answers `rcode` when asked for the delegated name.
+fn delegated_world(rcode: ResponseCode) -> World {
+    let mut w = deep_world();
+    let sub = "shop.good.example.";
+    let cut = [ns(sub, "ns.hoster.example.")];
+    // The zone's own server hands out the delegation.
+    for name in [sub, "www.shop.good.example."] {
+        w.referral(NS1, name, QType::Ns, &cut, &[]);
+    }
+    // The hosting company's nameserver resolves from the root.
+    w.delegate_tld("ns.hoster.example.", QType::A);
+    w.referral(
+        TLD_SERVER,
+        "ns.hoster.example.",
+        QType::A,
+        &[ns("hoster.example.", "ns.hoster.example.")],
+        &[addr("ns.hoster.example.", HOSTER)],
+    );
+    w.answer(
+        HOSTER,
+        "ns.hoster.example.",
+        QType::A,
+        &[addr("ns.hoster.example.", HOSTER)],
+    );
+    if rcode == ResponseCode::NoError {
+        w.answer(HOSTER, sub, QType::Soa, &[soa(sub, 1)]);
+    } else {
+        w.rcode(HOSTER, sub, &[QType::Soa], rcode);
+    }
+    w
+}
+
+/// Run a deep check of the delegated world, as `run` would after
+/// collecting records for a name under the delegation.
+async fn delegated_findings(rcode: ResponseCode) -> Vec<(Severity, String)> {
+    let fixture = delegated_world(rcode).fixture(ZONE);
+    let client = Arc::new(Client::replay(&fixture));
+    let mut obs = observe_zone(client.clone(), ZONE, fixture.started_at_unix)
+        .await
+        .unwrap();
+    obs.records.push(zoneblick::observe::RecordObservation {
+        name: "www.shop.good.example.".to_string(),
+        qtype: QType::A,
+        ns_name: "ns1.good.example.".to_string(),
+        address: NS1.parse().unwrap(),
+        transport: Transport::Udp,
+        outcome: zoneblick::observe::RecordOutcome::Timeout,
+    });
+    add_deep(client, &mut obs).await;
+    let deep = obs.deep.as_ref().unwrap();
+    assert_eq!(deep.subzones.len(), 1, "{:?}", deep.subzones);
+    assert_eq!(deep.subzones[0].name, "shop.good.example.");
+    assert_eq!(deep.subzones[0].servers[0].ns_name, "ns.hoster.example.");
+    run_all(&obs)
+        .into_iter()
+        .filter(|f| f.check_id == "TKO-07")
+        .map(|f| (f.severity, f.summary))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_delegation_to_a_host_that_refuses_the_name_is_a_takeover_risk() {
+    let found = delegated_findings(ResponseCode::Refused).await;
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, Severity::Critical);
+    assert!(
+        found[0]
+            .1
+            .starts_with("shop.good.example. is delegated to nameservers that do not serve it")
+    );
+    let found = delegated_findings(ResponseCode::ServFail).await;
+    assert_eq!(found[0].0, Severity::Critical);
+}
+
+#[tokio::test]
+async fn a_delegation_that_is_served_is_no_finding() {
+    assert!(delegated_findings(ResponseCode::NoError).await.is_empty());
+}
+
+/// Needs the network. Run with `cargo test -- --ignored`.
+///
+/// Spamhaus and SpamCop keep test entries that are always listed, and
+/// RIPE announces a prefix that is invalid on purpose. These show that the
+/// real services answer in the form the probes read.
+#[tokio::test]
+#[ignore = "uses the live network"]
+async fn live_blocklists_and_route_validation_answer_as_expected() {
+    use zoneblick::observe::Vantage;
+    use zoneblick::resolver::exposure::{blocklist_answer, parse_route_status, route_url};
+    use zoneblick::resolver::iterate::Resolver;
+    use zoneblick::resolver::{HttpOutcome, NetConfig};
+
+    let client = Arc::new(Client::live(NetConfig::default()));
+    let resolver = Resolver::new(
+        client.clone(),
+        Vantage {
+            ipv4: true,
+            ipv6: false,
+        },
+    );
+    // 127.0.0.2 is the test address every list has on it.
+    for (name, expect) in [
+        ("2.0.0.127.zen.spamhaus.org.", "127.0.0.2"),
+        ("2.0.0.127.bl.spamcop.net.", "127.0.0.2"),
+        ("dbltest.com.dbl.spamhaus.org.", "127.0.1.2"),
+    ] {
+        let lookup = resolver.lookup(name, QType::A).await;
+        let (codes, error) = blocklist_answer(&lookup);
+        assert!(error.is_none(), "{name}: {error:?}");
+        assert!(codes.iter().any(|c| c == expect), "{name}: {codes:?}");
+    }
+    // An address that is on no list.
+    let lookup = resolver
+        .lookup("1.0.0.127.zen.spamhaus.org.", QType::A)
+        .await;
+    assert_eq!(blocklist_answer(&lookup), (vec![], None));
+
+    // RIPE's routing beacon 93.175.147.0/24 has an authorisation for
+    // another network on purpose; 193.0.0.0/21 from AS3333 is RIPE's own.
+    for (asn, prefix, expect) in [
+        (12654, "93.175.147.0/24", "invalid_asn"),
+        (3333, "193.0.0.0/21", "valid"),
+    ] {
+        let outcome = client
+            .http_get_with(
+                &route_url(asn, prefix),
+                256 * 1024,
+                std::time::Duration::from_secs(20),
+            )
+            .await;
+        let HttpOutcome::Response { status: 200, body } = outcome else {
+            panic!("no answer for {prefix}: {outcome:?}");
+        };
+        assert_eq!(parse_route_status(&body).as_deref(), Ok(expect), "{prefix}");
+    }
+}
